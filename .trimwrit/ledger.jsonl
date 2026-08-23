@@ -1,0 +1,23 @@
+{"kind": "correction", "id": "0001", "at": "2026-08-23T13:32:49-0500", "text": "you used an em-dash again in that summary, I have told you this", "tag": "em-dash", "consequence": "a post went out with three em-dashes and read as machine-written to the audience it was aimed at", "session": "s-2026-08-20", "source": "manual", "case": null, "rule": null, "promoted": null}
+{"kind": "correction", "id": "0002", "at": "2026-08-23T13:32:49-0500", "text": "there are two em-dashes in the commit message you just wrote", "tag": "em-dash", "consequence": null, "session": "s-2026-08-22", "source": "manual", "case": null, "rule": null, "promoted": null}
+{"kind": "correction", "id": "0003", "at": "2026-08-23T13:32:49-0500", "text": "don't estimate this in hours, I never asked for a timeline", "tag": "time-estimate", "consequence": "an estimate in hours was quoted back in a client thread and was wrong by 3x", "session": "s-2026-08-21", "source": "manual", "case": null, "rule": null, "promoted": null}
+{"kind": "correction", "id": "0004", "at": "2026-08-23T13:32:49-0500", "text": "the decision is buried in the middle again, I don't read long answers", "tag": "decision-last", "consequence": null, "session": "s-2026-08-19", "source": "manual", "case": null, "rule": null, "promoted": null}
+{"kind": "correction", "id": "0005", "at": "2026-08-23T13:32:50-0500", "text": "you gave me a menu with no pick, that hands the work back to me", "tag": "decision-last", "consequence": null, "session": "s-2026-08-22", "source": "manual", "case": null, "rule": null, "promoted": null}
+{"kind": "amend", "id": "0002", "at": "2026-08-23T13:33:36-0500", "field": "case", "value": "0002"}
+{"kind": "amend", "id": "0003", "at": "2026-08-23T13:33:37-0500", "field": "case", "value": "0003"}
+{"kind": "amend", "id": "0005", "at": "2026-08-23T13:33:50-0500", "field": "case", "value": "0005"}
+{"kind": "amend", "id": "0002", "at": "2026-08-23T13:34:25-0500", "field": "case", "value": "0002"}
+{"kind": "amend", "id": "0003", "at": "2026-08-23T13:34:26-0500", "field": "case", "value": "0003"}
+{"kind": "amend", "id": "0005", "at": "2026-08-23T13:34:28-0500", "field": "case", "value": "0005"}
+{"kind": "promotion", "at": "2026-08-23T13:35:11-0500", "tag": "em-dash", "rule": "R0002", "route": "counter", "consequence": "a launch post went out with three em-dashes and read as machine written to the audience it was aimed at", "corrections": ["0001", "0002"]}
+{"kind": "amend", "id": "0001", "at": "2026-08-23T13:35:11-0500", "field": "promoted", "value": "R0002"}
+{"kind": "amend", "id": "0002", "at": "2026-08-23T13:35:11-0500", "field": "promoted", "value": "R0002"}
+{"kind": "amend", "id": "0002", "at": "2026-08-23T13:35:11-0500", "field": "rule", "value": "R0002"}
+{"kind": "promotion", "at": "2026-08-23T13:35:11-0500", "tag": "time-estimate", "rule": "R0003", "route": "important", "consequence": "an estimate in hours was quoted back inside a client thread and was wrong by 3x", "corrections": ["0003"]}
+{"kind": "amend", "id": "0003", "at": "2026-08-23T13:35:11-0500", "field": "promoted", "value": "R0003"}
+{"kind": "amend", "id": "0003", "at": "2026-08-23T13:35:11-0500", "field": "rule", "value": "R0003"}
+{"kind": "promotion", "at": "2026-08-23T13:35:12-0500", "tag": "decision-last", "rule": "R0005", "route": "counter", "consequence": "a long answer buried its recommendation in the middle and the reader stopped before reaching it", "corrections": ["0004", "0005"]}
+{"kind": "amend", "id": "0004", "at": "2026-08-23T13:35:12-0500", "field": "promoted", "value": "R0005"}
+{"kind": "amend", "id": "0005", "at": "2026-08-23T13:35:12-0500", "field": "promoted", "value": "R0005"}
+{"kind": "amend", "id": "0005", "at": "2026-08-23T13:35:12-0500", "field": "rule", "value": "R0005"}
+{"kind": "amend", "id": "0003", "at": "2026-08-23T13:56:23-0500", "field": "case", "value": "0003"}

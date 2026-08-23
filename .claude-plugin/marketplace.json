@@ -1,0 +1,20 @@
+{
+  "name": "trimwrit",
+  "owner": {
+    "name": "Dylan Merigaud",
+    "url": "https://github.com/DylanMerigaud"
+  },
+  "description": "One plugin: trimwrit, which makes a harness rule earn its place with a test.",
+  "plugins": [
+    {
+      "name": "trimwrit",
+      "source": "./",
+      "description": "A harness rule enters with a test and leaves when the test passes without it.",
+      "version": "0.1.0",
+      "author": { "name": "Dylan Merigaud" },
+      "license": "MIT",
+      "category": "productivity",
+      "tags": ["evals", "claude-md", "harness", "prune"]
+    }
+  ]
+}

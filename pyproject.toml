@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trimwrit"
+version = "0.1.0"
+description = "A harness rule enters with a test, and leaves when the test passes without it."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Dylan Merigaud" }]
+keywords = ["claude-code", "evals", "claude-md", "harness", "prune", "regression"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Utilities",
+]
+# Zero runtime dependencies, and that is what makes the plugin install work at all: a Claude
+# Code plugin is copied to a cache directory and never pip-installed, so bin/trimwrit can only
+# put the package on PYTHONPATH. Anything imported here that is not standard library would be
+# missing at that moment.
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.urls]
+Homepage = "https://github.com/DylanMerigaud/trimwrit"
+Issues = "https://github.com/DylanMerigaud/trimwrit/issues"
+
+[project.scripts]
+trimwrit = "trimwrit.cli:main"
+
+[tool.setuptools]
+packages = ["trimwrit"]

@@ -1,0 +1,10 @@
+#!/bin/sh
+# trimwrit as a bare command on the Bash tool PATH, with nothing installed.
+#
+# Claude Code puts a plugin's bin/ on PATH but never installs its code, so the package is not
+# importable by default. Pointing PYTHONPATH at the plugin root is the whole wrapper.
+# CLAUDE_PLUGIN_ROOT is set when Claude Code runs it; the fallback resolves the repo root so the
+# same script works from a plain clone.
+set -e
+root="${CLAUDE_PLUGIN_ROOT:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}"
+PYTHONPATH="$root${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m trimwrit "$@"

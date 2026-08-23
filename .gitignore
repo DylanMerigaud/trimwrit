@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.DS_Store
+
+# The ledger of a repo that USES trimwrit is that repo's own record and belongs in its history.
+# This repo's ledger is committed for exactly that reason: it is the dogfood.
+evals/results/
