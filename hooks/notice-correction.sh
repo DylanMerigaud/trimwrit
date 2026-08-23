@@ -2,9 +2,14 @@
 # Silent on every normal prompt. On a prompt that reads like a correction, it prints one line
 # reminding Claude that the roast skill exists.
 #
-# NOT WIRED BY DEFAULT. plugin.json does not reference this file, so installing trimwrit does
-# not install the hook. Point the manifest at hooks/hooks.json only if you want it, and read
-# this script first: it runs on every prompt you type, forever.
+# NOT WIRED BY DEFAULT, and the way that is achieved matters. Claude Code AUTO-DISCOVERS
+# hooks/hooks.json at a plugin root, with no manifest entry needed, so the first version of
+# this plugin shipped the hook live while its own README said it was off. `claude plugin
+# details trimwrit` reported "Hooks (1) UserPromptSubmit" and that is how it was caught. The
+# config now lives at hooks/hooks.disabled.json, which auto-discovery ignores.
+#
+# To turn it on: `mv hooks/hooks.disabled.json hooks/hooks.json` in your installed copy. Read
+# this script first. It runs on every prompt you type, forever.
 #
 # The reason it ships disabled is the same reason the tool exists. A hook that fires on a
 # keyword list will misfire, and a reminder that misfires trains you to ignore reminders. The

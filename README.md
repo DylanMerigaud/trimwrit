@@ -224,7 +224,9 @@ which succeeds with empty output before anything is staged. Both misses are in t
 Claude Code only. The case format is Anthropic's, the ledger and the runner are not, and nothing
 here has been ported to Codex or Gemini yet.
 
-The optional hook in `hooks/` is **not wired**: `plugin.json` does not reference it. Read
-`hooks/notice-correction.sh` before enabling it, because it runs on every prompt you type.
+The optional hook in `hooks/` is **not wired**, and it is off by filename rather than by
+omission: Claude Code auto-discovers `hooks/hooks.json` at a plugin root whether or not the
+manifest mentions it, so the config ships as `hooks/hooks.disabled.json`. Rename it to turn it
+on, and read `hooks/notice-correction.sh` first, because it runs on every prompt you type.
 
 MIT.

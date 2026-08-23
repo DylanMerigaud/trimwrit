@@ -19,10 +19,10 @@ Added:
   same without them), and unused cases, and with `--apply` deletes them and records the removal
   in the same ledger as the promotion.
 - Four skills: roast, case, integrate, prune.
-- An optional `UserPromptSubmit` hook, shipped unwired.
+- An optional `UserPromptSubmit` hook, shipped off as `hooks/hooks.disabled.json`.
 - `tools/no-bad-dashes.py`, which enforces the headline rule on this repo itself.
 
-Three bugs found by running the tool on itself, each one now covered by a test:
+Four bugs found by running the tool on itself, three of them now covered by a test:
 
 - **The baseline arm was contaminated.** The first ablation reported the em-dash and
   time-estimate cases as inert at 1.00 in both arms. Both rules were already in the operator's
@@ -37,3 +37,8 @@ Three bugs found by running the tool on itself, each one now covered by a test:
 - **The dash scanner reported clean after reading zero files.** It trusted `git ls-files`, which
   succeeds with empty output in a repository with nothing staged yet. An empty list is now
   treated as no answer rather than as a pass.
+- **The hook shipped live while the README said it was off.** Claude Code auto-discovers
+  `hooks/hooks.json` at a plugin root with no manifest entry, so "plugin.json does not reference
+  it" was not the off switch it was claimed to be. `claude plugin details trimwrit` reported
+  `Hooks (1) UserPromptSubmit` on the installed copy. The config now ships as
+  `hooks/hooks.disabled.json`, which auto-discovery ignores.
