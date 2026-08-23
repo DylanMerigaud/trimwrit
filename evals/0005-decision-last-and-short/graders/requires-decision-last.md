@@ -1,7 +1,7 @@
 ---
 type: regex
 name: requires-decision-last
-pattern: recommend.{0,420}$
+pattern: (recommend|i would go with|my pick|go with option)[\s\S]{0,700}$
 match: contains
 flags: i
 target: last_message

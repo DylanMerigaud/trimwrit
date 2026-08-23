@@ -302,7 +302,12 @@ def _save_results(args, summaries):
 
 def cmd_prune(args):
     summaries = None
-    if args.results:
+    # `is not None`, not a truthiness test. `--results` with no value stores the empty string,
+    # the empty string is falsy, and the whole inert branch was skipped in silence: prune
+    # reported only orphans and said "nothing to prune" about a rule whose case scored the same
+    # in both arms. The bug was invisible because the command still exited 0 with a reassuring
+    # message, which is the failure mode this repo is about.
+    if args.results is not None:
         path = args.results if os.path.exists(args.results) else os.path.join(
             args.root, args.evals, "results", "latest.json")
         if not os.path.exists(path):

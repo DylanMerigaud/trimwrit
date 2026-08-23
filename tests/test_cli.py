@@ -91,3 +91,29 @@ def test_run_refuses_when_the_ablation_would_be_meaningless(tmp_path, capsys):
     _run(tmp_path, "case", "0001", "--prompt", "p", "--forbid", "z")
     assert _run(tmp_path, "run", "--target", "does-not-exist.md") == 2
     assert "identical to the `without`" in capsys.readouterr().err
+
+
+def test_results_with_no_value_still_loads_the_inert_finding(tmp_path, capsys):
+    """`--results` with no value stores the empty string, which is falsy. A truthiness test
+    here skipped the whole inert branch and printed "nothing to prune" over a rule whose case
+    scored the same in both arms."""
+    import json
+
+    from trimwrit import cases
+
+    evals = tmp_path / "evals"
+    cases.write_case("0001", "some case", "p", [cases.forbid_grader("x", name="g")],
+                     evals_dir=str(evals))
+    (tmp_path / "CLAUDE.md").write_text(
+        "<!-- trimwrit: R0001 case 0001, 2026-08-23: an incident -->\nthe rule\n",
+        encoding="utf-8")
+    (evals / "results").mkdir(parents=True, exist_ok=True)
+    (evals / "results" / "latest.json").write_text(
+        json.dumps({"0001-some-case": {"with": 1.0, "without": 1.0, "delta": 0.0}}),
+        encoding="utf-8")
+
+    assert _run(tmp_path, "prune", "--results") == 0
+    out = capsys.readouterr().out
+    assert "inert" in out
+    assert "1.00 with R0001" in out
+    assert "nothing to prune" not in out
