@@ -58,12 +58,17 @@ def orphans(targets, evals_dir="evals", root="."):
     found = []
     for target in targets:
         for rule_id, meta in sorted(integrate_mod.read_rules(target, root).items()):
-            if meta["case"] not in known:
+            # EVERY cited case must be missing before the rule is an orphan. A rule citing two
+            # cases where one survives is still backed by evidence, and calling it an orphan
+            # would delete a rule that a passing test is holding up.
+            cited = integrate_mod.case_list(meta["case"])
+            missing = [c for c in cited if c not in known]
+            if missing and len(missing) == len(cited):
                 found.append(Finding(
                     ORPHAN, rule=rule_id, case=meta["case"], target=target,
                     detail="{}:{} names case {}, which is not in {}/. Nothing can show this "
                            "rule still earns its place.".format(
-                               target, meta["line"], meta["case"], evals_dir)))
+                               target, meta["line"], ", ".join(missing), evals_dir)))
     return found
 
 
@@ -73,6 +78,7 @@ def unused_cases(targets, evals_dir="evals", root="."):
     referenced = set()
     for target in targets:
         for meta in integrate_mod.read_rules(target, root).values():
+            referenced.update(integrate_mod.case_list(meta["case"]))
             referenced.add(meta["case"])
     out = []
     for c in cases_mod.discover(evals_dir):
@@ -94,7 +100,8 @@ def inert(summaries, targets, evals_dir="evals", root="."):
     by_case = {}
     for target in targets:
         for rule_id, meta in integrate_mod.read_rules(target, root).items():
-            by_case.setdefault(meta["case"], []).append((rule_id, target, meta))
+            for cid in integrate_mod.case_list(meta["case"]):
+                by_case.setdefault(cid, []).append((rule_id, target, meta))
 
     out = []
     for base, summary in sorted(summaries.items()):

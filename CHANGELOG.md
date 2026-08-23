@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.2, 2026-08-23
+
+Both changes come from the first real use of the tool, on a global `~/.claude/CLAUDE.md`, within
+the hour.
+
+- **A rule can cite several cases**, joined with `+`: `case 0001+0002`. One ban on one character
+  needs a case that replays it in prose and another that replays it in a commit message. With a
+  single id, the second case showed up forever as `unused-case` and the only ways out were to
+  delete a good case or to ignore the tool. A rule is an orphan only when EVERY case it names is
+  missing, so a rule held up by one surviving test is never proposed for deletion.
+- **Re-integrating an already promoted rule is no longer reported as a failure.** Rewriting the
+  wording, or adding a second case to the marker, is a normal thing to do; it was exiting 1 with
+  "NOT promoted in the ledger" and made a correct command look broken.
+
 ## 0.1.1, 2026-08-23
 
 The hook was shipping live. Claude Code auto-discovers `hooks/hooks.json` at a plugin root

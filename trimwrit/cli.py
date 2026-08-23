@@ -184,10 +184,13 @@ def cmd_integrate(args):
         print("refused: {}".format(exc), file=sys.stderr)
         return 2
 
-    route = args.route
+    # Re-integrating a rule that is already promoted is a normal thing to do: you rewrite the
+    # wording, or you add a second case to the marker. It is not a failure, and reporting it as
+    # one (exit 1, "NOT promoted in the ledger") sent a correct command out looking broken.
+    already_live = rule_id in ledger_mod.live_rules(root=args.root)
     try:
-        if row.get("tag"):
-            ledger_mod.promote(row["tag"], rule_id, route=route,
+        if row.get("tag") and not already_live:
+            ledger_mod.promote(row["tag"], rule_id, route=args.route,
                                consequence=args.incident or row.get("consequence"),
                                root=args.root)
     except ledger_mod.LedgerError as exc:

@@ -95,6 +95,10 @@ trimwrit integrate 0002 --target CLAUDE.md --route counter \
 Never use an em-dash or an en-dash, anywhere. Use a comma, a colon, parentheses, or start a new sentence. The ASCII hyphen is fine.
 ```
 
+A rule may cite several cases, joined with `+`: `--case 0001+0002`. One ban on one character
+needs a case that replays it in prose and another that replays it in a commit message, and the
+rule is an orphan only when every case it names is gone.
+
 **4. run.** With the rule, and without it:
 
 ```bash

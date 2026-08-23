@@ -117,3 +117,57 @@ def test_results_with_no_value_still_loads_the_inert_finding(tmp_path, capsys):
     assert "inert" in out
     assert "1.00 with R0001" in out
     assert "nothing to prune" not in out
+
+
+def test_a_rule_can_cite_several_cases(tmp_path, capsys):
+    """One rule, two cases. The first real use of this tool hit this within the hour: a ban on a
+    character needs a case that replays it in prose and one that replays it in a commit message,
+    and a marker holding one id makes the second show up forever as unused."""
+    from trimwrit import cases, integrate
+
+    evals = tmp_path / "evals"
+    for cid, title in (("0001", "in prose"), ("0002", "in a commit")):
+        cases.write_case(cid, title, "p", [cases.forbid_grader("x", name="g")],
+                         evals_dir=str(evals))
+    _run(tmp_path, "log", "you did it again", "--tag", "t", "--session", "a")
+    _run(tmp_path, "log", "and again elsewhere", "--tag", "t", "--session", "b")
+    assert _run(tmp_path, "integrate", "0002", "--case", "0001+0002",
+                "--incident", "an incident", "--rule", "the rule") == 0
+
+    meta = integrate.read_rules("CLAUDE.md", root=str(tmp_path))["R0002"]
+    assert meta["case"] == "0001+0002"
+    assert integrate.case_list(meta["case"]) == ["0001", "0002"]
+
+    _run(tmp_path, "prune")
+    out = capsys.readouterr().out
+    assert "unused-case" not in out and "orphan" not in out
+
+
+def test_a_rule_citing_two_cases_is_an_orphan_only_when_both_are_gone(tmp_path):
+    from trimwrit import cases, integrate, prune
+
+    evals = tmp_path / "evals"
+    cases.write_case("0001", "survivor", "p", [cases.forbid_grader("x", name="g")],
+                     evals_dir=str(evals))
+    integrate.write_rule("CLAUDE.md", "R1", "0001+0009", "2026-08-23", "i", "the rule",
+                         root=str(tmp_path))
+    assert prune.orphans(["CLAUDE.md"], str(evals), str(tmp_path)) == []
+
+    integrate.write_rule("CLAUDE.md", "R2", "0008+0009", "2026-08-23", "i", "another",
+                         root=str(tmp_path))
+    assert [f.rule for f in prune.orphans(["CLAUDE.md"], str(evals), str(tmp_path))] == ["R2"]
+
+
+def test_re_integrating_an_already_promoted_rule_is_not_a_failure(tmp_path, capsys):
+    from trimwrit import cases
+
+    cases.write_case("0001", "a case", "p", [cases.forbid_grader("x", name="g")],
+                     evals_dir=str(tmp_path / "evals"))
+    _run(tmp_path, "log", "one", "--tag", "t", "--session", "a")
+    _run(tmp_path, "log", "two", "--tag", "t", "--session", "b")
+    assert _run(tmp_path, "integrate", "0002", "--case", "0001",
+                "--incident", "i", "--rule", "first wording") == 0
+    # Rewriting the wording, or adding a case, must exit 0 and must not look broken.
+    assert _run(tmp_path, "integrate", "0002", "--case", "0001",
+                "--incident", "i", "--rule", "second wording") == 0
+    assert "NOT promoted" not in capsys.readouterr().err

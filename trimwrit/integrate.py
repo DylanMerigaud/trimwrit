@@ -11,6 +11,12 @@ So the rule marker carries three things a future reader needs in order to dare d
 case id (run it), the date, and the incident in one line.
 
     <!-- trimwrit case 0007, 2026-08-23: two mails went to CEOs with no fallback slot -->
+
+A rule may cite SEVERAL cases, joined with `+`: `case 0001+0002`. That is not a convenience, it
+is what the first real use of this tool asked for within the hour. One rule about a forbidden
+character needs one case that replays it in prose and another that replays it in a commit
+message, and a marker that holds a single id forces you to either drop a good case or leave it
+showing up forever as unused.
 """
 import os
 import re
@@ -36,10 +42,19 @@ def comment_for(path):
     return COMMENT.get(os.path.splitext(path)[1].lower(), DEFAULT_COMMENT)
 
 
+CASE_SEP = "+"
+
+
+def case_list(case_id):
+    """`"0001+0002"` to `["0001", "0002"]`. One id stays a one element list."""
+    return [c.strip() for c in str(case_id).split(CASE_SEP) if c.strip()]
+
+
 def marker(path, rule_id, case_id, date, incident):
     open_c, close_c = comment_for(path)
     return "{}{} {} case {}, {}: {}{}".format(
-        open_c, MARK_OPEN, rule_id, case_id, date, one_line(incident), close_c)
+        open_c, MARK_OPEN, rule_id, CASE_SEP.join(case_list(case_id)), date,
+        one_line(incident), close_c)
 
 
 def find_rule(text, rule_id):
