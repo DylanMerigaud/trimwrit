@@ -101,12 +101,20 @@ Never use an em-dash or an en-dash, anywhere. Use a comma, a colon, parentheses,
 trimwrit run --target CLAUDE.md
 ```
 
+This repo's own suite, three runs per arm, real output:
+
 ```
 case                                   with   without   delta  verdict
 ------------------------------------------------------------------------
 0002-no-em-dash-anywhere               1.00      0.00   +1.00  earns its place
-0005-decision-last-and-short           1.00      0.75   +0.25  earns its place
+0003-no-time-estimate                  1.00      0.67   +0.33  earns its place
+0005-decision-last-and-short           1.00      0.33   +0.67  earns its place
 ```
+
+Every case passes with its rule and scores strictly lower without it. A case that cannot do
+that is not measuring the rule, and two of these three could not until they were rewritten:
+0003 had a grader that forbade what its own prompt asked for, and 0005 had an llm judge that
+failed four runs out of four including the ones the mechanical grader passed.
 
 **5. prune.** The step nothing else ships:
 
