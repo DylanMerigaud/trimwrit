@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.1, 2026-08-23
+
+The hook was shipping live. Claude Code auto-discovers `hooks/hooks.json` at a plugin root
+whether or not `plugin.json` mentions it, so "the manifest does not reference it" was never an
+off switch: `claude plugin details trimwrit` on the installed copy reported
+`Hooks (1) UserPromptSubmit`. The config now ships as `hooks/hooks.disabled.json`, which
+auto-discovery ignores. Rename it to turn the hook on.
+
+A version bump rather than a silent re-push, because a pinned version is what `claude plugin
+update` compares and 0.1.0 would have left every installed copy running the hook.
+
 ## 0.1.0, 2026-08-23
 
 First release. The loop runs end to end on this repo's own corrections.
