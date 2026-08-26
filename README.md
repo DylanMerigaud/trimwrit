@@ -230,6 +230,18 @@ which succeeds with empty output before anything is staged. Both misses are in t
 | `trimwrit integrate` | write the rule, with its case and its incident |
 | `trimwrit run` | run the cases with the rule and without it |
 | `trimwrit prune` | rules that no longer earn their place |
+| `trimwrit viz` | serialize the pipeline into a payload and open it as a canvas |
+
+## See it
+
+`trimwrit viz --target CLAUDE.md` turns the whole loop, correction to gate to case to rule, into
+one graph and opens it as a local canvas: a self contained page with the graph compressed into
+the URL's hash fragment, so nothing leaves the machine. `--json` prints the raw document, and
+`--no-open` prints the URL without launching a browser.
+
+Built with components from [approvals-ui](https://github.com/DylanMerigaud/approvals-ui).
+
+![trimwrit viz](docs/viz.png)
 
 ## State
 

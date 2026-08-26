@@ -1,6 +1,7 @@
 """trimwrit: a harness rule enters with a test, and leaves when the test passes without it.
 
-Six commands, one per step of the loop, plus the one nobody else ships:
+Six commands, one per step of the loop, plus the one nobody else ships, plus the one that shows
+the whole loop as a canvas:
 
   log        record a correction, verbatim, in an append-only ledger
   pending    which tags have earned a rule, by which of the two routes
@@ -8,6 +9,7 @@ Six commands, one per step of the loop, plus the one nobody else ships:
   integrate  write the rule into a target, with the case id and the incident attached
   run        run the cases, with the rule and without it, and report the delta
   prune      list the rules that no longer earn their place, with the numbers
+  viz        serialize the pipeline into a payload and open it as a local canvas
 
 The CLI is the only writer. Skills call it, they never edit the ledger or a case by hand, and
 that is deliberate: a ledger that a model can edit in prose is a ledger that will disagree with
@@ -18,13 +20,15 @@ import json
 import os
 import sys
 import time
+import webbrowser
 
 from . import cases as cases_mod
 from . import integrate as integrate_mod
 from . import ledger as ledger_mod
 from . import prune as prune_mod
 from . import runner as runner_mod
-from .text import RefusedWrite, one_line
+from . import viz as viz_mod
+from .text import RefusedWrite, one_line, write_text
 
 BAR = "-" * 72
 DEFAULT_TARGETS = ("CLAUDE.md",)
@@ -289,6 +293,7 @@ def cmd_run(args):
         print("\nA case that scores the same in both arms is measuring nothing. Run\n"
               "`trimwrit prune --results` to see which rules that makes deletable.")
         _save_results(args, summaries)
+    print("viz: run 'trimwrit viz --target {}' to see this as a canvas".format(_targets(args)[0]))
     return 1 if failures else 0
 
 
@@ -325,6 +330,7 @@ def cmd_prune(args):
     if not findings:
         print("nothing to prune. Every rule names a case that exists, and every case that ran\n"
               "scored better with its rule than without it.")
+        print("viz: run 'trimwrit viz --target {}' to see this as a canvas".format(_targets(args)[0]))
         return 0
 
     print("{:<12} {:<8} why".format("kind", "rule"))
@@ -344,6 +350,40 @@ def cmd_prune(args):
     else:
         print("\nnothing was changed. Re-run with --apply to delete these rules and record the\n"
               "removal in the ledger.")
+    print("viz: run 'trimwrit viz --target {}' to see this as a canvas".format(_targets(args)[0]))
+    return 0
+
+
+# ------------------------------------------------------------------ viz
+
+
+def cmd_viz(args):
+    target = args.target or DEFAULT_TARGETS[0]
+    doc = viz_mod.build_doc(target, root=args.root, evals_dir=args.evals)
+
+    if args.json:
+        print(json.dumps(doc, indent=2, ensure_ascii=False))
+        return 0
+
+    payload = viz_mod.encode_payload(doc)
+    viewer = viz_mod.viewer_path()
+
+    if not os.path.exists(viewer):
+        out_path = os.path.join(args.root, ledger_mod.LEDGER_DIR, "viz.json")
+        write_text(out_path, json.dumps(doc, indent=2, ensure_ascii=False), "the viz payload")
+        print("no viewer at {}. Build viz/dist/index.html first, or install a trimwrit release "
+              "that carries it.".format(viewer))
+        print("wrote the raw payload to {} instead.".format(out_path))
+        return 0
+
+    url = viz_mod.payload_url(viewer, payload)
+    if args.no_open:
+        print(url)
+        return 0
+
+    webbrowser.open(url)
+    print("opened {} (the payload rides in the URL fragment, nothing left this machine)."
+          .format(viewer))
     return 0
 
 
@@ -426,6 +466,15 @@ def main(argv=None):
                                                            "needed for the inert finding")
     pr.add_argument("--apply", action="store_true", help="actually delete, and record it")
     pr.set_defaults(func=cmd_prune)
+
+    vz = sub.add_parser("viz", help="serialize the pipeline into a canvas payload")
+    vz.add_argument("--target", help="the rule file to build the graph against (default "
+                                     "CLAUDE.md), one file, not a comma separated list")
+    vz.add_argument("--json", action="store_true", help="print the raw JSON document, nothing "
+                                                        "else, no browser")
+    vz.add_argument("--no-open", action="store_true",
+                    help="print the full file:// URL instead of opening a browser")
+    vz.set_defaults(func=cmd_viz)
 
     args = p.parse_args(argv)
     try:
