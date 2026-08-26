@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0, 2026-08-25
+
+- **`trimwrit viz`: the whole loop as one canvas.** The command serializes the pipeline
+  (corrections, promotion gates, cases with their with/without deltas, integrated rules) into a
+  compressed payload and opens `viz/dist/index.html` with the graph in the URL's hash fragment:
+  a self contained page, no server, nothing leaves the machine. `--json` prints the raw
+  document, `--no-open` prints the URL. `run` and `prune` now end with a one line pointer to it.
+- **The viewer is vendored from [approvals-ui](https://github.com/DylanMerigaud/approvals-ui)**
+  and forked to a generic stage node: kind chip, status ring (pending, passed, failed, skipped),
+  meta rows. It ships prebuilt as one committed file, so the Python CLI stays stdlib only and
+  nothing needs npm at use time.
+
 ## 0.1.2, 2026-08-23
 
 Both changes come from the first real use of the tool, on a global `~/.claude/CLAUDE.md`, within
