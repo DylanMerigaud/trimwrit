@@ -152,6 +152,49 @@ And it is why `prune` reports numbers rather than an opinion. An **inert** rule 
 is unnecessary, because the model already behaves, and that is the only honest reason to delete
 an instruction everybody still agrees with.
 
+## The runtime half: what a rule did in production
+
+`prune` answers whether the eval still needs a rule. It never sees what the rule did outside the
+eval, because nothing in this repo runs in production. `stats` answers the question `prune`
+cannot: aggregate a JSONL ledger of rule evaluations from wherever you already log them, and
+flag two classes of rule for a human to look at. Nothing gets deleted. There is no `--apply`,
+because a runtime tally is not the kind of evidence `prune` deletes on.
+
+```bash
+trimwrit stats ledger.jsonl
+```
+
+```
+24 row(s) read, 0 malformed (blank or not JSON, skipped).
+
+2 rule key(s) evaluated.
+
+DEAD WEIGHT (fires >= 15, 0 fail, 0 close call within 2 of the line)
+------------------------------------------------------------------------
+no-time-estimate                    15 fires   min margin 10
+
+These rules run on text a model GENERATED. Zero fails can mean the generator
+already internalized the rule, and deleting the rule is the only move that finds
+out, because that is what un-internalizes it. The strong case for deletion is a rule
+that is ALSO absent from every logged correction, which this command cannot check.
+
+FRICTION (decided >= 8, fail rate >= 25%)
+------------------------------------------------------------------------
+no-em-dash                           9 decided   fail rate 0.333
+
+A rule that refuses this much of what it sees is either load-bearing or costing
+more than it protects. Which one it is stays a human call, not a number.
+```
+
+The ledger can be flat, one evaluation per line, `{"rule": ..., "status": "PASS", "margin": 3}`,
+or a nested verdict row scoring several rules against one prompt at once: `{"surface": "...",
+"gates": [{"gate": ..., "status": ..., "margin": ...}, ...]}`. Both shapes are read from the
+same file, auto detected line by line, and the aggregation key is `(surface, rule)` either way,
+so a flat row with no surface and a gate scored under one never collide by accident. `--json`
+prints the full aggregate, and the four thresholds (`--min-fires`, `--close-margin`,
+`--friction-fires`, `--friction-rate`) are flags because the defaults are a starting point, not
+a law.
+
 ## The baseline has to be clean, and by default it is
 
 The runner passes `--setting-sources project,local`, which drops your own
@@ -231,6 +274,7 @@ which succeeds with empty output before anything is staged. Both misses are in t
 | `trimwrit run` | run the cases with the rule and without it |
 | `trimwrit prune` | rules that no longer earn their place |
 | `trimwrit viz` | serialize the pipeline into a payload and open it as a canvas |
+| `trimwrit stats` | aggregate a runtime ledger and flag dead weight and friction, no deletion |
 
 ## See it
 

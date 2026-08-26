@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.1, 2026-08-26
+
+- **`trimwrit stats`: what a rule did outside the eval.** `prune` answers whether the eval still
+  needs a rule; `stats` aggregates a JSONL ledger of rule evaluations, either flat (one line, one
+  evaluation) or the nested `{"gates": [...]}` verdict shape a private repo's own judge already
+  logs, auto detected per line, and flags two candidate classes: DEAD WEIGHT (fired at least 15
+  times, never failed once, never came within 2 of the line) and FRICTION (decided at least 8
+  times, refuses a quarter or more of them). It changes nothing, there is no `--apply`, and the
+  dead weight report carries its own caveat: a rule can score zero fails because the generator
+  internalized it rather than because the rule does nothing, and removing the rule is the only
+  way to find out.
+- All four thresholds (`--min-fires`, `--close-margin`, `--friction-fires`, `--friction-rate`)
+  are overridable flags, and `--json` prints the full aggregate.
+- `pyproject.toml` and `trimwrit/__init__.py` had drifted to 0.1.2 while `plugin.json` and
+  `marketplace.json` moved to 0.2.0 in the last release. All four now read the same version.
+
 ## 0.2.0, 2026-08-25
 
 - **`trimwrit viz`: the whole loop as one canvas.** The command serializes the pipeline

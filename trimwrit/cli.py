@@ -1,7 +1,7 @@
 """trimwrit: a harness rule enters with a test, and leaves when the test passes without it.
 
 Six commands, one per step of the loop, plus the one nobody else ships, plus the one that shows
-the whole loop as a canvas:
+the whole loop as a canvas, plus the one that reads what a rule did after it shipped:
 
   log        record a correction, verbatim, in an append-only ledger
   pending    which tags have earned a rule, by which of the two routes
@@ -10,6 +10,7 @@ the whole loop as a canvas:
   run        run the cases, with the rule and without it, and report the delta
   prune      list the rules that no longer earn their place, with the numbers
   viz        serialize the pipeline into a payload and open it as a local canvas
+  stats      aggregate a ledger of rule evaluations and flag runtime candidates
 
 The CLI is the only writer. Skills call it, they never edit the ledger or a case by hand, and
 that is deliberate: a ledger that a model can edit in prose is a ledger that will disagree with
@@ -27,6 +28,7 @@ from . import integrate as integrate_mod
 from . import ledger as ledger_mod
 from . import prune as prune_mod
 from . import runner as runner_mod
+from . import stats as stats_mod
 from . import viz as viz_mod
 from .text import RefusedWrite, one_line, write_text
 
@@ -387,6 +389,64 @@ def cmd_viz(args):
     return 0
 
 
+# ------------------------------------------------------------------ stats
+
+
+def _label(row):
+    return "{}/{}".format(row["surface"], row["rule"]) if row["surface"] else row["rule"]
+
+
+def cmd_stats(args):
+    try:
+        result = stats_mod.compute(
+            args.ledger, min_fires=args.min_fires, close_margin=args.close_margin,
+            friction_fires=args.friction_fires, friction_rate=args.friction_rate)
+    except OSError as exc:
+        print("refused: cannot read {}: {}".format(args.ledger, exc), file=sys.stderr)
+        return 2
+
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return 0
+
+    print("{} row(s) read, {} malformed (blank or not JSON, skipped).".format(
+        result["total_rows"], result["malformed"]))
+
+    if result["surfaces"]:
+        print("\n{:<28} {:>6}".format("surface", "fires"))
+        print(BAR)
+        for surface, n in sorted(result["surfaces"].items(), key=lambda kv: (-kv[1], kv[0])):
+            print("{:<28} {:>6}".format(surface, n))
+
+    print("\n{} rule key(s) evaluated.".format(len(result["rules"])))
+
+    t = result["thresholds"]
+    print("\nDEAD WEIGHT (fires >= {}, 0 fail, 0 close call within {} of the line)".format(
+        t["min_fires"], t["close_margin"]))
+    print(BAR)
+    if not result["dead_weight"]:
+        print("none.")
+    for r in result["dead_weight"]:
+        print("{:<32} {:>5} fires   min margin {}".format(
+            _label(r), r["fires"], r["min_margin"] if r["min_margin"] is not None else "-"))
+    print("\nThese rules run on text a model GENERATED. Zero fails can mean the generator\n"
+          "already internalized the rule, and deleting the rule is the only move that finds\n"
+          "out, because that is what un-internalizes it. The strong case for deletion is a rule\n"
+          "that is ALSO absent from every logged correction, which this command cannot check.")
+
+    print("\nFRICTION (decided >= {}, fail rate >= {:.0%})".format(
+        t["friction_fires"], t["friction_rate"]))
+    print(BAR)
+    if not result["friction"]:
+        print("none.")
+    for r in result["friction"]:
+        print("{:<32} {:>5} decided   fail rate {:.3f}".format(
+            _label(r), r["decided"], r["fail_rate"]))
+    print("\nA rule that refuses this much of what it sees is either load-bearing or costing\n"
+          "more than it protects. Which one it is stays a human call, not a number.")
+    return 0
+
+
 # ------------------------------------------------------------------ parser
 
 
@@ -475,6 +535,19 @@ def main(argv=None):
     vz.add_argument("--no-open", action="store_true",
                     help="print the full file:// URL instead of opening a browser")
     vz.set_defaults(func=cmd_viz)
+
+    st = sub.add_parser("stats", help="aggregate a ledger of rule evaluations, no deletion")
+    st.add_argument("ledger", help="JSONL file, one rule evaluation per line or per gate")
+    st.add_argument("--json", action="store_true", help="print the full aggregate as JSON")
+    st.add_argument("--min-fires", type=int, default=stats_mod.DEAD_WEIGHT_MIN_FIRES,
+                    help="dead weight: fires needed before a clean record counts for anything")
+    st.add_argument("--close-margin", type=float, default=stats_mod.DEAD_WEIGHT_CLOSE_MARGIN,
+                    help="dead weight: a margin at or under this is a close call")
+    st.add_argument("--friction-fires", type=int, default=stats_mod.FRICTION_MIN_DECIDED,
+                    help="friction: decided evaluations needed before a fail rate counts")
+    st.add_argument("--friction-rate", type=float, default=stats_mod.FRICTION_MIN_RATE,
+                    help="friction: fail rate at or above this flags the rule")
+    st.set_defaults(func=cmd_stats)
 
     args = p.parse_args(argv)
     try:

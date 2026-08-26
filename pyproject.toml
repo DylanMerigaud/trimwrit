@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "trimwrit"
-version = "0.1.2"
+version = "0.2.1"
 description = "A harness rule enters with a test, and leaves when the test passes without it."
 readme = "README.md"
 requires-python = ">=3.9"
