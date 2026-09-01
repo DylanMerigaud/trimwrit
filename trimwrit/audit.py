@@ -146,11 +146,20 @@ def _harness_record(path, repo_abspath):
 
 
 def _find_evals_dir(repo):
+    """The repo's own `evals/`, never a nested repo's.
+
+    Found on the first laptop run, 2026-09-01: `~/Code/newsnakeproject` has no `.git`, so it
+    fell back to `~/Code` as its repo, and this walk then descended into `~/Code/growth-cockpit`
+    and reported that umbrella directory as holding 38 cases that belong to a repo of its own.
+    A directory that carries its own `.git` is its own row in this table, so the walk stops at
+    its door.
+    """
     default = os.path.join(repo, "evals")
     if os.path.isdir(default):
         return default
+    repo_abs = os.path.abspath(repo)
     for dirpath, _filenames in _walk_prefixed(repo):
-        if os.path.basename(dirpath) == "evals":
+        if os.path.basename(dirpath) == "evals" and _find_repo(dirpath, repo_abs) == repo_abs:
             return dirpath
     return None
 

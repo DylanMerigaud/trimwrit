@@ -197,3 +197,29 @@ def _stdout(tmp_path, *argv):
         code = _run(tmp_path, *argv)
     assert code == 0
     return buf.getvalue()
+
+
+def test_an_umbrella_directory_never_borrows_a_nested_repos_cases(tmp_path):
+    """Found on the first laptop run, 2026-09-01: `~/Code/newsnakeproject` has no `.git`, so it
+    fell back to `~/Code` as its repo, and the evals walk under `~/Code` then found
+    `~/Code/growth-cockpit/evals` and reported the umbrella as holding 38 cases that belong to a
+    repo of its own. An `evals/` inside a directory carrying its own `.git` is that repo's row,
+    never the umbrella's.
+    """
+    base = tmp_path
+    umbrella = os.path.join(base, "Code")
+    # The non-repo project that makes the umbrella a pseudo-repo.
+    _write(os.path.join(umbrella, "loose-project", "CLAUDE.md"), "# loose\n\n## one\n")
+    # The real repo next to it, with cases of its own.
+    nested = os.path.join(umbrella, "nested")
+    os.makedirs(os.path.join(nested, ".git"))
+    _write(os.path.join(nested, "CLAUDE.md"), "# nested\n\n## one\n")
+    _write(os.path.join(nested, "evals", "0001-x", "prompt.md"), CASE_PROMPT)
+    _write(os.path.join(nested, "evals", "0001-x", "graders", "g.md"), CASE_GRADER)
+
+    doc = audit.compute(root=umbrella)
+    by_repo = {r["repo"]: r for r in doc["repos"]}
+    assert by_repo[audit._display_path(nested)]["cases"] == 1
+    assert by_repo[audit._display_path(umbrella)]["cases"] == 0, (
+        "the umbrella borrowed the nested repo's evals dir")
+    assert audit._display_path(umbrella) in doc["summary"]["zero_cases"]
