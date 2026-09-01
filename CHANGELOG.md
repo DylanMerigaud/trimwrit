@@ -54,6 +54,16 @@ output text at all, so verifying a flagged run meant re-running it by hand.
   arms is close to 200 `claude -p` calls at 30 to 60 seconds apiece; sequential, that is close
   to two hours for one replay, which is the difference between a replay that happens and one
   that does not.
+- **`trimwrit audit`: every harness on the machine, one table.** Walks `--roots` (or
+  `--laptop`, which is `~/.claude` plus `~/Code`) for `CLAUDE.md`, `.claude/rules/*.md` and
+  `.claude/skills/*/SKILL.md`, attributes each to the nearest repo, and reports lines,
+  sections, integrated rules, cases, last run and last score per row, then the three counts
+  the command exists for: repos with ZERO cases, repos stale past `--stale` days, and
+  harnesses carrying a promoted rule with no evals dir to measure it. First laptop run,
+  2026-09-01: 106 harness files in 28 repos, 24 repos with no case at all. A directory with
+  no `.git` is attributed to the root it sits under, and that umbrella never borrows a
+  nested repo's evals dir (found the same day: `~/Code` reported 38 cases that were
+  growth-cockpit's).
 
 ## 0.2.1, 2026-08-26
 

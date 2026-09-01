@@ -3,7 +3,7 @@
   "name": "trimwrit",
   "displayName": "trimwrit",
   "description": "A harness rule enters with a test and leaves when the test passes without it. Turns a correction into an eval case, writes the rule with the incident attached, and deletes the rules that stopped mattering.",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "author": { "name": "Dylan Merigaud", "url": "https://github.com/DylanMerigaud" },
   "homepage": "https://github.com/DylanMerigaud/trimwrit",
   "repository": "https://github.com/DylanMerigaud/trimwrit",

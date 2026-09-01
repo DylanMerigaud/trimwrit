@@ -25,6 +25,7 @@ import sys
 import time
 import webbrowser
 
+from . import audit as audit_mod
 from . import cases as cases_mod
 from . import check as check_mod
 from . import integrate as integrate_mod
@@ -593,6 +594,19 @@ def cmd_stats(args):
     return 0
 
 
+# ------------------------------------------------------------------ audit
+
+
+def cmd_audit(args):
+    result = audit_mod.compute(args.root, roots=args.roots, laptop=args.laptop,
+                               stale_days=args.stale)
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(audit_mod.render_table(result))
+    return 0
+
+
 # ------------------------------------------------------------------ parser
 
 
@@ -721,6 +735,14 @@ def main(argv=None):
     st.add_argument("--friction-rate", type=float, default=stats_mod.FRICTION_MIN_RATE,
                     help="friction: fail rate at or above this flags the rule")
     st.set_defaults(func=cmd_stats)
+
+    au = sub.add_parser("audit", help="one table for every harness on the machine")
+    au.add_argument("--roots", nargs="+", help="directories to scan (default: --root)")
+    au.add_argument("--laptop", action="store_true", help="scan ~/.claude and ~/Code")
+    au.add_argument("--json", action="store_true")
+    au.add_argument("--stale", type=int, default=audit_mod.DEFAULT_STALE_DAYS,
+                    help="days before a repo's last run counts as stale")
+    au.set_defaults(func=cmd_audit)
 
     args = p.parse_args(argv)
     try:
