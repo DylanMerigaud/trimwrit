@@ -1,11 +1,12 @@
 """trimwrit: a harness rule enters with a test, and leaves when the test passes without it.
 
-Six commands, one per step of the loop, plus the one nobody else ships, plus the one that shows
-the whole loop as a canvas, plus the one that reads what a rule did after it shipped:
+Seven commands, one per step of the loop, plus the one nobody else ships, plus the one that
+shows the whole loop as a canvas, plus the one that reads what a rule did after it shipped:
 
   log        record a correction, verbatim, in an append-only ledger
   pending    which tags have earned a rule, by which of the two routes
   case       turn a correction into an eval case in the native `plugin eval` format
+  check      prove every grader can actually fire, before a run trusts it
   integrate  write the rule into a target, with the case id and the incident attached
   run        run the cases, with the rule and without it, and report the delta
   prune      list the rules that no longer earn their place, with the numbers
@@ -17,6 +18,7 @@ that is deliberate: a ledger that a model can edit in prose is a ledger that wil
 itself within a week.
 """
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -24,6 +26,7 @@ import time
 import webbrowser
 
 from . import cases as cases_mod
+from . import check as check_mod
 from . import integrate as integrate_mod
 from . import ledger as ledger_mod
 from . import prune as prune_mod
@@ -150,7 +153,8 @@ def cmd_case(args):
             tags=[t for t in (args.tags or "").split(",") if t] or ([row["tag"]] if row["tag"] else []),
             runs=args.runs, max_turns=args.max_turns,
             description=one_line(row["text"]),
-            plugins=[p for p in (args.plugins or "").split(",") if p] or None)
+            plugins=[p for p in (args.plugins or "").split(",") if p] or None,
+            must_match=args.must_match or (), must_not_match=args.must_not_match or ())
     except cases_mod.CaseError as exc:
         print("refused: {}".format(exc), file=sys.stderr)
         return 2
@@ -230,6 +234,45 @@ def _rule_files(args, root):
     return out
 
 
+def _unchecked_summary(reason, arms):
+    """The stand-in `summarise()`-shaped dict for a case whose grader failed its own proof and
+    was never run at all. `with` is `None` for the same reason a genuinely unmeasured run is
+    `None` (see runner.summarise): there is no honest score to report, and the two situations
+    share one accounting path in the code below rather than two."""
+    return {"with": None, "without": None if runner_mod.ARM_WITHOUT in arms else 0.0,
+           "delta": None, "runs": {a: 0 for a in arms},
+           "unmeasured": {a: 0 for a in arms},
+           "unmeasured_detail": {a: None for a in arms},
+           "unchecked_reason": reason}
+
+
+def _append_history(path, ts, case, summary, rule_files, targets, claude):
+    """One JSON line per case per `run` invocation, appended forever.
+
+    `results/latest.json` (see `_save_results`) is overwritten on every run and answers "what is
+    true now"; this answers "what has this rule's delta looked like across every run anyone has
+    done", which `prune` cannot see and nothing else in this repo keeps. `target_sha256` pins
+    which version of the rule file produced these numbers, computed from `rule_files` (what was
+    actually seeded into the `with` arm) rather than from re-reading disk later, so a rewrite of
+    the target between two runs is visible as a different hash on this line, not a silent one.
+
+    Plain data, hashes and numbers and a case name that is already a filesystem-safe slug, so
+    this bypasses `text.append_text`'s dash gate the same way `runner.write_evidence` does: the
+    gate is for written copy, not for a machine ledger that cannot legitimately contain one.
+    """
+    row = {
+        "ts": ts, "case": os.path.basename(case.path), "target": list(targets),
+        "target_sha256": {name: hashlib.sha256(content.encode("utf-8")).hexdigest()
+                          for name, content in sorted(rule_files.items())},
+        "with": summary["with"], "without": summary.get("without"), "delta": summary["delta"],
+        "runs": summary["runs"].get(runner_mod.ARM_WITH, 0),
+        "unmeasured": summary.get("unmeasured", {}), "claude": claude,
+    }
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
 def cmd_run(args):
     evals_dir = os.path.join(args.root, args.evals)
     found = cases_mod.discover(evals_dir)
@@ -256,20 +299,62 @@ def cmd_run(args):
             print("  {:<34} {:<8} run {}/{}".format(os.path.basename(case.path), arm, i, n),
                   file=sys.stderr)
 
-    summaries, payload = {}, {"cases": []}
-    failures = 0
+    # Every selected case is checked BEFORE anything runs: a grader that cannot prove it can
+    # fire is a hole in the measurement, and the incident this exists for (see check.py) is a
+    # suite that ran to completion and reported a green board with the graders disconnected.
+    # A hard failure always refuses the case; an unproven grader (no must_match/must_not_match
+    # at all) only refuses it under --strict, and is a warning otherwise.
+    runnable, blocked = [], {}
+    unproven_total = 0
     for case in found:
-        per_arm = runner_mod.run_case(case, rule_files, arms=arms, runs=args.runs,
-                                      claude=args.claude, judge=judge, progress=progress,
-                                      isolate=not args.no_isolation)
-        summary = runner_mod.summarise(per_arm)
+        problems = check_mod.check_case(case)
+        hard = [p for p in problems if p["kind"] == check_mod.FAILURE]
+        unproven = [p for p in problems if p["kind"] == check_mod.UNPROVEN]
+        unproven_total += len(unproven)
+        blocking = hard + (unproven if args.strict else [])
+        if blocking:
+            blocked[case.path] = "; ".join(p["reason"] for p in blocking)
+        else:
+            runnable.append(case)
+
+    history_path = os.path.join(evals_dir, "results", "history.jsonl")
+    ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    runs_dir = os.path.join(evals_dir, "results", "runs")
+
+    results_by_case = runner_mod.run_many(
+        runnable, rule_files, arms=arms, runs=args.runs, claude=args.claude, judge=judge,
+        progress=progress, isolate=not args.no_isolation, jobs=args.jobs)
+
+    summaries, payload = {}, {"cases": []}
+    failures, unmeasured_cases, wrote_evidence = 0, 0, False
+    for case in found:
         base = os.path.basename(case.path)
+        if case.path in blocked:
+            summary = _unchecked_summary(blocked[case.path], arms)
+            payload["cases"].append({"name": base, "summary": summary,
+                                    "arms": {a: [] for a in arms}})
+        else:
+            per_arm = results_by_case[case.path]
+            if not args.no_save:
+                for rs in per_arm.values():
+                    for r in rs:
+                        runner_mod.write_evidence(r, evals_dir)
+                        wrote_evidence = True
+            summary = runner_mod.summarise(per_arm)
+            payload["cases"].append({"name": base, "summary": summary, "arms": {
+                arm: [{"passed": r.passed, "score": r.score, "error": r.error,
+                      "unmeasured": r.unmeasured, "grades": r.grades} for r in rs]
+                for arm, rs in per_arm.items()}})
         summaries[base] = summary
-        payload["cases"].append({"name": base, "summary": summary, "arms": {
-            arm: [{"passed": r.passed, "score": r.score, "error": r.error,
-                   "grades": r.grades} for r in rs] for arm, rs in per_arm.items()}})
-        if summary["with"] < args.threshold:
+
+        if summary["with"] is None:
+            unmeasured_cases += 1
+            if args.fail_on_unmeasured:
+                failures += 1
+        elif summary["with"] < args.threshold:
             failures += 1
+
+        _append_history(history_path, ts, case, summary, rule_files, _targets(args), args.claude)
 
     if args.json:
         print(json.dumps(payload, indent=2, ensure_ascii=False))
@@ -278,23 +363,49 @@ def cmd_run(args):
     print("\n{:<36} {:>6} {:>9} {:>7}  verdict".format("case", "with", "without", "delta"))
     print(BAR)
     for base, s in sorted(summaries.items()):
-        if args.no_ablation:
-            verdict = "pass" if s["with"] >= args.threshold else "FAIL"
-            print("{:<36} {:>6.2f} {:>9} {:>7}  {}".format(base, s["with"], "-", "-", verdict))
+        if s.get("unchecked_reason"):
+            print("{:<36} {:>6} {:>9} {:>7}  UNCHECKED, grader failed its own proof: {}".format(
+                base, "?", "?", "?", s["unchecked_reason"]))
             continue
+        if args.no_ablation:
+            if s["with"] is None:
+                verdict = "UNMEASURED ({} run(s): {})".format(
+                    s["unmeasured"]["with"], s["unmeasured_detail"]["with"])
+                print("{:<36} {:>6} {:>9} {:>7}  {}".format(base, "?", "-", "-", verdict))
+            else:
+                verdict = "pass" if s["with"] >= args.threshold else "FAIL"
+                print("{:<36} {:>6.2f} {:>9} {:>7}  {}".format(
+                    base, s["with"], "-", "-", verdict))
+            continue
+        if s["with"] is None:
+            verdict = "UNMEASURED ({} run(s): {})".format(
+                s["unmeasured"]["with"], s["unmeasured_detail"]["with"])
+            without_str = "{:.2f}".format(s["without"]) if s["without"] is not None else "?"
+            print("{:<36} {:>6} {:>9} {:>7}  {}".format(base, "?", without_str, "?", verdict))
+            continue
+        without_str = "{:.2f}".format(s["without"]) if s["without"] is not None else "?"
+        delta_str = "{:+.2f}".format(s["delta"]) if s["delta"] is not None else "?"
         if s["with"] < args.threshold:
             verdict = "FAIL, the rule is not holding"
+        elif s["delta"] is None:
+            verdict = "UNMEASURED, the without arm never produced a measured run"
         elif s["delta"] <= 0:
             verdict = "INERT, passes without the rule too"
         else:
             verdict = "earns its place"
-        print("{:<36} {:>6.2f} {:>9.2f} {:>+7.2f}  {}".format(
-            base, s["with"], s["without"], s["delta"], verdict))
+        print("{:<36} {:>6.2f} {:>9} {:>7}  {}".format(
+            base, s["with"], without_str, delta_str, verdict))
 
     if not args.no_ablation:
         print("\nA case that scores the same in both arms is measuring nothing. Run\n"
               "`trimwrit prune --results` to see which rules that makes deletable.")
         _save_results(args, summaries)
+    if unmeasured_cases:
+        print("\n{} case(s) unmeasured, they are not passes.".format(unmeasured_cases))
+    if unproven_total and not args.strict:
+        print("{} unproven grader(s), run with --strict to refuse them.".format(unproven_total))
+    if not args.no_save and wrote_evidence:
+        print("evidence written to {}".format(runs_dir))
     print("viz: run 'trimwrit viz --target {}' to see this as a canvas".format(_targets(args)[0]))
     return 1 if failures else 0
 
@@ -305,6 +416,41 @@ def _save_results(args, summaries):
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(summaries, fh, indent=2)
     print("results written to {}".format(path))
+
+
+# ------------------------------------------------------------------ check
+
+
+def cmd_check(args):
+    evals_dir = os.path.join(args.root, args.evals)
+    found = cases_mod.discover(evals_dir)
+    if args.case:
+        found = [c for c in found if args.case in os.path.basename(c.path)]
+    if not found:
+        print("no cases in {}".format(evals_dir), file=sys.stderr)
+        return 2
+
+    problems = []
+    for case in found:
+        problems.extend(check_mod.check_case(case))
+    hard = [p for p in problems if p["kind"] == check_mod.FAILURE]
+    unproven = [p for p in problems if p["kind"] == check_mod.UNPROVEN]
+    failures = hard + unproven if args.strict else hard
+    n_graders = sum(len(c.graders) for c in found)
+
+    if args.json:
+        print(json.dumps({"cases": len(found), "graders": n_graders,
+                          "failures": failures, "unproven": unproven},
+                         indent=2, ensure_ascii=False))
+        return 1 if failures else 0
+
+    for p in failures:
+        print("{} / {}: {}".format(p["case"], p["grader"], p["reason"]))
+    print("\n{} case(s), {} grader(s) checked, {} failure(s).".format(
+        len(found), n_graders, len(failures)))
+    if unproven and not args.strict:
+        print("{} unproven grader(s), run with --strict to refuse them.".format(len(unproven)))
+    return 1 if failures else 0
 
 
 # ------------------------------------------------------------------ prune
@@ -491,7 +637,21 @@ def main(argv=None):
     cs.add_argument("--plugins", help="comma separated plugin paths for the native runner")
     cs.add_argument("--runs", type=int, default=3)
     cs.add_argument("--max-turns", type=int, default=6)
+    cs.add_argument("--must-match", action="append",
+                    help="text a regex grader's pattern must match, its proof it can fire "
+                         "(repeatable)")
+    cs.add_argument("--must-not-match", action="append",
+                    help="text a regex grader's pattern must NOT match (repeatable)")
     cs.set_defaults(func=cmd_case)
+
+    ck = sub.add_parser("check", help="prove every grader can actually fire, before a run "
+                                      "trusts it")
+    ck.add_argument("--case", help="substring filter on the case directory name")
+    ck.add_argument("--strict", action="store_true",
+                    help="a regex grader with no must_match/must_not_match is a failure, not "
+                         "just a warning")
+    ck.add_argument("--json", action="store_true")
+    ck.set_defaults(func=cmd_check)
 
     ig = sub.add_parser("integrate", help="write the rule into a target, with its case attached")
     ig.add_argument("id")
@@ -518,6 +678,19 @@ def main(argv=None):
     rn.add_argument("--no-isolation", action="store_true",
                     help="let the run inherit your own ~/.claude/CLAUDE.md. Off by default, "
                          "because it contaminates the baseline arm and every delta with it")
+    rn.add_argument("--strict", action="store_true",
+                    help="refuse a case whose regex grader has no must_match/must_not_match, "
+                         "instead of just warning about it (see `trimwrit check`)")
+    rn.add_argument("--fail-on-unmeasured", action="store_true",
+                    help="a case unmeasured in the `with` arm counts toward the exit code. Off "
+                         "by default: an API safeguard or a max_turns cutoff is not the rule "
+                         "failing")
+    rn.add_argument("--no-save", action="store_true",
+                    help="do not write the per-run evidence files under results/runs/")
+    rn.add_argument("--jobs", type=int, default=1,
+                    help="run this many (case, arm, run) triples at once across ALL selected "
+                         "cases. The table, JSON, evidence and history are identical to --jobs "
+                         "1, just faster")
     rn.set_defaults(func=cmd_run)
 
     pr = sub.add_parser("prune", help="rules that no longer earn their place")

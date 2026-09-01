@@ -238,3 +238,285 @@ def test_re_integrating_an_already_promoted_rule_is_not_a_failure(tmp_path, caps
     assert _run(tmp_path, "integrate", "0002", "--case", "0001",
                 "--incident", "i", "--rule", "second wording") == 0
     assert "NOT promoted" not in capsys.readouterr().err
+
+
+# ==================================================================== trimwrit check
+
+
+def test_check_reports_a_pattern_that_does_not_compile(tmp_path, capsys):
+    from trimwrit import cases
+
+    cases.write_case("0001", "broken", "p",
+                     [{"type": "regex", "name": "g", "pattern": "[", "match": "contains"}],
+                     evals_dir=str(tmp_path / "evals"))
+    assert _run(tmp_path, "check") == 1
+    out = capsys.readouterr().out
+    assert "0001-broken / g" in out and "does not compile" in out
+
+
+def test_check_a_clean_case_exits_0(tmp_path, capsys):
+    from trimwrit import cases
+
+    cases.write_case("0001", "clean", "p",
+                     [cases.forbid_grader("bad word", name="g", must_match=["a bad word here"],
+                                          must_not_match=["nothing wrong"])],
+                     evals_dir=str(tmp_path / "evals"))
+    assert _run(tmp_path, "check") == 0
+    out = capsys.readouterr().out
+    assert "1 case(s), 1 grader(s) checked, 0 failure(s)" in out
+
+
+def test_check_an_unproven_grader_is_a_warning_not_a_failure_by_default(tmp_path, capsys):
+    from trimwrit import cases
+
+    cases.write_case("0001", "unproven", "p", [cases.forbid_grader("x", name="g")],
+                     evals_dir=str(tmp_path / "evals"))
+    assert _run(tmp_path, "check") == 0
+    out = capsys.readouterr().out
+    assert "1 unproven grader(s), run with --strict to refuse them." in out
+
+
+def test_check_strict_refuses_the_unproven_grader(tmp_path, capsys):
+    from trimwrit import cases
+
+    cases.write_case("0001", "unproven", "p", [cases.forbid_grader("x", name="g")],
+                     evals_dir=str(tmp_path / "evals"))
+    assert _run(tmp_path, "check", "--strict") == 1
+    out = capsys.readouterr().out
+    assert "unproven grader: nothing shows this pattern can fire" in out
+
+
+def test_check_json_reports_counts_and_lists(tmp_path, capsys):
+    from trimwrit import cases
+
+    cases.write_case("0001", "unproven", "p", [cases.forbid_grader("x", name="g")],
+                     evals_dir=str(tmp_path / "evals"))
+    assert _run(tmp_path, "check", "--json") == 0
+    import json
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["cases"] == 1 and payload["graders"] == 1
+    assert payload["failures"] == []
+    assert len(payload["unproven"]) == 1
+
+
+# ==================================================================== run + check gate
+
+
+def _write_no_final_text_claude(tmp_path):
+    """Always answers with no final text at all, the way an API safeguard refusing a prompt
+    looks from the outside. Used to exercise the unmeasured path with no real model call."""
+    path = tmp_path / "empty-claude.py"
+    path.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "print(json.dumps({'type': 'result', 'result': ''}))\n",
+        encoding="utf-8")
+    os.chmod(path, 0o755)
+    return str(path)
+
+
+def test_run_refuses_a_case_whose_must_match_example_does_not_match(tmp_path, capsys):
+    from trimwrit import cases
+
+    cases.write_case(
+        "0001", "bad proof", "say something",
+        [cases.forbid_grader("bad word", name="g", must_match=["this never matches"])],
+        evals_dir=str(tmp_path / "evals"))
+    (tmp_path / "CLAUDE.md").write_text("the rule\n", encoding="utf-8")
+    claude = _write_fake_claude(tmp_path)
+
+    rc = _run(tmp_path, "run", "--target", "CLAUDE.md", "--runs", "1", "--claude", claude)
+    out = capsys.readouterr().out
+    assert rc == 0  # a check failure does not fail the exit code by itself
+    assert "UNCHECKED, grader failed its own proof" in out
+    assert "must_match failed" in out
+    assert "1 case(s) unmeasured, they are not passes." in out
+
+
+def test_run_check_failure_shows_up_in_json_as_unmeasured_with_the_reason(tmp_path, capsys):
+    from trimwrit import cases
+
+    cases.write_case(
+        "0001", "bad proof", "say something",
+        [cases.forbid_grader("bad word", name="g", must_match=["this never matches"])],
+        evals_dir=str(tmp_path / "evals"))
+    (tmp_path / "CLAUDE.md").write_text("the rule\n", encoding="utf-8")
+    claude = _write_fake_claude(tmp_path)
+
+    _run(tmp_path, "run", "--target", "CLAUDE.md", "--runs", "1", "--claude", claude, "--json")
+    import json
+    payload = json.loads(capsys.readouterr().out)
+    summary = payload["cases"][0]["summary"]
+    assert summary["with"] is None
+    assert "must_match failed" in summary["unchecked_reason"]
+    assert summary["runs"]["with"] == 0  # never actually run
+
+
+def test_run_with_correct_examples_runs_normally(tmp_path, capsys):
+    from trimwrit import cases
+
+    cases.write_case(
+        "0001", "good proof", "say something",
+        [cases.forbid_grader("bad word", name="g", must_match=["a bad word here"],
+                             must_not_match=["a clean answer"])],
+        evals_dir=str(tmp_path / "evals"))
+    (tmp_path / "CLAUDE.md").write_text("the rule\n", encoding="utf-8")
+    claude = _write_fake_claude(tmp_path)
+
+    rc = _run(tmp_path, "run", "--target", "CLAUDE.md", "--runs", "1", "--claude", claude)
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "UNCHECKED" not in out
+    assert "earns its place" in out
+
+
+# ==================================================================== evidence
+
+
+def test_run_writes_evidence_for_every_run(tmp_path, capsys):
+    from trimwrit import cases
+
+    cases.write_case("0001", "bad word case", "say something",
+                     [cases.forbid_grader("bad word", name="g")],
+                     evals_dir=str(tmp_path / "evals"))
+    (tmp_path / "CLAUDE.md").write_text("the rule\n", encoding="utf-8")
+    claude = _write_fake_claude(tmp_path)
+
+    _run(tmp_path, "run", "--target", "CLAUDE.md", "--runs", "1", "--claude", claude)
+    out = capsys.readouterr().out
+    assert "evidence written to" in out
+    with_evidence = tmp_path / "evals" / "results" / "runs" / "0001-bad-word-case" / "with-0.md"
+    without_evidence = (tmp_path / "evals" / "results" / "runs" / "0001-bad-word-case" /
+                        "without-0.md")
+    assert with_evidence.exists() and without_evidence.exists()
+    assert "a clean answer" in with_evidence.read_text(encoding="utf-8")
+    assert "a dirty answer with the bad word" in without_evidence.read_text(encoding="utf-8")
+
+
+def test_run_no_save_skips_evidence(tmp_path, capsys):
+    from trimwrit import cases
+
+    cases.write_case("0001", "bad word case", "say something",
+                     [cases.forbid_grader("bad word", name="g")],
+                     evals_dir=str(tmp_path / "evals"))
+    (tmp_path / "CLAUDE.md").write_text("the rule\n", encoding="utf-8")
+    claude = _write_fake_claude(tmp_path)
+
+    _run(tmp_path, "run", "--target", "CLAUDE.md", "--runs", "1", "--claude", claude, "--no-save")
+    out = capsys.readouterr().out
+    assert "evidence written to" not in out
+    assert not (tmp_path / "evals" / "results" / "runs").exists()
+
+
+# ==================================================================== unmeasured
+
+
+def test_run_reports_unmeasured_without_failing_by_default(tmp_path, capsys):
+    from trimwrit import cases
+
+    cases.write_case("0001", "no text case", "say something",
+                     [cases.forbid_grader("bad word", name="g")],
+                     evals_dir=str(tmp_path / "evals"))
+    (tmp_path / "CLAUDE.md").write_text("the rule\n", encoding="utf-8")
+    claude = _write_no_final_text_claude(tmp_path)
+
+    rc = _run(tmp_path, "run", "--target", "CLAUDE.md", "--runs", "1", "--claude", claude)
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "UNMEASURED" in out
+    assert "no final text" in out
+    assert "1 case(s) unmeasured, they are not passes." in out
+
+
+def test_run_fail_on_unmeasured_flips_the_exit_code(tmp_path, capsys):
+    from trimwrit import cases
+
+    cases.write_case("0001", "no text case", "say something",
+                     [cases.forbid_grader("bad word", name="g")],
+                     evals_dir=str(tmp_path / "evals"))
+    (tmp_path / "CLAUDE.md").write_text("the rule\n", encoding="utf-8")
+    claude = _write_no_final_text_claude(tmp_path)
+
+    rc = _run(tmp_path, "run", "--target", "CLAUDE.md", "--runs", "1", "--claude", claude,
+             "--fail-on-unmeasured")
+    assert rc == 1
+
+
+# ==================================================================== history
+
+
+def test_run_appends_one_history_line_per_invocation(tmp_path, capsys):
+    from trimwrit import cases
+
+    cases.write_case("0001", "bad word case", "say something",
+                     [cases.forbid_grader("bad word", name="g")],
+                     evals_dir=str(tmp_path / "evals"))
+    (tmp_path / "CLAUDE.md").write_text("the rule\n", encoding="utf-8")
+    claude = _write_fake_claude(tmp_path)
+
+    _run(tmp_path, "run", "--target", "CLAUDE.md", "--runs", "1", "--claude", claude)
+    capsys.readouterr()
+    _run(tmp_path, "run", "--target", "CLAUDE.md", "--runs", "1", "--claude", claude)
+    capsys.readouterr()
+
+    history = tmp_path / "evals" / "results" / "history.jsonl"
+    lines = history.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    import json
+    row = json.loads(lines[0])
+    assert row["case"] == "0001-bad-word-case"
+    assert row["target"] == ["CLAUDE.md"]
+    assert row["with"] == 1.0 and row["without"] == 0.0 and row["delta"] == 1.0
+    assert row["runs"] == 1
+    assert row["claude"] == claude
+
+
+def test_history_sha_changes_when_the_rule_file_changes(tmp_path, capsys):
+    import hashlib
+    import json
+
+    from trimwrit import cases
+
+    cases.write_case("0001", "bad word case", "say something",
+                     [cases.forbid_grader("bad word", name="g")],
+                     evals_dir=str(tmp_path / "evals"))
+    claude = _write_fake_claude(tmp_path)
+
+    (tmp_path / "CLAUDE.md").write_text("rule version A\n", encoding="utf-8")
+    _run(tmp_path, "run", "--target", "CLAUDE.md", "--runs", "1", "--claude", claude)
+    capsys.readouterr()
+
+    (tmp_path / "CLAUDE.md").write_text("rule version B, much longer\n", encoding="utf-8")
+    _run(tmp_path, "run", "--target", "CLAUDE.md", "--runs", "1", "--claude", claude)
+    capsys.readouterr()
+
+    lines = (tmp_path / "evals" / "results" / "history.jsonl").read_text(
+        encoding="utf-8").splitlines()
+    shas = [json.loads(line)["target_sha256"]["CLAUDE.md"] for line in lines]
+    assert shas[0] != shas[1]
+    assert shas[1] == hashlib.sha256("rule version B, much longer\n".encode("utf-8")).hexdigest()
+
+
+# ==================================================================== --jobs
+
+
+def test_run_jobs_4_matches_jobs_1_byte_for_byte(tmp_path, capsys):
+    from trimwrit import cases
+
+    for i in range(1, 4):
+        cases.write_case("000{}".format(i), "case {}".format(i), "say something",
+                         [cases.forbid_grader("bad word", name="g")],
+                         evals_dir=str(tmp_path / "evals"))
+    (tmp_path / "CLAUDE.md").write_text("the rule\n", encoding="utf-8")
+    claude = _write_fake_claude(tmp_path)
+
+    rc1 = _run(tmp_path, "run", "--target", "CLAUDE.md", "--runs", "2", "--claude", claude,
+              "--json", "--jobs", "1")
+    payload_1 = capsys.readouterr().out
+
+    rc4 = _run(tmp_path, "run", "--target", "CLAUDE.md", "--runs", "2", "--claude", claude,
+              "--json", "--jobs", "4")
+    payload_4 = capsys.readouterr().out
+
+    assert rc1 == rc4 == 0
+    assert payload_1 == payload_4

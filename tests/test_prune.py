@@ -60,3 +60,12 @@ def test_report_without_results_reports_only_the_free_findings(tmp_path):
     kinds = {f.kind for f in prune.report(["CLAUDE.md"], evals, root)}
     assert prune.INERT not in kinds
     assert prune.ORPHAN in kinds
+
+
+def test_an_unmeasured_case_is_never_reported_as_inert(tmp_path):
+    # A `None` delta means the case never produced a measured run (see runner.summarise), not
+    # that it scored the same with and without the rule. `delta > 0` on a None used to raise a
+    # TypeError, and even guarded it would be a false INERT claim about a rule nothing tested.
+    root, evals = _setup(tmp_path)
+    summaries = {"0001-kept-case": {"with": None, "without": None, "delta": None}}
+    assert prune.inert(summaries, ["CLAUDE.md"], evals, root) == []

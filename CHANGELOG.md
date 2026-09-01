@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.3.0, 2026-09-01
+
+The incident behind all five changes below: a suite of 32 prompt injection cases, generated in
+the native case format, was run through `trimwrit run`. The second pass reported 32 of 32
+resisted. The graders were dead. The generator wrote regex patterns with `json.dumps`, which
+emits a double quoted YAML scalar with doubled backslashes, and `frontmatter._scalar` stripped
+the quotes without unescaping them, so every pattern containing `\s` reached `re.compile` as a
+literal backslash and matched nothing. A green board, and the instrument was disconnected. The
+runner's own docstring already warns against exactly this ("a grader that never fires is an
+instrument that always says PASS") and it still happened, because nothing forced a grader to
+PROVE it can fail before a run trusts it. Separately, three of the 32 runs came back with no
+final text at all (an API safeguard refused one prompt, another hit `max_turns` mid tool call)
+and were scored 0.0, indistinguishable in the table from a real failure; and the runner kept no
+output text at all, so verifying a flagged run meant re-running it by hand.
+
+- **A regex grader proves it can fire.** `must_match`/`must_not_match`, each a list of example
+  texts checked against the grader's own pattern with no model call. The semantics are about the
+  PATTERN, never the verdict: for a `not_contains` grader, a `must_match` example is text a real
+  run would FAIL on. `frontmatter._block_list` now accepts a `- |`/`- |-` block scalar as a list
+  item (examples are usually a whole assistant answer), and `render()` emits that form when a
+  list item contains a newline; fixed two latent bugs on the way, `_scalar` was not unescaping a
+  doubled `''`, and `_needs_quote` was not catching an apostrophe in the MIDDLE of an inline list
+  item, which corrupted the following item on read back. `trimwrit check [--case] [--strict]
+  [--json]` runs the proof over every case: an unsupported grader type or a pattern that will not
+  compile is always a failure, a regex grader with no example at all is a warning unless
+  `--strict` refuses it too. `trimwrit run` runs this check before anything else, and a case
+  whose grader fails its own proof is never run: it is reported `UNCHECKED, grader failed its
+  own proof: <reason>` and counted as unmeasured, never as a pass.
+- **Every run leaves evidence.** `trimwrit run` writes `<evals>/results/runs/<case>/<arm>-<run
+  index>.md`, one file per run of every case: front matter (case, arm, run, timestamp, passed,
+  score, the error if any, whether it was unmeasured, one line per grader) followed by the
+  model's final answer verbatim and the tool calls as JSON. Overwritten on the next run of the
+  same slot, so it is the LATEST evidence. It deliberately bypasses this repo's own dash gate,
+  since the point is to show exactly what the model produced, including the violation a case
+  exists to catch. `--no-save` turns it off.
+- **Unmeasured is not failed.** A run is unmeasured when it errored or its final text is empty
+  after stripping. `summarise` now means an arm over its measured runs only, and when every run
+  of an arm is unmeasured the arm (and the delta) come back `None`, printed as `?` in the table
+  and `null` in `--json`. A case unmeasured in the `with` arm no longer counts toward the exit
+  code by itself; it is reported once at the end ("N case(s) unmeasured, they are not passes")
+  and `--fail-on-unmeasured` opts back into failing on it.
+- **The numbers over time.** `results/latest.json` still answers "what is true now"; a new
+  `results/history.jsonl` appends one JSON line per case per `run` invocation, carrying the with
+  and without scores, the delta, the run count, and `target_sha256`, the sha256 of each ablated
+  rule file as it was actually seeded, so a later reader can tell a real regression from a rule
+  that was simply rewritten between two runs.
+- **`--jobs N`.** `run_many` (the new home of the ablation loop, `run_case` is now a thin
+  wrapper over it for one case) runs every `(case, arm, run)` triple across every selected case
+  in a `ThreadPoolExecutor`, then assembles results back in the same order a sequential run
+  would produce: the table, the JSON payload, the evidence files and the history line at
+  `--jobs 8` are byte for byte the same as at `--jobs 1`, just faster. A 32 case suite with two
+  arms is close to 200 `claude -p` calls at 30 to 60 seconds apiece; sequential, that is close
+  to two hours for one replay, which is the difference between a replay that happens and one
+  that does not.
+
 ## 0.2.1, 2026-08-26
 
 - **`trimwrit stats`: what a rule did outside the eval.** `prune` answers whether the eval still

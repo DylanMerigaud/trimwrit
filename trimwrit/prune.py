@@ -108,7 +108,10 @@ def inert(summaries, targets, evals_dir="evals", root="."):
         cid = base.split("-", 1)[0]
         holders = by_case.get(cid) or by_case.get(base) or []
         delta = summary.get("delta", 0.0)
-        if delta > 0:
+        # A `None` delta means the case was unmeasured (see runner.summarise), not that it
+        # scored the same in both arms. An unmeasured case has proven nothing either way, and
+        # calling it INERT would be a false claim that the model already behaves.
+        if delta is None or delta > 0:
             continue
         numbers = {"with": summary.get("with"), "without": summary.get("without"),
                    "delta": delta}

@@ -18,12 +18,14 @@ not that the rule caused it. A case that passes in both arms is measuring nothin
 model already behaved without being told, or the grader cannot fail. Either way the rule is
 unearned and `trimwrit prune` will say so.
 """
+import concurrent.futures
 import json
 import os
 import re
 import shutil
 import subprocess
 import tempfile
+import time
 
 # What this runner can actually score. A grader type outside this set does NOT quietly pass:
 # it is reported as unsupported and it fails the case, because the alternative is a suite that
@@ -79,6 +81,19 @@ class Result(object):
         total = sum(float(g.get("weight", 1)) for g in self.grades)
         got = sum(float(g.get("weight", 1)) for g in self.grades if g["passed"])
         return got / total if total else 0.0
+
+    @property
+    def unmeasured(self):
+        """True when this run produced nothing a grader could honestly score.
+
+        The incident: three runs came back with no final text at all (an API safeguard refused
+        one prompt, another hit max_turns mid tool-call) and were scored 0.0 by `score` above,
+        indistinguishable in the summary table from a run where the model actually did the
+        forbidden thing. `score` still returns 0.0 here on purpose, for anything that sums
+        scores without checking this flag first; `unmeasured` is what `summarise` uses to keep
+        those runs out of the mean instead of quietly counting them as failures.
+        """
+        return bool(self.error) or not self.final_text.strip()
 
 
 def _flags(spec):
@@ -314,20 +329,72 @@ def make_judge(claude="claude", model=None):
     return judge
 
 
-def run_case(case, rule_files, arms=(ARM_WITH, ARM_WITHOUT), runs=None, claude="claude",
-             judge=None, extra_args=(), cwd_seed=None, progress=None, isolate=True):
-    """Run one case across the requested arms. Returns {arm: [Result, ...]}."""
-    n = runs or case.runs
+def run_many(cases, rule_files, arms=(ARM_WITH, ARM_WITHOUT), runs=None, claude="claude",
+             judge=None, extra_args=(), cwd_seed=None, progress=None, isolate=True, jobs=1):
+    """Run every (case, arm, run_index) triple across every case in `cases`.
+
+    Returns {case.path: {arm: [Result, ...]}}, the same shape `run_case` returns for one case,
+    keyed by every case's path.
+
+    `jobs` is the only thing that changes the SHAPE of the work, not the result. At `jobs <= 1`
+    every triple runs one after another, exactly as before. At `jobs > 1`, every triple across
+    EVERY selected case (not just one case's own runs) goes into one
+    `ThreadPoolExecutor(max_workers=jobs)`: a 32 case suite with two arms and three runs each is
+    192 independent `claude -p` calls at 30 to 60 seconds apiece, and sequential is close to two
+    hours for one replay, which is the difference between a replay that happens and one that
+    does not. Each `run_once` already works in its own scratch directory (see its docstring), so
+    no triple shares state with another and there is nothing to lock.
+
+    `executor.map`, not `submit` plus `as_completed`, is what makes this safe to turn on by
+    default in spirit: it hands results back in SUBMISSION order regardless of which subprocess
+    finished first, so the table, the JSON payload, the evidence files and the history line for
+    a suite run at `--jobs 8` are byte for byte the same as the same suite at `--jobs 1`. The
+    only thing that becomes non-deterministic is the order progress lines print in, and that is
+    a terminal, not a result.
+    """
+    triples = []
+    for case in cases:
+        n = runs or case.runs
+        for arm in arms:
+            for i in range(n):
+                triples.append((case, arm, i))
+
+    def work(triple):
+        case, arm, i = triple
+        n = runs or case.runs
+        if progress:
+            progress(case, arm, i + 1, n)
+        res = run_once(case, arm, i, rule_files, extra_args, claude, cwd_seed, isolate)
+        apply_graders(case, res, judge)
+        return res
+
+    if jobs and jobs > 1:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as pool:
+            results = list(pool.map(work, triples))
+    else:
+        results = [work(t) for t in triples]
+
     out = {}
-    for arm in arms:
-        out[arm] = []
-        for i in range(n):
-            if progress:
-                progress(case, arm, i + 1, n)
-            res = run_once(case, arm, i, rule_files, extra_args, claude, cwd_seed, isolate)
-            apply_graders(case, res, judge)
-            out[arm].append(res)
+    for (case, arm, i), res in zip(triples, results):
+        out.setdefault(case.path, {}).setdefault(arm, []).append(res)
+    # A case whose arm produced zero runs (n == 0, or an arm never requested) still gets an
+    # entry: `summarise` and the table both expect every requested arm key to be present.
+    for case in cases:
+        for arm in arms:
+            out.setdefault(case.path, {}).setdefault(arm, [])
     return out
+
+
+def run_case(case, rule_files, arms=(ARM_WITH, ARM_WITHOUT), runs=None, claude="claude",
+             judge=None, extra_args=(), cwd_seed=None, progress=None, isolate=True, jobs=1):
+    """Run one case across the requested arms. Returns {arm: [Result, ...]}.
+
+    A thin wrapper over `run_many` for exactly one case, kept because "run this one case" is a
+    common enough call that it should not require building a one-element list at every call
+    site. See `run_many` for what `jobs` does.
+    """
+    return run_many([case], rule_files, arms, runs, claude, judge, extra_args, cwd_seed,
+                    progress, isolate, jobs)[case.path]
 
 
 def summarise(per_arm):
@@ -335,11 +402,81 @@ def summarise(per_arm):
 
     `delta` is the whole verdict: score with the rule minus score without it. At or below zero
     the rule changed nothing that the case can see.
+
+    A run that is `unmeasured` (see `Result.unmeasured`) is excluded from the mean rather than
+    counted as a zero: an API safeguard refusing a prompt, or a run hitting max_turns with no
+    final text, says nothing about whether the rule held, and folding it into the average would
+    make a rule look worse than the model's own behaviour justifies. When EVERY run of an arm is
+    unmeasured there is no score to report at all, and the arm (and `delta`, which needs both
+    arms) comes back `None` rather than a number that would silently mean "zero".
     """
     def mean(rs):
-        return sum(r.score for r in rs) / len(rs) if rs else 0.0
-    with_score = mean(per_arm.get(ARM_WITH, []))
-    without_score = mean(per_arm.get(ARM_WITHOUT, []))
-    return {"with": with_score, "without": without_score,
-            "delta": with_score - without_score,
-            "runs": {a: len(v) for a, v in per_arm.items()}}
+        if not rs:
+            # The arm was never requested (e.g. --no-ablation). Not the same thing as "every
+            # run in this arm was unmeasured": there is no case to make about a rule from an
+            # arm nobody ran, so this stays 0.0, unchanged from before this property existed.
+            return 0.0
+        measured = [r for r in rs if not r.unmeasured]
+        return sum(r.score for r in measured) / len(measured) if measured else None
+
+    def detail(rs):
+        for r in rs:
+            if r.unmeasured:
+                return r.error if r.error else "no final text"
+        return None
+
+    with_rs, without_rs = per_arm.get(ARM_WITH, []), per_arm.get(ARM_WITHOUT, [])
+    with_score, without_score = mean(with_rs), mean(without_rs)
+    delta = None if (with_score is None or without_score is None) else with_score - without_score
+    return {
+        "with": with_score, "without": without_score, "delta": delta,
+        "runs": {a: len(v) for a, v in per_arm.items()},
+        "unmeasured": {"with": sum(1 for r in with_rs if r.unmeasured),
+                      "without": sum(1 for r in without_rs if r.unmeasured)},
+        "unmeasured_detail": {"with": detail(with_rs), "without": detail(without_rs)},
+    }
+
+
+def write_evidence(result, evals_dir):
+    """The file `trimwrit run` writes for every run of every case, so a flagged result can be
+    READ rather than re-run by hand.
+
+    The incident: three runs came back with no final text at all and were scored 0, and nothing
+    kept what actually happened, so verifying whether a run was a real failure or an API
+    safeguard meant re-running the case and hoping to reproduce it. This writes the transcript
+    that produced the table's verdict, every time, so it never has to be reproduced to be read.
+
+    Overwritten on each run of the same case/arm/index: this is the LATEST evidence for that
+    slot, not a history. `results/history.jsonl` (see `cli._append_history`) is the append-only
+    ledger that keeps the numbers over time; this file answers "what did it actually say".
+
+    Deliberately bypasses `text.write_text`'s dash gate. That gate exists to keep this repo from
+    WRITING a bad dash into its own copy; this file's whole job is to show, unaltered, what the
+    model actually produced, including the exact violation a case exists to catch. Refusing to
+    write a failing run's own evidence because it contains the character it failed on would
+    defeat the file's purpose.
+    """
+    case_dir = os.path.basename(result.case.path)
+    out_dir = os.path.join(evals_dir, "results", "runs", case_dir)
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, "{}-{}.md".format(result.arm, result.run_index))
+
+    fm = ["case: {}".format(case_dir), "arm: {}".format(result.arm),
+         "run: {}".format(result.run_index),
+         "timestamp: {}".format(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())),
+         "passed: {}".format("true" if result.passed else "false"),
+         "score: {}".format(result.score)]
+    if result.error:
+        fm.append("error: {}".format(result.error))
+    fm.append("unmeasured: {}".format("true" if result.unmeasured else "false"))
+    for g in result.grades:
+        fm.append("{}: {} {}".format(g.get("name"), "PASS" if g.get("passed") else "FAIL",
+                                     g.get("detail", "")))
+
+    parts = ["---", "\n".join(fm), "---", "", "## final message", "",
+            result.final_text if result.final_text else "(no final text)", "",
+            "## tools", "", "```json",
+            json.dumps(result.tools, indent=2, ensure_ascii=False), "```", ""]
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(parts))
+    return path

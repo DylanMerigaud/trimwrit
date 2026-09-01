@@ -4,6 +4,8 @@ The runner's subprocess layer is exercised by actually running the dogfood suite
 unit testing is the part that decides PASS or FAIL, because a grader that is wrong in the same
 direction as the model is invisible in an end to end run.
 """
+import os
+
 from trimwrit import runner
 from trimwrit.cases import Case
 
@@ -108,6 +110,40 @@ def test_score_is_weighted():
 def test_a_run_that_errored_scores_zero():
     res = runner.Result(_case([]), runner.ARM_WITH, 0, "", [], {}, error="timed out")
     assert res.score == 0.0 and not res.passed
+    # But it is UNMEASURED, not a failure the grader actually saw: an API safeguard refusing
+    # the prompt says nothing about whether the rule held, and summarise() below keeps it out
+    # of the mean instead of folding it in as a zero.
+    assert res.unmeasured
+
+
+def test_an_empty_final_text_is_unmeasured():
+    res = _result("")
+    assert res.unmeasured
+
+
+def test_a_run_with_real_text_and_no_error_is_measured():
+    assert not _result("some real answer").unmeasured
+
+
+def test_summarise_means_over_measured_runs_only():
+    case = _case([{"type": "regex", "name": "a", "pattern": "yes", "match": "contains"}])
+    measured = _result("yes")
+    runner.apply_graders(case, measured)
+    unmeasured = runner.Result(case, runner.ARM_WITH, 1, "", [], {}, error="timed out")
+    s = runner.summarise({runner.ARM_WITH: [measured, unmeasured]})
+    assert s["with"] == 1.0
+    assert s["unmeasured"]["with"] == 1
+
+
+def test_summarise_is_none_when_every_run_of_an_arm_is_unmeasured():
+    case = _case([])
+    both_unmeasured = [runner.Result(case, runner.ARM_WITH, 0, "", [], {}, error="boom"),
+                       runner.Result(case, runner.ARM_WITH, 1, "", [], {})]
+    s = runner.summarise({runner.ARM_WITH: both_unmeasured, runner.ARM_WITHOUT: [_result("no")]})
+    assert s["with"] is None
+    assert s["delta"] is None
+    assert s["unmeasured"]["with"] == 2
+    assert s["unmeasured_detail"]["with"] == "boom"
 
 
 def test_summarise_reports_the_delta():
@@ -136,3 +172,101 @@ def test_parse_stream_picks_the_final_text_and_the_tool_calls():
     final, tools = runner._parse_stream(raw)
     assert final == "the final answer"
     assert tools == [{"name": "Bash", "input": {"command": "ls"}}]
+
+
+# ---------------------------------------------------------------- evidence
+
+
+def test_write_evidence_writes_the_final_text_and_the_grades(tmp_path):
+    case = Case(str(tmp_path / "evals" / "0001-x"), {"name": "0001-x"}, "prompt", [])
+    res = runner.Result(case, runner.ARM_WITH, 0, "a clean answer", [], {})
+    res.grades = [{"name": "g", "type": "regex", "passed": True, "detail": "0 hit(s)"}]
+    path = runner.write_evidence(res, str(tmp_path / "evals"))
+    assert path == str(tmp_path / "evals" / "results" / "runs" / "0001-x" / "with-0.md")
+    text = open(path, encoding="utf-8").read()
+    assert "a clean answer" in text
+    assert "g: PASS 0 hit(s)" in text
+    assert "unmeasured: false" in text
+
+
+def test_write_evidence_does_not_refuse_a_bad_dash_in_the_models_own_answer():
+    # The whole point of this file is to show what the model actually produced, including the
+    # exact violation a case exists to catch. Gating it the same way `text.write_text` gates
+    # this repo's own copy would refuse to write the one piece of evidence that matters most.
+    import tempfile
+
+    case = Case("/tmp/0001-x", {"name": "0001-x"}, "prompt", [])
+    res = runner.Result(case, runner.ARM_WITH, 0, "dirty" + EM + "answer", [], {})
+    with tempfile.TemporaryDirectory() as d:
+        path = runner.write_evidence(res, d)
+        assert EM in open(path, encoding="utf-8").read()
+
+
+def test_write_evidence_is_overwritten_by_the_next_run_of_the_same_slot(tmp_path):
+    case = Case(str(tmp_path / "0001-x"), {"name": "0001-x"}, "prompt", [])
+    r1 = runner.Result(case, runner.ARM_WITH, 0, "first", [], {})
+    r2 = runner.Result(case, runner.ARM_WITH, 0, "second", [], {})
+    runner.write_evidence(r1, str(tmp_path))
+    path = runner.write_evidence(r2, str(tmp_path))
+    text = open(path, encoding="utf-8").read()
+    assert "second" in text and "first" not in text
+
+
+def test_write_evidence_reports_an_error_and_no_final_text(tmp_path):
+    case = Case(str(tmp_path / "0001-x"), {"name": "0001-x"}, "prompt", [])
+    res = runner.Result(case, runner.ARM_WITH, 0, "", [], {}, error="timed out after 60s")
+    path = runner.write_evidence(res, str(tmp_path))
+    text = open(path, encoding="utf-8").read()
+    assert "error: timed out after 60s" in text
+    assert "unmeasured: true" in text
+
+
+# ---------------------------------------------------------------- jobs / run_many
+
+
+def test_run_many_with_one_job_matches_run_case_shape(tmp_path):
+    claude = _fake_claude(tmp_path)
+    case = _write_case(tmp_path, "0001-a")
+    per_arm = runner.run_case(case, {}, arms=(runner.ARM_WITH,), runs=2, claude=claude, jobs=1)
+    assert len(per_arm[runner.ARM_WITH]) == 2
+
+
+def test_run_many_multiple_jobs_matches_a_single_job_byte_for_byte(tmp_path):
+    claude = _fake_claude(tmp_path)
+    cases = [_write_case(tmp_path, "000{}-a".format(i)) for i in range(1, 4)]
+    rule_files = {"CLAUDE.md": "the rule\n"}
+
+    def as_texts(out):
+        return {path: {arm: [r.final_text for r in rs] for arm, rs in arms.items()}
+               for path, arms in out.items()}
+
+    sequential = runner.run_many(cases, rule_files, arms=(runner.ARM_WITH, runner.ARM_WITHOUT),
+                                 runs=2, claude=claude, jobs=1)
+    parallel = runner.run_many(cases, rule_files, arms=(runner.ARM_WITH, runner.ARM_WITHOUT),
+                               runs=2, claude=claude, jobs=4)
+    assert as_texts(sequential) == as_texts(parallel)
+
+
+def _fake_claude(tmp_path):
+    """Reads whether CLAUDE.md was seeded into its own cwd (the ablation) and answers
+    differently, so a parallel run has something genuine, and deterministic, to compare against
+    a sequential one."""
+    path = tmp_path / "fake-claude.py"
+    path.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os\n"
+        "clean = os.path.exists('CLAUDE.md')\n"
+        "text = 'a clean answer' if clean else 'a dirty answer'\n"
+        "print(json.dumps({'type': 'result', 'result': text}))\n",
+        encoding="utf-8")
+    os.chmod(path, 0o755)
+    return str(path)
+
+
+def _write_case(tmp_path, name):
+    from trimwrit import cases as cases_mod
+
+    d = cases_mod.write_case(name.split("-")[0], name.split("-", 1)[1], "say something",
+                             [cases_mod.forbid_grader("nothing-to-forbid", name="g")],
+                             evals_dir=str(tmp_path / "evals"))
+    return cases_mod.load_case(d)

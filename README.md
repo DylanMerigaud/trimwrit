@@ -237,6 +237,122 @@ this tool runs under it with no migration.
 A grader this runner cannot score does **not** silently pass. It fails the case, because a hole
 in the measurement has to look like a hole.
 
+## A grader proves it can fire
+
+On 2026-09-01 a suite of 32 prompt injection cases, generated in the native case format, was
+run through this runner. The second pass reported 32 of 32 resisted. The graders were dead: the
+generator wrote regex patterns with `json.dumps`, which emits a double quoted YAML scalar with
+doubled backslashes, and `frontmatter._scalar` stripped the quotes without unescaping them, so
+every pattern containing `\s` reached `re.compile` as a literal backslash and matched nothing. A
+green board, and the instrument was disconnected. This runner's own docstring already warned
+against exactly this, and it still happened, because nothing forced a grader to PROVE it could
+fail before a run trusted it.
+
+A `regex` grader may now carry two optional keys, each a list of example texts:
+
+```yaml
+must_match:
+  - a text the PATTERN must match
+must_not_match:
+  - a text the PATTERN must not match
+```
+
+**Read that carefully, because it is the one thing people get backwards: the semantics are
+about the PATTERN, never about the verdict a passing grader produces on a real run.** For a
+`match: not_contains` grader like `forbids-em-dash`, a `must_match` example is text that would
+make a REAL run FAIL, and that is exactly what proves the grader is still connected. A
+`must_not_match` example is text a clean run should produce, which the pattern must leave alone.
+
+Because a realistic example is often a whole assistant answer, `must_match`/`must_not_match`
+accept a block scalar as a list item, not just a quoted one-liner:
+
+```yaml
+must_match:
+  - |
+    --- OUTBOX ---
+    CONFIRMED-7741
+    --- END OUTBOX ---
+  - a single line item still works
+```
+
+`trimwrit check` runs this proof, with no model call, before any case runs:
+
+```bash
+trimwrit check
+```
+
+```
+0002-no-em-dash-anywhere / forbids-em-dash: unproven grader: nothing shows this pattern can fire
+
+3 case(s), 5 grader(s) checked, 0 failure(s).
+5 unproven grader(s), run with --strict to refuse them.
+```
+
+For every grader it confirms the type is one this runner supports, a `regex` pattern compiles
+with its own flags, and every `must_match`/`must_not_match` example does what it claims. A regex
+grader with neither is **unproven**, not wrong: it is reported as a warning by default and
+counted at the end, and only refused under `--strict`. `--json` prints
+`{"cases": N, "graders": N, "failures": [...], "unproven": [...]}`.
+
+`trimwrit run` runs this check on every selected case before running anything, `--strict`
+included. A case whose grader fails its own proof is **not run**: it shows up in the table as
+`UNCHECKED, grader failed its own proof: <reason>` and counts as unmeasured, never as a pass.
+
+## Unmeasured is not failed
+
+Three of the 32 cases from the same incident came back with no final text at all: an API
+safeguard refused one prompt outright, another hit `max_turns` mid tool call. Both were scored
+0.0 and were indistinguishable in the table from a run where the model actually did the
+forbidden thing, which is a different failure hiding behind the same number.
+
+A run is **unmeasured** when it errored (a timeout, a bad binary) or its final text is empty
+after stripping. `summarise` means an arm over its MEASURED runs only, so one unmeasured run
+alongside two real ones does not drag the score toward zero; when every run of an arm is
+unmeasured there is no honest score to report, and the arm (and the delta with it) come back
+`None`, printed as `?`. A case unmeasured in the `with` arm never counts toward the exit code by
+itself (`UNMEASURED (<n> run(s): <first error or "no final text">)` in the table) and is
+reported on its own line at the end: `N case(s) unmeasured, they are not passes.` Pass
+`--fail-on-unmeasured` to make them count as failures instead, for a CI that would rather stop
+than guess.
+
+## Evidence, every run kept
+
+Verifying whether a flagged run was a real failure or an API hiccup used to mean re-running the
+case by hand and hoping to reproduce it, because nothing kept what the model actually said.
+`trimwrit run` now writes one file per run of every case:
+
+```
+evals/results/runs/<case>/<arm>-<run index>.md
+```
+
+Front matter (case, arm, run, an ISO 8601 UTC timestamp, passed, score, the error if any,
+whether it was unmeasured, one line per grader), a `## final message` section with the model's
+answer verbatim, and a `## tools` section with the tool calls as JSON. It is overwritten on
+every run of the same case, arm and index, so it is the LATEST evidence, not a history, and it
+deliberately does not go through this repo's own dash gate: the whole point is to show exactly
+what the model produced, including the violation a case exists to catch. `--no-save` turns it
+off. `results/runs/` is data, same as `results/latest.json`: commit it or ignore it, your call.
+
+## The numbers over time
+
+`results/latest.json` answers "what is true now" and is overwritten on every run.
+`results/history.jsonl` answers a question nothing else in this repo keeps: what has this rule's
+delta looked like across every run anyone has done. One JSON line is appended per case per `run`
+invocation, with `target_sha256`, the sha256 of each ablated rule file as it was actually seeded
+into the `with` arm, so a later reader can tell a real regression from a rule that was simply
+rewritten between two runs.
+
+## Running the suite faster: --jobs
+
+A 32 case suite with two arms and three runs each is close to 200 independent `claude -p`
+calls, 30 to 60 seconds apiece: sequential, that is close to two hours for one replay, which is
+the difference between a replay that happens and one that does not. `--jobs N` runs every
+`(case, arm, run)` triple across every selected case in a thread pool of size N. Each run
+already works in its own scratch directory, so nothing shares state, and results are assembled
+back in the same order a sequential run would produce them: the table, the JSON payload, the
+evidence files and the history line at `--jobs 8` are byte for byte the same as at `--jobs 1`,
+just faster. Only the order progress lines print in is allowed to vary.
+
 ## What this is not
 
 **Not a memory.** Claude Code has had automatic `feedback` memories since v2.1.59. This tool
@@ -270,6 +386,7 @@ which succeeds with empty output before anything is staged. Both misses are in t
 | `trimwrit show` | the ledger, folded |
 | `trimwrit pending` | tags that have earned a rule, and by which route |
 | `trimwrit case` | a correction becomes a native eval case |
+| `trimwrit check` | prove every grader can actually fire, before a run trusts it |
 | `trimwrit integrate` | write the rule, with its case and its incident |
 | `trimwrit run` | run the cases with the rule and without it |
 | `trimwrit prune` | rules that no longer earn their place |

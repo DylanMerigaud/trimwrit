@@ -37,10 +37,17 @@ def case_dir(case_id, title, evals_dir="evals"):
 
 def write_case(case_id, title, prompt, graders, evals_dir="evals", tags=(), runs=3,
                max_turns=6, description=None, plugins=None, allowed_tools=None,
-               timeout_seconds=None):
+               timeout_seconds=None, must_match=(), must_not_match=()):
     """Write `prompt.md` and `graders/*.md`. Returns the case directory.
 
     `graders` is a list of dicts, each with at least `type` and `name`.
+
+    `must_match`/`must_not_match` apply here as a CASE-WIDE default: any regex grader in
+    `graders` that does not already carry its own (set via `forbid_grader`/`require_grader`)
+    gets these attached. Most calls through `trimwrit case` write exactly one mechanical
+    grader, so a single `--must-match` flag naming the proof for it is the common case; a
+    caller building several regex graders with DIFFERENT proofs still can, by passing
+    `must_match` on the individual `forbid_grader`/`require_grader` calls instead.
     """
     if not graders:
         raise CaseError(
@@ -75,6 +82,11 @@ def write_case(case_id, title, prompt, graders, evals_dir="evals", tags=(), runs
 
     for g in graders:
         g = dict(g)
+        if g.get("type") == "regex":
+            if must_match and "must_match" not in g:
+                g["must_match"] = list(must_match)
+            if must_not_match and "must_not_match" not in g:
+                g["must_not_match"] = list(must_not_match)
         gname = g.pop("name")
         write_text(os.path.join(d, "graders",
                                     "{}.md".format(slug(gname, words=6) or "grader")),
@@ -98,17 +110,36 @@ def _render_grader(name, spec):
     return out
 
 
-def forbid_grader(pattern, name=None, note=None, flags="i", target="last_message"):
-    """The workhorse. Most corrections are "stop doing X", and "stop doing X" is a regex."""
-    return {"type": "regex", "name": name or "forbids-{}".format(slug(pattern, 4) or "pattern"),
+def forbid_grader(pattern, name=None, note=None, flags="i", target="last_message",
+                  must_match=(), must_not_match=()):
+    """The workhorse. Most corrections are "stop doing X", and "stop doing X" is a regex.
+
+    `must_match`/`must_not_match` are the grader's proof that its own pattern can fire: see
+    `trimwrit check`. For a `not_contains` grader like this one, a `must_match` example is text
+    the run would FAIL on, which is exactly what proves the pattern is still connected. Naming
+    them the same as the outcome they cause on a real run (not the outcome of the CHECK) is
+    deliberate: the semantics are about the PATTERN, never about the verdict.
+    """
+    spec = {"type": "regex", "name": name or "forbids-{}".format(slug(pattern, 4) or "pattern"),
             "pattern": regex_escape_bad_dashes(pattern), "match": "not_contains",
             "flags": flags, "target": target, "note": note}
+    if must_match:
+        spec["must_match"] = list(must_match)
+    if must_not_match:
+        spec["must_not_match"] = list(must_not_match)
+    return spec
 
 
-def require_grader(pattern, name=None, note=None, flags="i", target="last_message"):
-    return {"type": "regex", "name": name or "requires-{}".format(slug(pattern, 4) or "pattern"),
+def require_grader(pattern, name=None, note=None, flags="i", target="last_message",
+                   must_match=(), must_not_match=()):
+    spec = {"type": "regex", "name": name or "requires-{}".format(slug(pattern, 4) or "pattern"),
             "pattern": regex_escape_bad_dashes(pattern), "match": "contains",
             "flags": flags, "target": target, "note": note}
+    if must_match:
+        spec["must_match"] = list(must_match)
+    if must_not_match:
+        spec["must_not_match"] = list(must_not_match)
+    return spec
 
 
 def tool_grader(tool, name=None, note=None, min_calls=1, max_calls=None, input_match=None):
