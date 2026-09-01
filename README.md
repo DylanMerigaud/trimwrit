@@ -237,6 +237,52 @@ this tool runs under it with no migration.
 A grader this runner cannot score does **not** silently pass. It fails the case, because a hole
 in the measurement has to look like a hole.
 
+## The whole laptop, one table
+
+`run`, `prune` and `stats` all answer a question about ONE rule file. Nothing answers the
+question one level up: how many harnesses exist on this machine at all, and which of them have
+never been measured. An inventory of one laptop taken by hand on 2026-09-01 found 28
+repositories carrying a CLAUDE.md, one global `~/.claude/CLAUDE.md`, two `~/.claude/rules/*.md`,
+twelve skills, and eval cases in exactly TWO places. Every other harness had zero cases, and
+nobody had decided that: it was simply never visible, because nothing tracked the state of a
+harness, only the state of a single rule inside one.
+
+```bash
+trimwrit audit --laptop
+```
+
+```
+repo                       harness                                       lines sections rules cases   last run   with
+----------------------------------------------------------------------------------------------------
+~/.claude                  ~/.claude/CLAUDE.md                             212       13     1     1 2026-08-23      -
+~/Code/trimwrit            ~/Code/trimwrit/examples/CLAUDE.md               18        0     3     3 2026-08-23      -
+~/Code/wedpalette          ~/Code/wedpalette/CLAUDE.md                     309       13     0     0          -      -
+...
+
+106 harness file(s) in 28 repo(s)
+
+24 repo(s) with zero cases, the number this command exists for:
+  ~/Code/a11y
+  ~/Code/agent-smith
+  ...
+
+2 repo(s) stale (last run older than 30 day(s)):
+  ~/Code
+  ~/Code/growth-cockpit
+
+0 harness(es) with integrated rules but no evals dir, promoted with nothing to measure them:
+  none.
+```
+
+`--laptop` scans `~/.claude` and `~/Code` (a root that does not exist is skipped, not an error);
+`--roots` overrides with an explicit list, and with neither the scan is just the cwd. A harness
+is `CLAUDE.md` at any depth, `.claude/rules/*.md`, or `.claude/skills/*/SKILL.md`, and it belongs
+to the nearest ancestor holding a `.git`, file or directory, so a worktree checkout of the same
+repo is never counted as a second one. `--stale DAYS` (default 30) controls the second bucket,
+and a repo with cases that has never run at all counts as stale regardless of the threshold:
+nothing measured is worse than something measured a while ago. `--json` prints every computed
+field for scripting.
+
 ## What this is not
 
 **Not a memory.** Claude Code has had automatic `feedback` memories since v2.1.59. This tool
@@ -275,6 +321,7 @@ which succeeds with empty output before anything is staged. Both misses are in t
 | `trimwrit prune` | rules that no longer earn their place |
 | `trimwrit viz` | serialize the pipeline into a payload and open it as a canvas |
 | `trimwrit stats` | aggregate a runtime ledger and flag dead weight and friction, no deletion |
+| `trimwrit audit` | one table for every harness on the machine, and which ones have no case |
 
 ## See it
 
