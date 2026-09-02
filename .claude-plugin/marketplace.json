@@ -10,7 +10,7 @@
       "name": "trimwrit",
       "source": "./",
       "description": "A harness rule enters with a test and leaves when the test passes without it.",
-      "version": "0.4.0",
+      "version": "0.4.1",
       "author": { "name": "Dylan Merigaud" },
       "license": "MIT",
       "category": "productivity",

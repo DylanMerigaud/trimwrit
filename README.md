@@ -226,6 +226,17 @@ model reports the rule, with the file absent it reports no such rule.
 If you want the contaminated behaviour, `--no-isolation` is there. It is off by default because
 a delta measured against your own harness is not a delta.
 
+**An eval run acts on nothing.** Since 0.4.1 the isolation also passes `--tools ""`: no Bash, no
+Write, no Read, no browser, no MCP server. The night before, with the harness seeded, eval runs
+overwrote the operator's clipboard, ran `security dump-keychain`, read repository files by
+absolute path out of the scratch directory, and tried to post fifteen real comments. A replay
+reads a situation; it must not be able to act on the machine. A case that needs a tool declares
+it in its front matter, `allowed_tools: [Read, Write]`, and gets exactly that list. `--restricted`
+was measured and rejected: it drops the seeded CLAUDE.md along with the leak. A case may also set
+`sandbox_note: true` (or the run may pass `--sandbox-note`) to tell the model it sits in a scratch
+directory with no repository, so it answers instead of hunting for files; off by default, because
+a case that measures whether the model can tell it is being tested must never carry it.
+
 ## Two runners, one format
 
 `claude plugin eval` is in early access. On the machine this was built on, Claude Code 2.1.241,

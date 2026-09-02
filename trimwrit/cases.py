@@ -215,6 +215,21 @@ class Case(object):
         t = self.meta.get("tags") or []
         return list(t) if isinstance(t, (list, tuple)) else [t]
 
+    @property
+    def allowed_tools(self):
+        """The built-in tools this case grants. Empty means none: since 0.4.1 an eval run acts
+        on nothing unless the case says so (see runner.ISOLATE_ARGS for the night that decided
+        it). A case with a `file_exists` or `tool_used` grader names what it needs here."""
+        t = self.meta.get("allowed_tools") or []
+        return [str(x) for x in (t if isinstance(t, (list, tuple)) else [t]) if str(x).strip()]
+
+    @property
+    def sandbox_note(self):
+        """Opt in: tell the model it sits in a scratch directory with no repository. Off by
+        default, because a case measuring whether the model can tell it is being tested must
+        never carry it (runner.SANDBOX_NOTE)."""
+        return bool(self.meta.get("sandbox_note", False))
+
     def __repr__(self):
         return "<Case {} graders={}>".format(self.name, len(self.graders))
 

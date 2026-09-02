@@ -354,6 +354,9 @@ def cmd_run(args):
     if not found:
         print("no cases in {}".format(evals_dir), file=sys.stderr)
         return 2
+    if getattr(args, "sandbox_note", False):
+        for case in found:
+            case.meta["sandbox_note"] = True
 
     rule_files = _rule_files(args, args.root)
     if not rule_files and not args.no_ablation:
@@ -777,6 +780,11 @@ def main(argv=None):
     rn.add_argument("--judge-model", help="model for llm graders")
     rn.add_argument("--json", action="store_true")
     rn.add_argument("--quiet", action="store_true")
+    rn.add_argument("--sandbox-note", action="store_true",
+                    help="tell the model it runs in a scratch directory with no repository, so "
+                         "it answers instead of hunting for files. Off by default: a case that "
+                         "measures whether the model can tell it is being tested must never "
+                         "carry it (same as `sandbox_note: true` in a case's front matter)")
     rn.add_argument("--no-isolation", action="store_true",
                     help="let the run inherit your own ~/.claude/CLAUDE.md. Off by default, "
                          "because it contaminates the baseline arm and every delta with it")

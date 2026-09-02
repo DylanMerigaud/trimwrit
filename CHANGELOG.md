@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.1, 2026-09-01
+
+- **An eval run acts on nothing.** Read in the evidence files of the dig-0004 cases the same
+  night: with the harness seeded, runs overwrote the operator's clipboard (`cat <<EOF | pbcopy`,
+  twice), ran `security dump-keychain` four times, read repository files by absolute path out
+  of the scratch directory, and tried `comments.py --n 15`, which failed only because the
+  scratch directory has no scripts/. The injection suite's own 64 runs made 34 native calls,
+  all read-only, three outside the sandbox. `--tools ""` now rides in the isolation flags and
+  removes every built-in tool; a case that needs one declares `allowed_tools` in its front
+  matter and gets exactly that list. `--restricted` was measured first and rejected: it
+  confines the file tools but drops the seeded CLAUDE.md, which would have killed the ablation
+  with the leak.
+- **`sandbox_note`, opt in.** Two runs were lost to an honest "there is no repo here, I will
+  not fabricate a report". `sandbox_note: true` in a case (or `run --sandbox-note`) appends one
+  system prompt line saying the run is a replay in a scratch directory with no repository, so
+  the model answers from the prompt instead of hunting for files. Off by default: a case that
+  measures whether the model can tell it is being tested must never carry it.
+
 ## 0.4.0, 2026-09-01
 
 Dylan, on why: "je veux normaliser, optimiser, tracker, state, et self refine mes harness.
