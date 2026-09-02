@@ -25,6 +25,7 @@ import sys
 import time
 import webbrowser
 
+from . import adopt as adopt_mod
 from . import audit as audit_mod
 from . import cases as cases_mod
 from . import check as check_mod
@@ -678,6 +679,19 @@ def cmd_audit(args):
     return 0
 
 
+# ------------------------------------------------------------------ adopt
+
+
+def cmd_adopt(args):
+    result = adopt_mod.compute(args.root, roots=args.roots, laptop=args.laptop,
+                               dry_run=args.dry_run)
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(adopt_mod.render_report(result))
+    return 0
+
+
 # ------------------------------------------------------------------ parser
 
 
@@ -817,6 +831,14 @@ def main(argv=None):
     au.add_argument("--stale", type=int, default=audit_mod.DEFAULT_STALE_DAYS,
                     help="days before a repo's last run counts as stale")
     au.set_defaults(func=cmd_audit)
+
+    ad = sub.add_parser("adopt", help="bring the rules written before trimwrit existed into "
+                                      "its registry, with no case")
+    ad.add_argument("--roots", nargs="+", help="directories to scan (default: --root)")
+    ad.add_argument("--laptop", action="store_true", help="scan ~/.claude and ~/Code")
+    ad.add_argument("--dry-run", action="store_true", help="compute and print, write nothing")
+    ad.add_argument("--json", action="store_true")
+    ad.set_defaults(func=cmd_adopt)
 
     args = p.parse_args(argv)
     try:

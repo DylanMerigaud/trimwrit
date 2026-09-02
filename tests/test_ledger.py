@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from trimwrit import ledger as L
@@ -7,6 +9,21 @@ def test_log_and_read_back(tmp_path):
     row = L.log("you used an em-dash again", tag="em-dash", root=str(tmp_path))
     assert row["id"] == "0001"
     assert L.get("0001", root=str(tmp_path))["text"] == "you used an em-dash again"
+
+
+def test_a_touched_empty_ledger_reads_as_no_corrections(tmp_path):
+    # `trimwrit adopt` creates `.trimwrit/ledger.jsonl` as a bare touch (zero bytes) for a repo
+    # that never had one, rather than skip the file entirely, so every other reader in this
+    # module has to treat "exists, empty" the same as "does not exist yet": zero corrections,
+    # never an error.
+    path = L.path_for(root=str(tmp_path))
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    open(path, "w", encoding="utf-8").close()
+
+    assert L.rows(root=str(tmp_path)) == []
+    assert L.corrections(root=str(tmp_path)) == []
+    assert L.pending(root=str(tmp_path)) == []
+    assert L.folded(root=str(tmp_path)) == []
 
 
 def test_ids_are_monotonic_and_padded(tmp_path):
