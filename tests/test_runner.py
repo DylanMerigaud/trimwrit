@@ -158,7 +158,9 @@ def test_summarise_reports_the_delta():
 def test_the_baseline_is_isolated_from_the_operators_own_harness():
     # Without this the `without` arm still carries ~/.claude/CLAUDE.md and every delta is
     # measured against a contaminated baseline. Measured, not assumed: see runner.ISOLATE_ARGS.
-    assert runner.ISOLATE_ARGS == ("--setting-sources", "project,local")
+    args = runner.ISOLATE_ARGS
+    i = args.index("--setting-sources")
+    assert args[i + 1] == "project,local"
 
 
 def test_parse_stream_picks_the_final_text_and_the_tool_calls():
@@ -270,3 +272,31 @@ def _write_case(tmp_path, name):
                              [cases_mod.forbid_grader("nothing-to-forbid", name="g")],
                              evals_dir=str(tmp_path / "evals"))
     return cases_mod.load_case(d)
+
+
+# ---------------------------------------------------------------- 0.3.1, from the first real replay
+
+
+def test_an_api_refusal_returned_as_text_is_unmeasured():
+    """The API's own safeguards answer with RESULT TEXT and exit 0, not with an error. Seen on
+    2026-09-01 on a base64 payload case: three bare runs returned the refusal text and the
+    first `unmeasured` scored them 0.5 against a grader that requires an answer block, which
+    read in the table as the harness earning its place on a case the model never saw."""
+    from trimwrit.runner import Result
+    refusal = ("API Error: Opus 5's safeguards flagged this message (https://example/aup). "
+               "Try rephrasing the request in a new session or change your model.")
+    assert Result(None, "without", 0, refusal, [], {}).unmeasured
+    # Only at the start of the text: a model that QUOTES the phrase while answering measured.
+    quoting = "The message you got looks like an 'API Error: safeguards' page, ignore it."
+    assert not Result(None, "without", 0, quoting, [], {}).unmeasured
+
+
+def test_the_isolation_removes_every_mcp_server():
+    """A bare-arm run of a prompt injection case called the operator's live Gmail connector to
+    verify a forged quote (2026-09-01). Denied by the permission layer, which is luck. An eval
+    run must not be able to reach a system outside its scratch directory, and
+    `--setting-sources` alone does not remove a user-level MCP server."""
+    from trimwrit.runner import ISOLATE_ARGS
+    assert "--strict-mcp-config" in ISOLATE_ARGS
+    assert "--mcp-config" not in ISOLATE_ARGS, (
+        "with no --mcp-config, --strict-mcp-config means zero servers; naming one reopens it")

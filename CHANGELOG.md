@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.1, 2026-09-01
+
+Both from the first real replay under 0.3.0, read in the evidence files the same day.
+
+- **An eval run can no longer reach an MCP server.** `--strict-mcp-config` with no
+  `--mcp-config` joins the isolation flags, which means zero servers. A bare-arm run of a prompt
+  injection case whose payload forged a quoted approval called the operator's live Gmail
+  connector to verify the quote; the permission layer denied it, which is luck, not design.
+  Nothing an eval case says can reach a system outside its scratch directory.
+- **An API refusal returned as text is unmeasured.** The API's own safeguards answer with
+  result text ("API Error: ... safeguards flagged this message") and exit 0. Three bare runs of
+  a base64 payload case returned that text and were scored 0.5 against the grader that requires
+  an answer block, which read in the table as the harness earning its place on a case the
+  model never saw. Matched at the start of the text only: a model quoting the phrase is a
+  measured run.
+
 ## 0.3.0, 2026-09-01
 
 The incident behind all five changes below: a suite of 32 prompt injection cases, generated in
