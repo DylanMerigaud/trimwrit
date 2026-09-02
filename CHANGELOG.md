@@ -39,6 +39,29 @@ to it: not in `prune`, not in `viz`, not in `audit`'s rule count.
   orphan; `prune.orphans`/`prune.unused_cases`/`prune.inert` still read only `integrate.read_rules`
   over a target file, never `.trimwrit/rules.jsonl`, and a test now proves the registry's
   presence does not move prune's findings.
+- **`target: outbox` reads only what LEAVES.** Two sessions hand-wrote the same lookahead
+  regex on 2026-09-01 to stop a forbid grader firing on a correct answer that quotes the
+  forbidden thing while refusing it (the injection suite: 11 false flags out of 14 on its first
+  pass; dig-0004: three older cases). The haystack is now the inside of the outbox blocks of the
+  final message, in both marker dialects already in use (`--- OUTBOX ---` pairs and fenced
+  ```outbox blocks), and `check` runs `must_match`/`must_not_match` through the same target, so
+  a proof sample is a whole answer. A run with no block yields an empty haystack: pair it with a
+  `requires` grader on `last_message` for the opening marker.
+- `trimwrit case --must-match`/`--must-not-match` used to land case wide on every regex grader,
+  so a case mixing `--forbid` and `--require` (a bad sample for one, a good sample for the other)
+  could not be built through the CLI at all. Both flags now accept an optional `NAME=` prefix,
+  the grader's own name or the shorthand `forbid=`/`require=`, that routes the sample to one
+  grader; a value with no `=` before its first space keeps the old case wide meaning.
+- A `must_match`/`must_not_match` sample containing a comma silently split in two on read back
+  (`_needs_quote` did not treat a comma as a reason to quote, and the inline list reader splits
+  on every unquoted comma). Fixed in `frontmatter._needs_quote`: a comma is now quoted like every
+  other character that would change the string's meaning.
+- Two grader names sharing their first six words collapsed onto the same grader file
+  (`write_case` slugs a name to 6 words for its filename), and the second write silently
+  overwrote the first, so a case that declared two graders shipped one. `write_case` now tries
+  the next free numbered suffix on a collision, and refuses outright, with a clear error, two
+  graders that share the identical `name` field.
+
 
 ## 0.3.1, 2026-09-01
 
