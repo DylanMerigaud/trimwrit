@@ -399,6 +399,54 @@ and a repo with cases that has never run at all counts as stale regardless of th
 nothing measured is worse than something measured a while ago. `--json` prints every computed
 field for scripting.
 
+## Bringing the existing rules in
+
+`audit` only counts rules that went through this tool's own `integrate` step, which means it
+counts almost nothing on a real laptop. Dylan, 2026-09-01, on why that is worth fixing: "je veux
+normaliser, optimiser, tracker, state, et self refine mes harness. trimwrit me semble un bon
+moyen", then, on `audit` reporting 24 of 28 repos at zero cases: "ca sert pas qu'a mesurer. mais
+aussi a structurer, self improve etc...". A CLAUDE.md written before trimwrit existed, which on
+most repos is nearly every line of it, carries no case and no marker, so the loop (log, case,
+integrate, run, prune) cannot see it at all: not in `prune`, not in `viz`, not in `audit`'s rule
+count. `adopt` closes that gap without inventing evidence that is not there:
+
+```bash
+trimwrit adopt --roots ~/Code/growth-cockpit
+```
+
+```
+~/Code/growth-cockpit  10 harness file(s)  72 adopted, 1 promoted, 0 gone, 0 changed since last run
+
+1 repo(s), 10 harness file(s), 73 rule unit(s) tracked (72 adopted, 1 promoted, 0 gone), 0 changed since last run.
+```
+
+It walks the same repos `audit` would (same `--roots`/`--laptop` default, same exclusions, same
+repo attribution), and for every harness file it finds, splits the file into rule UNITS: a `## `
+section, heading line through the line before the next heading or EOF, or the whole file when
+there is no `## ` heading at all. Each unit becomes one line in `.trimwrit/rules.jsonl`, keyed
+by `(file, heading)` so its id is stable across runs:
+
+```json
+{"id": "A0007", "file": "CLAUDE.md", "heading": "Rule #1", "start": 40, "end": 46, "lines": 7,
+ "sha256": "a3f2c9d1...", "status": "adopted", "case": null, "adopted": "2026-09-01",
+ "seen": "2026-09-01"}
+```
+
+A section that already carries a real trimwrit marker (read through `integrate.py`'s own
+parser, never a second regex) is not adopted, it is already the loop's: it comes back
+`status: promoted` with the `rules` it names, so the registry stays complete without ever
+overclaiming a rule this tool did not write. A re-run updates a surviving unit's line range and
+sha in place; a unit whose `(file, heading)` no longer exists goes `status: gone` and is kept,
+never deleted, because a rule that vanished is a fact worth keeping too. `--dry-run` computes
+and prints the same report with no write at all, and it never touches what already exists: an
+empty `.trimwrit/ledger.jsonl` and an `evals/README.md` are created only where the repo has
+neither yet.
+
+`audit` then reads the registry back: a new `adopted` column next to `rules`, and one more
+summary bucket, `N adopted rule(s) with no case across M repo(s)`, the number this command
+exists to make visible. A repo `adopt` has never touched prints `-` in that column, not `0`, so
+a machine nobody has run this on is never mistaken for one with nothing to adopt.
+
 ## What this is not
 
 **Not a memory.** Claude Code has had automatic `feedback` memories since v2.1.59. This tool
@@ -439,6 +487,7 @@ which succeeds with empty output before anything is staged. Both misses are in t
 | `trimwrit viz` | serialize the pipeline into a payload and open it as a canvas |
 | `trimwrit stats` | aggregate a runtime ledger and flag dead weight and friction, no deletion |
 | `trimwrit audit` | one table for every harness on the machine, and which ones have no case |
+| `trimwrit adopt` | bring the rules written before trimwrit existed into its registry, with no case |
 
 ## See it
 

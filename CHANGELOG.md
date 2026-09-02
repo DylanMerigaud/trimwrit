@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.4.0, 2026-09-01
+
+Dylan, on why: "je veux normaliser, optimiser, tracker, state, et self refine mes harness.
+trimwrit me semble un bon moyen", then, on `audit` showing 24 of 28 repos with zero cases: "ca
+sert pas qu'a mesurer. mais aussi a structurer, self improve etc...", and on scope: "uniquement
+les repo avec harness. pour moi gc est suffisant". The loop (log, case, integrate, run, prune)
+only knows the rules it promoted itself, through the marker `integrate.py` writes. A rule
+written BEFORE trimwrit existed, which on most real repos is nearly all of them, was invisible
+to it: not in `prune`, not in `viz`, not in `audit`'s rule count.
+
+- **`trimwrit adopt`.** Walks the same repos `audit` would (`--roots`, `--laptop`, same
+  exclusions, same repo attribution, reusing `audit.find_harness_files`/`_find_repo` rather than
+  a second walk) and, for every harness file, splits it into rule UNITS: a `## ` section
+  (heading line through the line before the next `## `/`# ` heading or EOF), or the whole file
+  when there is no `## ` heading at all, headed by its first `# ` line or its own file name. Each
+  unit becomes one line of `.trimwrit/rules.jsonl`, keyed by `(file, heading)` so its id is
+  stable across runs: a surviving unit gets its line range and sha256 refreshed in place, a new
+  one gets the next id, and a unit whose `(file, heading)` no longer exists goes
+  `status: gone` and is kept, never deleted. A section that already carries a real trimwrit
+  marker (read through `integrate.rule_ids`, never a second regex) is not adopted, it is already
+  the loop's: it comes back `status: promoted` with the rule ids the marker names. Also creates,
+  and never overwrites, a repo's missing skeleton: a touched empty `.trimwrit/ledger.jsonl` and
+  an `evals/README.md`. `--dry-run` computes and prints the exact same report with no write at
+  all. `plan()` is pure (no filesystem writes), `apply()` (via `compute(..., dry_run=False)`) is
+  the thin wrapper that actually writes, so id stability and change detection are unit tested
+  with no disk involved.
+- **`ledger.rows` reads a touched, empty ledger as no corrections.** Already true of the
+  existing code (an empty file yields no lines to parse), now covered by a test, since `adopt`
+  depends on exactly this behaviour for the skeleton it creates.
+- **`audit` reads the registry.** A repo record gains `adopted` (status `adopted`, no case yet),
+  `promoted`, `gone`, all `None` for a repo `adopt` has never touched, distinguishable from `0`
+  the same way `evals_dir` already distinguishes "no evals dir" from "an empty one". The table
+  gains an `adopted` column after `rules`, printing `-` for that `None`, and the summary gains
+  one more bucket, `N adopted rule(s) with no case across M repo(s)`, the number `adopt` exists
+  to make visible, alongside the three buckets `audit` already reported.
+- **`prune` is unchanged, on purpose.** An adopted unit never claimed a case, so it is not an
+  orphan; `prune.orphans`/`prune.unused_cases`/`prune.inert` still read only `integrate.read_rules`
+  over a target file, never `.trimwrit/rules.jsonl`, and a test now proves the registry's
+  presence does not move prune's findings.
+
 ## 0.3.1, 2026-09-01
 
 Both from the first real replay under 0.3.0, read in the evidence files the same day.

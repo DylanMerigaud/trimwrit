@@ -233,10 +233,56 @@ def _ledger_stats(repo):
     }
 
 
+# The three status strings `adopt.py` writes into `.trimwrit/rules.jsonl`. Not imported from
+# there: `adopt.py` imports THIS module for the shared walk (`_resolve_roots`,
+# `find_harness_files`, `_find_repo`), so importing back would be a cycle. Duplicated as plain
+# strings rather than shared constants, the cheaper price of the two.
+_ADOPT_STATUS_ADOPTED = "adopted"
+_ADOPT_STATUS_PROMOTED = "promoted"
+_ADOPT_STATUS_GONE = "gone"
+
+
+def _read_adopt_registry(repo):
+    """`.trimwrit/rules.jsonl` for `repo`, or `None` if `trimwrit adopt` has never run there.
+
+    `None` is a real answer, not zero: it is what lets the `adopted` column print `-` (never
+    adopted) rather than `0` (adopted, and it found nothing), the same distinction `evals_dir`
+    already makes for the `cases` column.
+    """
+    path = os.path.join(repo, ".trimwrit", "rules.jsonl")
+    if not os.path.exists(path):
+        return None
+    out = []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except ValueError:
+                    continue
+    except OSError:
+        return None
+    return out
+
+
+def _adopt_counts(registry):
+    if registry is None:
+        return {"adopted": None, "promoted": None, "gone": None}
+    return {
+        "adopted": sum(1 for e in registry if e.get("status") == _ADOPT_STATUS_ADOPTED),
+        "promoted": sum(1 for e in registry if e.get("status") == _ADOPT_STATUS_PROMOTED),
+        "gone": sum(1 for e in registry if e.get("status") == _ADOPT_STATUS_GONE),
+    }
+
+
 def _repo_record(repo_abspath):
     evals_dir = _find_evals_dir(repo_abspath)
     cases = _count_cases(evals_dir) if evals_dir else 0
     ledger_stats = _ledger_stats(repo_abspath)
+    adopt_counts = _adopt_counts(_read_adopt_registry(repo_abspath))
 
     last_run, last_with = (None, None)
     if evals_dir:
@@ -255,6 +301,9 @@ def _repo_record(repo_abspath):
         "pending_promotions": ledger_stats["pending_promotions"] if ledger_stats else 0,
         "last_run": last_run,
         "last_with": last_with,
+        "adopted": adopt_counts["adopted"],
+        "promoted": adopt_counts["promoted"],
+        "gone": adopt_counts["gone"],
     }
 
 
@@ -304,7 +353,8 @@ def _public_harness(h):
 def _public_repo(rr):
     return {"repo": rr["repo"], "evals_dir": rr["evals_dir"], "cases": rr["cases"],
             "corrections": rr["corrections"], "pending_promotions": rr["pending_promotions"],
-            "last_run": rr["last_run"], "last_with": rr["last_with"]}
+            "last_run": rr["last_run"], "last_with": rr["last_with"],
+            "adopted": rr["adopted"], "promoted": rr["promoted"], "gone": rr["gone"]}
 
 
 def compute(root=".", roots=None, laptop=False, stale_days=DEFAULT_STALE_DAYS):
@@ -337,6 +387,12 @@ def compute(root=".", roots=None, laptop=False, stale_days=DEFAULT_STALE_DAYS):
     unmeasured = sorted({h["path"] for h in harnesses
                          if h["rules"] > 0
                          and repo_records[h["repo_abspath"]]["evals_dir"] is None})
+    # The number `trimwrit adopt` exists to make visible: a rule that predates trimwrit is not
+    # measured by anything, and until this bucket existed nothing said so, the same gap the
+    # "24 of 28 repos with zero cases" finding named for cases before `audit` existed at all.
+    adopted_no_case_repos = sorted(rr["repo"] for rr in repo_records.values()
+                                   if rr["adopted"])
+    adopted_no_case_total = sum(rr["adopted"] or 0 for rr in repo_records.values())
 
     summary = {
         "harness_count": len(harnesses),
@@ -345,6 +401,8 @@ def compute(root=".", roots=None, laptop=False, stale_days=DEFAULT_STALE_DAYS):
         "zero_cases": zero_cases,
         "stale": stale,
         "unmeasured_rules": unmeasured,
+        "adopted_no_case_total": adopted_no_case_total,
+        "adopted_no_case_repos": adopted_no_case_repos,
     }
     return {
         "harnesses": [_public_harness(h) for h in harnesses_sorted],
@@ -369,13 +427,19 @@ def render_table(result):
     both thin readers of the exact same `compute()` payload.
     """
     repo_index = {r["repo"]: r for r in result["repos"]}
-    out = ["{:<26} {:<44} {:>6} {:>8} {:>5} {:>5} {:>10} {:>6}".format(
-        "repo", "harness", "lines", "sections", "rules", "cases", "last run", "with"), BAR]
+    out = ["{:<26} {:<44} {:>6} {:>8} {:>5} {:>7} {:>5} {:>10} {:>6}".format(
+        "repo", "harness", "lines", "sections", "rules", "adopted", "cases", "last run",
+        "with"), BAR]
     for h in result["harnesses"]:
         rr = repo_index.get(h["repo"], {})
         last_with = rr.get("last_with")
-        out.append("{:<26} {:<44} {:>6} {:>8} {:>5} {:>5} {:>10} {:>6}".format(
-            h["repo"], h["path"], h["lines"], h["sections"], h["rules"], rr.get("cases", 0),
+        # `adopted` is a repo total (like `cases` and `last run`), not per-harness-file: the
+        # registry `adopt` writes is one file per REPO, the same granularity `.trimwrit/ledger`
+        # already reports at on this same row.
+        adopted = rr.get("adopted")
+        out.append("{:<26} {:<44} {:>6} {:>8} {:>5} {:>7} {:>5} {:>10} {:>6}".format(
+            h["repo"], h["path"], h["lines"], h["sections"], h["rules"],
+            adopted if adopted is not None else "-", rr.get("cases", 0),
             _fmt_date(rr.get("last_run")), "{:.2f}".format(last_with) if last_with is not None
             else "-"))
 
@@ -405,6 +469,14 @@ def render_table(result):
     for r in s["unmeasured_rules"]:
         out.append("  {}".format(r))
     if not s["unmeasured_rules"]:
+        out.append("  none.")
+
+    out.append("")
+    out.append("{} adopted rule(s) with no case across {} repo(s):".format(
+        s["adopted_no_case_total"], len(s["adopted_no_case_repos"])))
+    for r in s["adopted_no_case_repos"]:
+        out.append("  {}".format(r))
+    if not s["adopted_no_case_repos"]:
         out.append("  none.")
 
     return "\n".join(out)
