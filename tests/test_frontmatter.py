@@ -105,3 +105,15 @@ def test_a_list_with_no_multiline_item_still_renders_inline():
     # Only a list that NEEDS the block form pays for it; a plain list of short strings keeps
     # the compact `[a, b]` form so an unrelated diff does not turn every tags line into four.
     assert render({"tags": ["a", "b"]}) == "tags: [a, b]"
+
+
+def test_a_comma_in_an_inline_list_item_survives_the_round_trip():
+    # `render()` writes a single line list item as a compact `[a, b]` flow list. `_needs_quote`
+    # did not treat a comma as a reason to quote, so an item that itself contains a comma, for
+    # example a whole sentence like a must_match sample, was written bare into the flow list.
+    # `_split_inline` then read the file back and split that ONE item into two on the comma it
+    # never expected, and the proof built on top of it silently checked only the first half of
+    # what it was given. Same incident class as the em-dash-as-character-class bug above, one
+    # level down: an instrument that proves half of what it was asked to prove.
+    data = {"must_match": ["Thursday 3pm works for me, send the invite"]}
+    assert round_trip(data) == data

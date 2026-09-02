@@ -200,6 +200,15 @@ def _needs_quote(v):
         return True
     if v[0] in "[{>|&*!%@`'\"#?,":
         return True
+    if "," in v:
+        # Not just a LEADING comma (already caught above): `_split_inline` treats every comma
+        # outside quotes as a list separator, so a comma anywhere in an unquoted inline item
+        # split that one item into two on read back. A must_match sample that is a whole
+        # sentence ("Thursday 3pm works for me, send the invite") came back as two list items,
+        # and the proof built on the second half silently checked the wrong text. Same
+        # incident class as the em-dash-as-character-class bug this module already guards
+        # against, one level down: an instrument that proves half of what it was given.
+        return True
     if "'" in v or '"' in v:
         # Not just a leading quote: `_split_inline` toggles its "inside a quoted segment" state
         # on every quote character it meets, anywhere in the string. An apostrophe in the

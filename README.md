@@ -60,6 +60,23 @@ The prompt has to tempt a clean model into the same mistake. If you would need t
 the rule to answer it correctly, the case measures recall of a sentence, and it will pass
 forever while the behaviour rots.
 
+`--must-match`/`--must-not-match` name the proof each regex grader needs (see "A grader proves
+it can fire", below), and by default a sample applies to every regex grader in the case. A case
+mixing `--forbid` and `--require` needs a different sample for each, so a value can carry an
+optional `NAME=` prefix: the grader's own `name`, or the shorthand `forbid=`/`require=` for
+every grader of that kind.
+
+```bash
+trimwrit case 0002 --title "buries the decision" \
+  --prompt "..." \
+  --forbid "not now" --require "the answer up front" \
+  --must-match "forbid=Let's revisit this later, not now." \
+  --must-match "require=Yes, ship it. Here is why."
+```
+
+A value with no `=` before its first space keeps the old case wide meaning, so nothing already
+written this way changes.
+
 What lands on disk is the **native `claude plugin eval` layout**, not a format of ours:
 
 ```
@@ -274,6 +291,12 @@ must_match:
     --- END OUTBOX ---
   - a single line item still works
 ```
+
+A sample containing a comma is quoted on write, on purpose: an unquoted comma reads back as a
+list separator, not as punctuation inside the sample, and a proof that silently checks half of
+what it was given is the same failure this whole feature exists to catch. Two graders whose
+names share their first six words also no longer collide on disk: the grader FILE gets the
+next free numbered suffix, the grader's own `name` field, its real identity, is untouched.
 
 `trimwrit check` runs this proof, with no model call, before any case runs:
 
