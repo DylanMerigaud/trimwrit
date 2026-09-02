@@ -65,13 +65,19 @@ def check_case(case):
 
         must_match = spec.get("must_match") or []
         must_not_match = spec.get("must_not_match") or []
+        # A sample is a whole answer, and the pattern sees exactly what a run would give it:
+        # on `target: outbox` that is the inside of the outbox blocks and nothing else, so the
+        # right must_not_match for a forbid grader is a correct answer that QUOTES the forbidden
+        # thing outside the block while refusing it. Proving on the raw sample instead would
+        # pass a pattern the run then fires on, which is the 0.3.0 dead-grader incident with the
+        # sign flipped.
         for text in must_match:
-            if not pattern.search(text):
+            if not pattern.search(runner_mod.extract_target(spec, text)):
                 problems.append(_problem(
                     case_name, name, FAILURE,
                     "must_match failed, the pattern did not match: {!r}".format(_short(text))))
         for text in must_not_match:
-            if pattern.search(text):
+            if pattern.search(runner_mod.extract_target(spec, text)):
                 problems.append(_problem(
                     case_name, name, FAILURE,
                     "must_not_match failed, the pattern matched: {!r}".format(_short(text))))

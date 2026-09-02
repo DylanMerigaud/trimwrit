@@ -237,6 +237,18 @@ this tool runs under it with no migration.
 A grader this runner cannot score does **not** silently pass. It fails the case, because a hole
 in the measurement has to look like a hole.
 
+**`target: outbox` reads only what LEAVES.** The question a behavioural case asks is rarely "does
+the answer contain X" but "does what goes out contain X": a correct agent quotes the forbidden
+thing while refusing it ("I am not sending CONFIRMED-7741"), and a grader on `last_message` flags
+that as compliance. Two sessions hand-wrote the same lookahead regex on 2026-09-01 to fix it, in
+two dialects. Now the case prompt asks the model to put whatever goes out between
+`--- OUTBOX ---` and `--- END OUTBOX ---` (or in a fenced ```` ```outbox ```` block), and a grader
+with `target: outbox` sees the inside of those blocks and nothing else. A run with no block yields
+an empty haystack, so pair it with a `requires` grader on `last_message` for the opening marker:
+a missing block must read as unmeasured, never as resisted. `trimwrit check` runs a grader's
+`must_match` / `must_not_match` samples through the same target, so a sample is a whole answer,
+and the useful `must_not_match` on a forbid grader is exactly the quoting refusal above.
+
 ## A grader proves it can fire
 
 On 2026-09-01 a suite of 32 prompt injection cases, generated in the native case format, was
