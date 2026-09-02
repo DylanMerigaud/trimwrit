@@ -108,6 +108,72 @@ def cmd_show(args):
 # ------------------------------------------------------------------ case
 
 
+# Shorthand prefixes for --must-match/--must-not-match, each naming a `regex` grader's `match`
+# value rather than a specific grader name, so one flag can target every forbid grader (or
+# every require grader) of a case with a single sample.
+_MATCH_SHORTHANDS = {"forbid": "not_contains", "require": "contains"}
+
+
+def _split_match_arg(raw):
+    """Split one --must-match/--must-not-match value on an optional `NAME=` prefix.
+
+    Returns (target, text). `target` is `None` for the case wide meaning this flag has always
+    had (every regex grader gets the sample); otherwise it is the literal text before the
+    first `=`, either a grader's own `name` or the shorthand `forbid`/`require`.
+
+    The prefix is only recognised when the `=` sits BEFORE the first space: a value with no
+    `=` there keeps today's meaning, so nothing already written to call `trimwrit case`
+    changes. This is what lets a sample's own prose contain an `=` (`the config is a=b, fix
+    it`) without it being mistaken for a grader target: the first space in that string comes
+    before any `=`.
+    """
+    head = raw.split(" ", 1)[0]
+    if "=" not in head:
+        return None, raw
+    target, _, text = raw.partition("=")
+    return target, text
+
+
+def _route_match_args(raw_values, graders, key):
+    """Apply a list of --must-match/--must-not-match values to `graders` (a list of grader
+    spec dicts, mutated in place) or collect the case wide ones to hand to `write_case`.
+
+    The incident this exists for: `write_case`'s case wide must_match/must_not_match lands on
+    EVERY regex grader, so a case mixing --forbid and --require could not be built through the
+    CLI at all (a forbid grader needs a BAD sample, a require grader needs a GOOD one, and one
+    shared list cannot be both). Routing a targeted value straight onto the matching grader's
+    own dict works because `write_case` already only fills in its case wide default for a
+    grader that does not already carry the key (see its docstring); setting the key here first
+    is what makes that skip happen.
+    """
+    case_wide = []
+    for raw in raw_values or []:
+        target, text = _split_match_arg(raw)
+        if target is None:
+            case_wide.append(text)
+            continue
+        match_type = _MATCH_SHORTHANDS.get(target)
+        hit = False
+        for g in graders:
+            if g.get("type") != "regex":
+                continue
+            if match_type is not None:
+                if g.get("match") != match_type:
+                    continue
+            elif g.get("name") != target:
+                continue
+            g.setdefault(key, [])
+            g[key].append(text)
+            hit = True
+        if not hit:
+            known = ", ".join(g["name"] for g in graders if g.get("type") == "regex")
+            raise cases_mod.CaseError(
+                "{}={!r}: no regex grader named {!r} in this case, and it is not forbid/"
+                "require. Known regex grader(s): {}.".format(
+                    target, text, target, known or "none"))
+    return case_wide
+
+
 def cmd_case(args):
     row = ledger_mod.get(args.id, root=args.root)
     prompt = args.prompt
@@ -149,13 +215,18 @@ def cmd_case(args):
 
     title = args.title or row["text"]
     try:
+        # Route each --must-match/--must-not-match onto the one grader its NAME= prefix
+        # names, before write_case ever sees them; anything left over (no prefix) still goes
+        # in as the case wide default, exactly as before. See _route_match_args.
+        must_match = _route_match_args(args.must_match, graders, "must_match")
+        must_not_match = _route_match_args(args.must_not_match, graders, "must_not_match")
         path = cases_mod.write_case(
             row["id"], title, prompt, graders, evals_dir=os.path.join(args.root, args.evals),
             tags=[t for t in (args.tags or "").split(",") if t] or ([row["tag"]] if row["tag"] else []),
             runs=args.runs, max_turns=args.max_turns,
             description=one_line(row["text"]),
             plugins=[p for p in (args.plugins or "").split(",") if p] or None,
-            must_match=args.must_match or (), must_not_match=args.must_not_match or ())
+            must_match=must_match, must_not_match=must_not_match)
     except cases_mod.CaseError as exc:
         print("refused: {}".format(exc), file=sys.stderr)
         return 2
@@ -652,10 +723,13 @@ def main(argv=None):
     cs.add_argument("--runs", type=int, default=3)
     cs.add_argument("--max-turns", type=int, default=6)
     cs.add_argument("--must-match", action="append",
-                    help="text a regex grader's pattern must match, its proof it can fire "
-                         "(repeatable)")
+                    help="text a regex grader's pattern must match, its proof it can fire. "
+                         "With no `=` before the first space it applies to every regex "
+                         "grader, same as always; prefix with a grader's own name or the "
+                         "shorthand forbid=/require= to target only that grader (repeatable)")
     cs.add_argument("--must-not-match", action="append",
-                    help="text a regex grader's pattern must NOT match (repeatable)")
+                    help="text a regex grader's pattern must NOT match. Same optional NAME=/ "
+                         "forbid=/require= prefix as --must-match (repeatable)")
     cs.set_defaults(func=cmd_case)
 
     ck = sub.add_parser("check", help="prove every grader can actually fire, before a run "

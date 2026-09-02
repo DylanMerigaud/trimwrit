@@ -80,6 +80,8 @@ def write_case(case_id, title, prompt, graders, evals_dir="evals", tags=(), runs
                "---\n{}\n---\n\n{}\n".format(frontmatter.render(fm), body),
                "the case prompt file")
 
+    seen_names = set()
+    used_stems = set()
     for g in graders:
         g = dict(g)
         if g.get("type") == "regex":
@@ -88,8 +90,30 @@ def write_case(case_id, title, prompt, graders, evals_dir="evals", tags=(), runs
             if must_not_match and "must_not_match" not in g:
                 g["must_not_match"] = list(must_not_match)
         gname = g.pop("name")
-        write_text(os.path.join(d, "graders",
-                                    "{}.md".format(slug(gname, words=6) or "grader")),
+        if gname in seen_names:
+            # A real error, not a slug accident: two graders both claiming the identical
+            # `name` is not something a file rename can fix, one of them would silently
+            # shadow the other the moment the case is loaded back.
+            raise CaseError(
+                "two graders named {!r} in the same case. Give one of them a different "
+                "name.".format(gname))
+        seen_names.add(gname)
+
+        # A grader file is named after a 6-word slug of its `name`, so two grader names that
+        # only differ PAST their first 6 words (a numeric suffix, most often) used to slug to
+        # the same file and the second write silently clobbered the first: a case that
+        # declared two graders shipped one. The file name is only a file name, never the
+        # grader's real identity (that lives in the `name` field _render_grader writes into
+        # the front matter), so on a collision we keep trying the next free suffix instead of
+        # ever overwriting a file THIS call already wrote.
+        stem = slug(gname, words=6) or "grader"
+        candidate, n = stem, 1
+        while candidate in used_stems:
+            n += 1
+            candidate = "{}-{}".format(stem, n)
+        used_stems.add(candidate)
+
+        write_text(os.path.join(d, "graders", "{}.md".format(candidate)),
                    _render_grader(gname, g), "the grader file")
     return d
 

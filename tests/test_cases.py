@@ -139,3 +139,50 @@ def test_multiline_must_match_example_round_trips(tmp_path):
         evals_dir=str(tmp_path))
     c = cases.load_case(d)
     assert c.graders[0]["must_match"] == [example]
+
+
+def test_a_comma_in_a_must_match_sample_survives_write_case_and_load_case(tmp_path):
+    # The real path for the comma incident in test_frontmatter.py: a must_match example that
+    # is a whole sentence, comma and all, has to come back out of the case exactly as it went
+    # in, or the proof it exists to carry is checking the wrong text.
+    example = "Thursday 3pm works for me, send the invite"
+    d = cases.write_case(
+        "0001", "t", "p",
+        [cases.require_grader("invite", name="g", must_match=[example])],
+        evals_dir=str(tmp_path))
+    c = cases.load_case(d)
+    assert c.graders[0]["must_match"] == [example]
+
+
+# ---------------------------------------------------------------- grader file name collisions
+#
+# The incident: `write_case` names a grader's FILE by slugging its `name` to 6 words, so two
+# graders whose names share their first 6 words (they differ only past that point, for example
+# a numeric suffix) collapse onto the same file and the second write silently overwrites the
+# first. A case that declared two graders shipped one, with no error anywhere.
+
+def test_write_case_avoids_a_slug_collision_between_two_grader_names(tmp_path):
+    name1 = "requires-cross-bet-change-applied-to-a-subset-1"
+    name2 = "requires-cross-bet-change-applied-to-a-subset-2"
+    d = cases.write_case(
+        "0001", "t", "p",
+        [cases.require_grader("x", name=name1), cases.require_grader("y", name=name2)],
+        evals_dir=str(tmp_path))
+    files = sorted(f for f in os.listdir(os.path.join(d, "graders")) if f.endswith(".md"))
+    assert len(files) == 2, "the collision must produce two files, not one overwriting the other"
+    c = cases.load_case(d)
+    assert len(c.graders) == 2
+    assert {g["name"] for g in c.graders} == {name1, name2}, (
+        "the file name is only a file name, the grader's real identity is its `name` field "
+        "and it must survive intact")
+
+
+def test_write_case_refuses_two_graders_with_the_identical_name(tmp_path):
+    # Not a slug accident, a real error: two graders that both claim the same `name` is not
+    # something a file rename can fix, one of them would silently shadow the other on load.
+    with pytest.raises(cases.CaseError) as exc:
+        cases.write_case(
+            "0001", "t", "p",
+            [cases.forbid_grader("x", name="dup"), cases.require_grader("y", name="dup")],
+            evals_dir=str(tmp_path))
+    assert "dup" in str(exc.value)

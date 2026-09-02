@@ -58,6 +58,68 @@ def test_a_judge_only_case_is_written_but_warned_about(tmp_path, capsys):
     assert "only a judge" in capsys.readouterr().out
 
 
+# ---------------------------------------------------------------- --must-match NAME= routing
+#
+# The incident: --must-match landed on every regex grader in the case (case wide), so a case
+# mixing --forbid and --require could not be written through the CLI at all, a forbid grader
+# needs a BAD sample as its proof and a require grader needs a GOOD one, and one case wide list
+# cannot be both. The fix reads an optional `NAME=` prefix off each --must-match/--must-not-match
+# value: the grader's own `name`, or the shorthand `forbid`/`require` for every grader of that
+# kind. No `=` before the first space keeps the old case wide meaning.
+
+def test_must_match_prefix_targets_one_grader_by_shorthand(tmp_path):
+    from trimwrit import cases
+
+    _run(tmp_path, "log", "mixes a forbid and a require sample", "--tag", "mix")
+    assert _run(tmp_path, "case", "0001", "--title", "mixed sample case", "--prompt", "replay",
+               "--forbid", "bad answer", "--require", "good answer",
+               "--must-match", "forbid=this is a bad answer",
+               "--must-match", "require=this is a good answer") == 0
+
+    d = tmp_path / "evals" / "0001-mixed-sample-case"
+    c = cases.load_case(str(d))
+    forbid_g = next(g for g in c.graders if g["match"] == "not_contains")
+    require_g = next(g for g in c.graders if g["match"] == "contains")
+    assert forbid_g["must_match"] == ["this is a bad answer"]
+    assert require_g["must_match"] == ["this is a good answer"]
+
+    from trimwrit.cli import main
+    assert main(["--root", str(tmp_path), "check"]) == 0
+
+
+def test_must_match_prefix_targets_one_grader_by_name(tmp_path):
+    from trimwrit import cases
+
+    _run(tmp_path, "log", "named grader target", "--tag", "named")
+    assert _run(tmp_path, "case", "0001", "--prompt", "replay",
+               "--forbid", "bad answer",
+               "--must-match", "forbids-named=this is a bad answer") == 0
+    d = tmp_path / "evals" / "0001-named-grader-target"
+    c = cases.load_case(str(d))
+    assert c.graders[0]["must_match"] == ["this is a bad answer"]
+
+
+def test_must_match_with_no_prefix_still_applies_case_wide(tmp_path):
+    # A value with no `=` before its first space keeps today's meaning: nothing already
+    # written to call this changes.
+    from trimwrit import cases
+
+    _run(tmp_path, "log", "unchanged case wide behaviour", "--tag", "unchanged")
+    assert _run(tmp_path, "case", "0001", "--prompt", "replay",
+               "--forbid", "bad answer",
+               "--must-match", "a bad answer right here") == 0
+    d = tmp_path / "evals" / "0001-unchanged-case-wide-behaviour"
+    c = cases.load_case(str(d))
+    assert c.graders[0]["must_match"] == ["a bad answer right here"]
+
+
+def test_must_match_unknown_target_is_refused(tmp_path, capsys):
+    _run(tmp_path, "log", "typo in the grader name", "--tag", "typo")
+    assert _run(tmp_path, "case", "0001", "--prompt", "replay", "--forbid", "bad answer",
+               "--must-match", "no-such-grader=text") == 2
+    assert "no-such-grader" in capsys.readouterr().err
+
+
 def test_prune_finds_the_orphan_and_changes_nothing_without_apply(tmp_path, capsys):
     _run(tmp_path, "log", "x", "--tag", "t")
     (tmp_path / "CLAUDE.md").write_text(
