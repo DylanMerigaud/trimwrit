@@ -122,20 +122,23 @@ rule is an orphan only when every case it names is gone.
 trimwrit run --target CLAUDE.md
 ```
 
-This repo's own suite, three runs per arm, real output:
+This repo's own suite, three runs per arm, real output of 2026-09-18 (Claude Code 2.1.276):
 
 ```
 case                                   with   without   delta  verdict
 ------------------------------------------------------------------------
-0002-no-em-dash-anywhere               1.00      0.00   +1.00  earns its place
-0003-no-time-estimate                  1.00      0.67   +0.33  earns its place
-0005-decision-last-and-short           1.00      0.33   +0.67  earns its place
+0002-no-em-dash-anywhere               1.00      1.00   +0.00  INERT, passes without the rule too
+0003-no-time-estimate                  1.00      0.56   +0.44  earns its place
+0005-decision-last-and-short           1.00      0.67   +0.33  earns its place
 ```
 
-Every case passes with its rule and scores strictly lower without it. A case that cannot do
-that is not measuring the rule, and two of these three could not until they were rewritten:
-0003 had a grader that forbade what its own prompt asked for, and 0005 had an llm judge that
-failed four runs out of four including the ones the mechanical grader passed.
+On 2026-08-23 the em-dash case scored 1.00 with and 0.00 without. Nearly four weeks later the
+model no longer needs the rule on that prompt, and the tool says so about the headline rule of
+its own repo. Three runs is not enough to delete it on; it is exactly the signal `prune` exists
+to surface. The other two cases pass with their rule and score strictly lower without it, and
+neither could until it was rewritten: 0003 had a grader that forbade what its own prompt asked
+for, and 0005 had an llm judge that failed four runs out of four including the ones the
+mechanical grader passed.
 
 **5. prune.** The step nothing else ships:
 
@@ -239,19 +242,18 @@ a case that measures whether the model can tell it is being tested must never ca
 
 ## Two runners, one format
 
-`claude plugin eval` is in early access. On the machine this was built on, Claude Code 2.1.241,
-`claude plugin eval .` answers *"`plugin eval` is currently in early access"* and runs nothing.
-A tool whose promise is "the rule is backed by a test" cannot ship with its test runner behind
-someone else's flag, so `trimwrit run` reads the same files and drives `claude -p` directly.
+`claude plugin eval` shipped in Claude Code 2.1.269 (2026-09-11). It reads the cases this tool
+writes with no migration: on 2026-09-18, `claude plugin eval . --case "0002*"` parsed and ran
+`0002-no-em-dash-anywhere` unchanged.
 
-There is a second reason, and it outlasts the first. The native runner takes a plugin or a
+It still cannot measure the rule that case exists for. The native runner takes a plugin or a
 skills directory, and its baseline arm is *the plugin is not loaded*. The most common place a
-harness rule actually lives is a CLAUDE.md, and no plugin flag will ever remove one. `trimwrit
-run` ablates a **file**, so it works on CLAUDE.md, on a SKILL.md, on a hook, on anything the
-model reads.
+harness rule actually lives is a CLAUDE.md, and no plugin flag removes one: in that same run the
+rule was absent from both arms, so the native delta said nothing about it. `trimwrit run`
+ablates a **file**, so it works on CLAUDE.md, on a SKILL.md, on a hook, on anything the model
+reads.
 
-Because the case format is native, the day `plugin eval` opens up, every case ever written by
-this tool runs under it with no migration.
+Use the native runner for what a plugin ships; use `trimwrit run` for a rule that lives in a file.
 
 | grader | `trimwrit run` | native |
 |---|---|---|
@@ -500,7 +502,7 @@ does not store what you like; it writes rules and it deletes them, and the delet
 you cannot get anywhere else.
 
 **Not an eval runner.** The format belongs to `claude plugin eval`. `trimwrit run` exists
-because that one is gated today and cannot ablate a CLAUDE.md ever.
+because that one ablates a plugin and cannot ablate a CLAUDE.md.
 
 **Not self-improving, and it does not learn.** Nothing here happens without you: you tag the
 correction, you write the rule, you approve the deletion. What it removes is the ability to add
