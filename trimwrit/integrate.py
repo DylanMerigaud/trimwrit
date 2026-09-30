@@ -71,7 +71,10 @@ def find_rule(text, rule_id):
 
 def rule_ids(text):
     """Every trimwrit rule id present in a target, in order of appearance."""
-    return re.findall(re.escape(MARK_OPEN) + r"\s+(\S+)\s+case\s+(\S+?),", text)
+    # The short form `trimwrit: R0020 case 0020 -->` (incident moved out to a history doc) is a
+    # rule too: growth-cockpit's two CLAUDE.md files carried 13 of them on 2026-09-30 and this
+    # reader counted zero, so prune reported every one of their cases as unused.
+    return re.findall(re.escape(MARK_OPEN) + r"\s+(\S+)\s+case\s+([^,\s]+)", text)
 
 
 def write_rule(target, rule_id, case_id, date, incident, rule_text, root="."):
@@ -144,8 +147,10 @@ def read_rules(target, root="."):
     with open(path, encoding="utf-8") as fh:
         lines = fh.read().split("\n")
     out = {}
-    pat = re.compile(re.escape(MARK_OPEN) + r"\s+(?P<rule>\S+)\s+case\s+(?P<case>[^,]+),\s*"
-                     r"(?P<date>[0-9-]+):\s*(?P<incident>.*?)\s*(?:-->|$)")
+    # The date and incident are optional: the short marker form keeps them in a history doc
+    # instead (see rule_ids).
+    pat = re.compile(re.escape(MARK_OPEN) + r"\s+(?P<rule>\S+)\s+case\s+(?P<case>[^,]+?)"
+                     r"(?:,\s*(?P<date>[0-9-]+):\s*(?P<incident>.*?))?\s*(?:-->|$)")
     for i, line in enumerate(lines):
         m = pat.search(line)
         if not m:
@@ -155,7 +160,7 @@ def read_rules(target, root="."):
         while j < len(lines) and lines[j].strip():
             body.append(lines[j])
             j += 1
-        out[m.group("rule")] = {"case": m.group("case").strip(), "date": m.group("date"),
-                                "incident": m.group("incident").strip(),
+        out[m.group("rule")] = {"case": m.group("case").strip(), "date": m.group("date") or "",
+                                "incident": (m.group("incident") or "").strip(),
                                 "text": "\n".join(body), "line": i + 1}
     return out

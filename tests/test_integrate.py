@@ -70,3 +70,18 @@ def test_prose_above_the_rules_is_preserved(tmp_path):
     I.write_rule("CLAUDE.md", "R1", "0001", "2026-08-23", "i", "the rule", root=str(tmp_path))
     text = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
     assert text.startswith("# House rules\n\nhand written prose.\n")
+
+
+def test_short_marker_without_incident_is_read(tmp_path):
+    """A marker whose incident moved to a history doc (`trimwrit: R0020 case 0020 -->`) is still
+    a rule: before 2026-09-30 the reader required `, date: incident` and saw none of them."""
+    from trimwrit import integrate as integ
+    text = ("# t\n\n<!-- trimwrit: R0020 case 0020 -->\nthe rule\n\n"
+            "<!-- trimwrit: R0065 case 0065+0066, 2026-09-30: an incident -->\nother rule\n")
+    (tmp_path / "CLAUDE.md").write_text(text, encoding="utf-8")
+    rules = integ.read_rules("CLAUDE.md", root=str(tmp_path))
+    assert rules["R0020"]["case"] == "0020"
+    assert rules["R0020"]["text"] == "the rule"
+    assert rules["R0065"]["case"] == "0065+0066"
+    assert rules["R0065"]["date"] == "2026-09-30"
+    assert [r for r, _ in integ.rule_ids(text)] == ["R0020", "R0065"]
