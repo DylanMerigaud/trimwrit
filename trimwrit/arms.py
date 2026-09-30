@@ -412,6 +412,32 @@ def new_commits(workdir, base):
     return out
 
 
+def base_tree(workdir, base):
+    """{path: blob sha} of the base commit: what the situation held before the run."""
+    if not base:
+        return {}
+    out = {}
+    listing = _git(workdir, "ls-tree", "-r", base).stdout
+    for line in listing.splitlines():
+        meta, _tab, path = line.partition("\t")
+        out[path] = meta.split()[-1]
+    return out
+
+
+def blob_sha(text):
+    """Git's blob sha of a text, to compare a file after the run with its base version."""
+    import hashlib
+    data = text.encode("utf-8")
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+def changed_files(state):
+    """Files the run created or changed: in the tree after the run and not identical to the
+    base commit's version. What a run WROTE, as opposed to what the situation already held."""
+    base = state.get("base") or {}
+    return {k: v for k, v in state["files"].items() if base.get(k) != blob_sha(v)}
+
+
 def tree_files(workdir, max_bytes=200000):
     """Every file in the scratch repository after the run, outside .git, with its text."""
     out = {}
@@ -458,7 +484,9 @@ def run_arm(prompt, template_dir, instruction_text, registrations, hook_files, m
     info.update({"ts": started, "exit_code": code, "wall_s": wall, "killed": killed,
                  "session_id_requested": session_id, "model_requested": model,
                  "stderr_tail": stderr, "base_commit": base})
-    state = {"files": tree_files(workdir), "commits": new_commits(workdir, base)}
+    state = {"files": tree_files(workdir), "commits": new_commits(workdir, base),
+             "base": base_tree(workdir, base),
+             "branches": _git(workdir, "branch", "--format=%(refname:short)").stdout.split()}
     for dirpath, _dirs, filenames in os.walk(os.path.join(config_dir, "projects")):
         for f in filenames:
             if f.endswith(".jsonl"):

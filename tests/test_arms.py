@@ -238,3 +238,16 @@ def test_a_failing_setup_is_refused(tmp_path):
     setup.write_text("exit 3\n")
     with pytest.raises(arms.ArmsError):
         arms.prepare_workdir(str(tmp_path / "wd"), None, "x", setup=str(setup))
+
+
+def test_changed_files_are_what_the_run_wrote(tmp_path):
+    tpl = tmp_path / "tpl"
+    tpl.mkdir()
+    (tpl / "same.txt").write_text("same\n")
+    (tpl / "edit.txt").write_text("before\n")
+    wd = tmp_path / "wd"
+    base = arms.prepare_workdir(str(wd), str(tpl), "rules\n")
+    (wd / "edit.txt").write_text("after\n")
+    (wd / "new.txt").write_text("new\n")
+    state = {"files": arms.tree_files(str(wd)), "base": arms.base_tree(str(wd), base)}
+    assert sorted(arms.changed_files(state)) == ["edit.txt", "new.txt"]
