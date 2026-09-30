@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.5.0, 2026-09-30
+
+- **`trimwrit.arms`: one rule, one situation, four deliveries.** The ablation of `run` removes a
+  whole file in a scratch directory with no project settings, so a hook never ran in any replay
+  and one paragraph could never be tested alone. `arms` adds a line-range ablation of a real
+  instruction file (`ablate_lines`, refusing a range that no longer fits the file), a hook arm
+  (the scripts copied under `.claude/hooks/` and registered in the scratch repository's own
+  `.claude/settings.json` on the event the caller names), the model passed explicitly on every
+  run and the model id Claude Code reports recorded beside it, and `prove`, which refuses a
+  grader that cannot flag its violating sample or that flags its clean one.
+- **Isolation is an environment.** Measured while building it: a `claude -p` started inside
+  another Claude Code session inherits bare mode and loads no project instruction file and no
+  project hook, silently. A run now gets a minimal environment (no inherited `CLAUDE_*` or
+  `ANTHROPIC_*` variable, so never an API key) and a fresh, empty `CLAUDE_CONFIG_DIR`, so the
+  user's own instruction file, hooks, skills and MCP servers are out of reach and the scratch
+  repository is the only settings layer left.
+- **Real tools, confined.** A replay that edits, tests and commits runs with Claude Code's
+  sandbox on (writes confined to the scratch directory, no network) and file reads under the
+  user's code, config and keychain directories denied.
+- **What a run left is read, not guessed.** `parse_stream` reads `--include-hook-events`: every
+  stop attempt with the Stop hooks' decisions on it, every PreToolUse denial tied to the call it
+  refused. `blocks`, `stop_blocks_took_effect` and `denials_took_effect` say whether a refusal
+  was issued and whether the run then changed what it did. A block declared inside
+  `hookSpecificOutput` counts as issued, so a hook that announces a block Claude Code ignores is
+  measured as a door that fired and did not hold.
+
 ## 0.4.1, 2026-09-01
 
 - **An eval run acts on nothing.** Read in the evidence files of the dig-0004 cases the same
