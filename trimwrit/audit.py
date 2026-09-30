@@ -12,6 +12,7 @@ Everything here is read only. No git subprocess per file (a `.git` existence che
 attribute a repo), no reading of any file beyond a harness file, the ledger, and the two results
 files `trimwrit run` already writes.
 """
+import calendar
 import json
 import os
 import time
@@ -220,7 +221,22 @@ def _read_history(evals_dir):
         return None, None
     withs = [r["with"] for r in rows if r.get("ts") == newest_ts and _numeric(r.get("with"))]
     mean_with = round(sum(withs) / len(withs), 2) if withs else None
-    return newest_ts, mean_with
+    return _epoch(newest_ts), mean_with
+
+
+def _epoch(ts):
+    """`trimwrit run` writes `ts` as an ISO string (`2026-09-02T01:25:00Z`), while the age and
+    date helpers below take epoch seconds. Found 2026-09-30: `audit` crashed with a TypeError on
+    the first repo whose history came from `run`. A value that parses as neither is `None`,
+    which the callers already read as "never measured"."""
+    if _numeric(ts):
+        return float(ts)
+    if isinstance(ts, str):
+        try:
+            return float(calendar.timegm(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")))
+        except ValueError:
+            return None
+    return None
 
 
 def _ledger_stats(repo):

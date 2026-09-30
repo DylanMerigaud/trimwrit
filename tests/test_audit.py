@@ -223,3 +223,16 @@ def test_an_umbrella_directory_never_borrows_a_nested_repos_cases(tmp_path):
     assert by_repo[audit._display_path(umbrella)]["cases"] == 0, (
         "the umbrella borrowed the nested repo's evals dir")
     assert audit._display_path(umbrella) in doc["summary"]["zero_cases"]
+
+
+def test_history_written_by_run_has_iso_ts_and_does_not_crash(tmp_path):
+    """`trimwrit run` writes `ts` as an ISO string. The age helpers take epoch seconds, and the
+    first audit of a repo whose history came from `run` crashed with a TypeError (2026-09-30)."""
+    evals_dir = os.path.join(str(tmp_path), "evals")
+    _write(os.path.join(evals_dir, "results", "history.jsonl"),
+           json.dumps({"ts": "2026-09-02T01:25:00Z", "with": 0.5}) + "\n"
+           + json.dumps({"ts": "2026-09-30T14:31:23Z", "with": 1.0}) + "\n")
+    last_run, last_with = audit._read_history(evals_dir)
+    assert last_run == 1790778683.0
+    assert last_with == 1.0
+    assert audit._is_stale({"cases": 1, "last_run": last_run}, 100000) is False
