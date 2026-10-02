@@ -41,6 +41,8 @@ import subprocess
 import time
 import uuid
 
+from .models import model_usage_of, require_full_id
+
 HOOK_DIR = os.path.join(".claude", "hooks")
 DEFAULT_TOOLS = ("Bash", "Read", "Edit", "Write", "Glob", "Grep")
 
@@ -56,7 +58,7 @@ SANDBOX_SETTINGS = {
 KEEP_ENV = ("PATH", "HOME", "USER", "LOGNAME", "LANG", "SHELL")
 
 
-class ArmsError(Exception):
+class ArmsError(ValueError):
     pass
 
 
@@ -200,6 +202,10 @@ def build_cmd(prompt, model, session_id, tools=DEFAULT_TOOLS, max_turns=None,
               permission_mode="acceptEdits", claude="claude", extra_args=()):
     if not model:
         raise ArmsError("a run names its model explicitly; the default moves under you")
+    try:
+        require_full_id(model)
+    except ValueError as exc:
+        raise ArmsError(str(exc))
     cmd = [claude, "-p", prompt, "--model", model, "--session-id", session_id,
            "--output-format", "stream-json", "--verbose", "--include-hook-events",
            "--strict-mcp-config", "--permission-mode", permission_mode,
@@ -267,7 +273,8 @@ def parse_stream(lines):
     PreToolUse hook denied it."""
     info = {"model": None, "cli_version": None, "session_id": None, "texts": [], "tools": [],
             "stops": [], "denials": [], "result": None, "num_turns": None,
-            "output_tokens": None, "is_error": None, "api_error_status": None}
+            "output_tokens": None, "is_error": None, "api_error_status": None,
+            "model_usage": {}}
     last_text = ""
     open_stop = None
     by_id = {}
@@ -326,6 +333,7 @@ def parse_stream(lines):
             info["output_tokens"] = (ev.get("usage") or {}).get("output_tokens")
             info["is_error"] = ev.get("is_error")
             info["api_error_status"] = ev.get("api_error_status")
+            info["model_usage"] = model_usage_of(ev)
     # A denied call's result carries the hook's reason: that is how a denial is tied to its call
     # without trusting the order hook events arrive in.
     for den in info["denials"]:
@@ -462,6 +470,7 @@ def run_arm(prompt, template_dir, instruction_text, registrations, hook_files, m
     """One run of one arm. Everything it leaves goes under `out_dir`: the stream, stderr, the
     run's own transcript as Claude Code wrote it, and `run.json` (the parsed info, the scratch
     tree after the run, the commits it made). Returns (info, workdir_state)."""
+    build_cmd(prompt, model, "check")  # refuses an alias before any directory or git call
     os.makedirs(out_dir, exist_ok=True)
     run_root = os.path.join(scratch_root, "arms-" + uuid.uuid4().hex[:12])
     workdir = os.path.join(run_root, "repo")

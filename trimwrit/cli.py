@@ -32,6 +32,7 @@ from . import check as check_mod
 from . import integrate as integrate_mod
 from . import ledger as ledger_mod
 from . import prune as prune_mod
+from . import models as models_mod
 from . import runner as runner_mod
 from . import stats as stats_mod
 from . import viz as viz_mod
@@ -319,7 +320,8 @@ def _unchecked_summary(reason, arms):
            "unchecked_reason": reason}
 
 
-def _append_history(path, ts, case, summary, rule_files, targets, claude):
+def _append_history(path, ts, case, summary, rule_files, targets, claude, model=None,
+                    judge_model=None, model_usage=None):
     """One JSON line per case per `run` invocation, appended forever.
 
     `results/latest.json` (see `_save_results`) is overwritten on every run and answers "what is
@@ -340,6 +342,8 @@ def _append_history(path, ts, case, summary, rule_files, targets, claude):
         "with": summary["with"], "without": summary.get("without"), "delta": summary["delta"],
         "runs": summary["runs"].get(runner_mod.ARM_WITH, 0),
         "unmeasured": summary.get("unmeasured", {}), "claude": claude,
+        # `answered_by`: per model id Claude Code reported, how many runs it answered.
+        "model": model, "judge_model": judge_model, "answered_by": dict(model_usage or {}),
     }
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", encoding="utf-8") as fh:
@@ -347,6 +351,14 @@ def _append_history(path, ts, case, summary, rule_files, targets, claude):
 
 
 def cmd_run(args):
+    # Both ids are checked before anything is discovered or run: an alias would let the model
+    # under test move between two replays while the history line says nothing changed.
+    try:
+        models_mod.require_full_id(args.model)
+        models_mod.require_full_id(args.judge_model)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     evals_dir = os.path.join(args.root, args.evals)
     found = cases_mod.discover(evals_dir)
     if args.case:
@@ -399,7 +411,7 @@ def cmd_run(args):
 
     results_by_case = runner_mod.run_many(
         runnable, rule_files, arms=arms, runs=args.runs, claude=args.claude, judge=judge,
-        progress=progress, isolate=not args.no_isolation, jobs=args.jobs)
+        progress=progress, isolate=not args.no_isolation, jobs=args.jobs, model=args.model)
 
     summaries, payload = {}, {"cases": []}
     failures, unmeasured_cases, wrote_evidence = 0, 0, False
@@ -419,7 +431,9 @@ def cmd_run(args):
             summary = runner_mod.summarise(per_arm)
             payload["cases"].append({"name": base, "summary": summary, "arms": {
                 arm: [{"passed": r.passed, "score": r.score, "error": r.error,
-                      "unmeasured": r.unmeasured, "grades": r.grades} for r in rs]
+                      "unmeasured": r.unmeasured, "grades": r.grades, "model": r.model,
+                      "model_usage": r.model_usage, "judge_model": r.judge_model,
+                      "judge_model_usage": r.judge_model_usage} for r in rs]
                 for arm, rs in per_arm.items()}})
         summaries[base] = summary
 
@@ -430,7 +444,13 @@ def cmd_run(args):
         elif summary["with"] < args.threshold:
             failures += 1
 
-        _append_history(history_path, ts, case, summary, rule_files, _targets(args), args.claude)
+        seen_usage = {}
+        for rs in (results_by_case.get(case.path) or {}).values():
+            for r in rs:
+                for mid in r.model_usage:
+                    seen_usage[mid] = seen_usage.get(mid, 0) + 1
+        _append_history(history_path, ts, case, summary, rule_files, _targets(args), args.claude,
+                        model=args.model, judge_model=args.judge_model, model_usage=seen_usage)
 
     if args.json:
         print(json.dumps(payload, indent=2, ensure_ascii=False))
@@ -777,7 +797,13 @@ def main(argv=None):
     rn.add_argument("--no-ablation", action="store_true",
                     help="run the `with` arm only. Faster, and it proves nothing about the rule")
     rn.add_argument("--claude", default="claude")
-    rn.add_argument("--judge-model", help="model for llm graders")
+    rn.add_argument("--model", default=models_mod.DEFAULT_CASE_MODEL,
+                    help="full model id the cases run on (default {}); an alias is refused. "
+                         "Known ids: {}".format(models_mod.DEFAULT_CASE_MODEL,
+                                                ", ".join(models_mod.KNOWN_MODELS)))
+    rn.add_argument("--judge-model", default=models_mod.DEFAULT_JUDGE_MODEL,
+                    help="full model id for llm graders (default {}); an alias is refused"
+                         .format(models_mod.DEFAULT_JUDGE_MODEL))
     rn.add_argument("--json", action="store_true")
     rn.add_argument("--quiet", action="store_true")
     rn.add_argument("--sandbox-note", action="store_true",

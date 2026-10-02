@@ -92,8 +92,12 @@ def test_clean_env_drops_inherited_claude_and_api_variables(monkeypatch):
 def test_build_cmd_requires_a_model():
     with pytest.raises(arms.ArmsError):
         arms.build_cmd("hi", None, "sid")
-    cmd = arms.build_cmd("hi", "m-1", "sid", max_turns=5)
-    assert cmd[cmd.index("--model") + 1] == "m-1"
+    with pytest.raises(arms.ArmsError):
+        arms.build_cmd("hi", "sonnet", "sid")
+    with pytest.raises(ValueError):
+        arms.build_cmd("hi", "opus", "sid")
+    cmd = arms.build_cmd("hi", "claude-sonnet-5-5", "sid", max_turns=5)
+    assert cmd[cmd.index("--model") + 1] == "claude-sonnet-5-5"
     assert "--include-hook-events" in cmd and "--max-turns" in cmd
 
 
@@ -194,7 +198,8 @@ print(json.dumps({"type": "system", "subtype": "init", "model": args[args.index(
 print(json.dumps({"type": "assistant", "message": {"content": [
     {"type": "text", "text": "env clean" if env_ok else "env dirty"}]}}))
 print(json.dumps({"type": "result", "result": "env clean" if env_ok else "env dirty",
-                  "num_turns": 1, "usage": {"output_tokens": 3}}))
+                  "num_turns": 1, "usage": {"output_tokens": 3},
+                  "modelUsage": {args[args.index("--model") + 1]: {"outputTokens": 3}}}))
 '''
 
 
@@ -208,10 +213,12 @@ def test_run_arm_end_to_end_with_a_fake_claude(tmp_path, monkeypatch):
     tpl.mkdir()
     (tpl / "a.txt").write_text("a")
     out = tmp_path / "out"
-    info, state = arms.run_arm("do it", str(tpl), "rules\n", [], {}, "m-2", str(out),
+    info, state = arms.run_arm("do it", str(tpl), "rules\n", [], {}, "claude-haiku-4-5-20251001", str(out),
                                claude=str(fake), scratch_root=str(tmp_path), timeout_s=60)
     assert info["closing_text"] == "env clean"
-    assert info["model"] == "m-2" and info["model_requested"] == "m-2"
+    assert info["model"] == "claude-haiku-4-5-20251001"
+    assert info["model_requested"] == "claude-haiku-4-5-20251001"
+    assert info["model_usage"] == {"claude-haiku-4-5-20251001": {"outputTokens": 3}}
     assert state["files"]["made.txt"] == "hello"
     assert [c["message"].strip() for c in state["commits"]] == ["the run"]
     assert (out / "run.json").exists() and (out / "transcript-s.jsonl").exists()
@@ -251,3 +258,10 @@ def test_changed_files_are_what_the_run_wrote(tmp_path):
     (wd / "new.txt").write_text("new\n")
     state = {"files": arms.tree_files(str(wd)), "base": arms.base_tree(str(wd), base)}
     assert sorted(arms.changed_files(state)) == ["edit.txt", "new.txt"]
+
+
+def test_run_arm_refuses_an_alias_before_touching_anything(tmp_path):
+    with pytest.raises(arms.ArmsError):
+        arms.run_arm("do it", str(tmp_path), "rules\n", [], {}, "sonnet", str(tmp_path / "out"),
+                     scratch_root=str(tmp_path))
+    assert not (tmp_path / "out").exists()

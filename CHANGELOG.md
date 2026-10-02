@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.0, 2026-10-02
+
+- **Every `claude -p` names a full model id, and every result says who answered.** Case runs
+  used to pass no `--model` at all, so the model under test was whatever the CLI defaulted to
+  that day. `trimwrit/models.py` holds the table of known full ids and `require_full_id`, which
+  refuses an alias (`sonnet`, `opus`) with the list of ids. `trimwrit run` now takes `--model`
+  (default `claude-opus-5-5`) and `--judge-model` (default `claude-sonnet-5-5`), both checked
+  before any subprocess; `trimwrit.arms` checks its model the same way. The `modelUsage` of the
+  stream's result event and of the judge's json envelope is recorded on each run as
+  `model_usage` beside `model`, in the JSON payload, the evidence file and `run.json`; the
+  history line gains `model`, `judge_model` and `answered_by`. Old fields are unchanged and a
+  stream with no `modelUsage` records `{}`.
+
 ## 0.5.0, 2026-09-30
 
 - **`trimwrit.arms`: one rule, one situation, four deliveries.** The ablation of `run` removes a

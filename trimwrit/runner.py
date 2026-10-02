@@ -27,6 +27,9 @@ import subprocess
 import tempfile
 import time
 
+from .models import (DEFAULT_CASE_MODEL, DEFAULT_JUDGE_MODEL, model_usage_of,
+                     require_full_id)
+
 # What this runner can actually score. A grader type outside this set does NOT quietly pass:
 # it is reported as unsupported and it fails the case, because the alternative is a suite that
 # reports green while a third of its graders never ran.
@@ -99,7 +102,8 @@ class RunnerError(Exception):
 
 
 class Result(object):
-    def __init__(self, case, arm, run_index, final_text, tools, files, error=None):
+    def __init__(self, case, arm, run_index, final_text, tools, files, error=None, model=None,
+                 model_usage=None):
         self.case = case
         self.arm = arm
         self.run_index = run_index
@@ -108,6 +112,14 @@ class Result(object):
         self.files = files or {}
         self.error = error
         self.grades = []
+        # `model` is the full id the run ASKED for; `model_usage` is Claude Code's own record
+        # (the result event's `modelUsage`) of which model ids actually answered, {} when the
+        # stream carried none. `grade_llm` fills the judge's pair: the id it asked for, and per
+        # model id the list of usages its envelopes reported, one per judge call.
+        self.model = model
+        self.model_usage = dict(model_usage or {})
+        self.judge_model = None
+        self.judge_model_usage = {}
 
     @property
     def passed(self):
@@ -259,6 +271,13 @@ def grade_llm(spec, result, judge=None):
     if judge is None:
         return None, "no judge available"
     verdict = judge(spec.get("criteria", ""), _target_text(spec, result))
+    # The judge built by `make_judge` answers (verdict, modelUsage); a plain callable answering
+    # a bare bool still works.
+    if isinstance(verdict, tuple):
+        verdict, usage = verdict
+        result.judge_model = getattr(judge, "model", None)
+        for mid, use in (usage or {}).items():
+            result.judge_model_usage.setdefault(mid, []).append(use)
     return verdict, "judge said {}".format("PASS" if verdict else "FAIL")
 
 
@@ -317,13 +336,31 @@ def _parse_stream(raw):
     return final, tools
 
 
+def _stream_model_usage(raw):
+    """The `modelUsage` of the last result event of a stream-json transcript, {} when none."""
+    usage = {}
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(ev, dict) and ev.get("type") == "result":
+            usage = model_usage_of(ev)
+    return usage
+
+
 def run_once(case, arm, run_index, rule_files, extra_args=(), claude="claude", cwd_seed=None,
-             isolate=True):
+             isolate=True, model=DEFAULT_CASE_MODEL):
     """One run of one case in one arm, in a scratch directory.
 
     The scratch directory is the ablation. In the `with` arm the rule files are written into it,
-    in the `without` arm they are not, and nothing else differs.
+    in the `without` arm they are not, and nothing else differs. `model` is a full id, checked
+    before anything is created (see models.require_full_id).
     """
+    require_full_id(model)
     workdir = tempfile.mkdtemp(prefix="trimwrit-")
     try:
         if cwd_seed and os.path.isdir(cwd_seed):
@@ -341,8 +378,8 @@ def run_once(case, arm, run_index, rule_files, extra_args=(), claude="claude", c
                     fh.write(content)
 
         before = _snapshot(workdir)
-        cmd = [claude, "-p", case.prompt, "--output-format", "stream-json", "--verbose",
-               "--max-turns", str(case.max_turns)]
+        cmd = [claude, "-p", case.prompt, "--model", model, "--output-format", "stream-json",
+               "--verbose", "--max-turns", str(case.max_turns)]
         if isolate:
             cmd.extend(ISOLATE_ARGS)
         # A case that declares tools gets exactly that list in place of the empty default,
@@ -359,17 +396,19 @@ def run_once(case, arm, run_index, rule_files, extra_args=(), claude="claude", c
                                   timeout=case.timeout_seconds)
         except subprocess.TimeoutExpired:
             return Result(case, arm, run_index, "", [], {},
-                          error="timed out after {}s".format(case.timeout_seconds))
+                          error="timed out after {}s".format(case.timeout_seconds), model=model)
         except OSError as exc:
             return Result(case, arm, run_index, "", [], {},
-                          error="could not run {}: {}".format(claude, exc))
+                          error="could not run {}: {}".format(claude, exc), model=model)
         if proc.returncode != 0 and not proc.stdout.strip():
             return Result(case, arm, run_index, "", [], {},
                           error="claude exited {}: {}".format(proc.returncode,
-                                                              proc.stderr.strip()[:200]))
+                                                              proc.stderr.strip()[:200]),
+                          model=model, model_usage=_stream_model_usage(proc.stdout))
         final, tools = _parse_stream(proc.stdout)
         files = _created(workdir, before)
-        return Result(case, arm, run_index, final, tools, files)
+        return Result(case, arm, run_index, final, tools, files, model=model,
+                      model_usage=_stream_model_usage(proc.stdout))
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
@@ -396,32 +435,35 @@ def _created(root, before):
     return out
 
 
-def make_judge(claude="claude", model=None):
+def make_judge(claude="claude", model=DEFAULT_JUDGE_MODEL):
     """A judge built on `claude -p`. Returns None when the binary is missing, and the caller
-    turns that into a failing grader rather than a silent pass."""
+    turns that into a failing grader rather than a silent pass. `model` is a full id, checked
+    first, so a bad id fails even where the binary is absent. The judge answers
+    (verdict, modelUsage of its json envelope)."""
+    require_full_id(model)
     if not shutil.which(claude):
         return None
 
     def judge(criteria, text):
         prompt = ("You are grading one output against one rule. Answer with exactly PASS or "
                   "FAIL and nothing else.\n\nRULE:\n{}\n\nOUTPUT:\n{}".format(criteria, text))
-        cmd = [claude, "-p", prompt, "--output-format", "json"]
+        cmd = [claude, "-p", prompt, "--model", model, "--output-format", "json"]
         cmd.extend(ISOLATE_ARGS)
-        if model:
-            cmd.extend(["--model", model])
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
             payload = json.loads(proc.stdout or "{}")
             answer = str(payload.get("result", "")).strip().upper()
-        except (ValueError, OSError, subprocess.TimeoutExpired):
-            return False
-        return answer.startswith("PASS")
+        except (ValueError, OSError, subprocess.TimeoutExpired, AttributeError):
+            return False, {}
+        return answer.startswith("PASS"), model_usage_of(payload)
 
+    judge.model = model
     return judge
 
 
 def run_many(cases, rule_files, arms=(ARM_WITH, ARM_WITHOUT), runs=None, claude="claude",
-             judge=None, extra_args=(), cwd_seed=None, progress=None, isolate=True, jobs=1):
+             judge=None, extra_args=(), cwd_seed=None, progress=None, isolate=True, jobs=1,
+             model=DEFAULT_CASE_MODEL):
     """Run every (case, arm, run_index) triple across every case in `cases`.
 
     Returns {case.path: {arm: [Result, ...]}}, the same shape `run_case` returns for one case,
@@ -443,6 +485,7 @@ def run_many(cases, rule_files, arms=(ARM_WITH, ARM_WITHOUT), runs=None, claude=
     only thing that becomes non-deterministic is the order progress lines print in, and that is
     a terminal, not a result.
     """
+    require_full_id(model)
     triples = []
     for case in cases:
         n = runs or case.runs
@@ -455,7 +498,7 @@ def run_many(cases, rule_files, arms=(ARM_WITH, ARM_WITHOUT), runs=None, claude=
         n = runs or case.runs
         if progress:
             progress(case, arm, i + 1, n)
-        res = run_once(case, arm, i, rule_files, extra_args, claude, cwd_seed, isolate)
+        res = run_once(case, arm, i, rule_files, extra_args, claude, cwd_seed, isolate, model)
         apply_graders(case, res, judge)
         return res
 
@@ -477,7 +520,8 @@ def run_many(cases, rule_files, arms=(ARM_WITH, ARM_WITHOUT), runs=None, claude=
 
 
 def run_case(case, rule_files, arms=(ARM_WITH, ARM_WITHOUT), runs=None, claude="claude",
-             judge=None, extra_args=(), cwd_seed=None, progress=None, isolate=True, jobs=1):
+             judge=None, extra_args=(), cwd_seed=None, progress=None, isolate=True, jobs=1,
+             model=DEFAULT_CASE_MODEL):
     """Run one case across the requested arms. Returns {arm: [Result, ...]}.
 
     A thin wrapper over `run_many` for exactly one case, kept because "run this one case" is a
@@ -485,7 +529,7 @@ def run_case(case, rule_files, arms=(ARM_WITH, ARM_WITHOUT), runs=None, claude="
     site. See `run_many` for what `jobs` does.
     """
     return run_many([case], rule_files, arms, runs, claude, judge, extra_args, cwd_seed,
-                    progress, isolate, jobs)[case.path]
+                    progress, isolate, jobs, model)[case.path]
 
 
 def summarise(per_arm):
@@ -560,6 +604,11 @@ def write_evidence(result, evals_dir):
     if result.error:
         fm.append("error: {}".format(result.error))
     fm.append("unmeasured: {}".format("true" if result.unmeasured else "false"))
+    fm.append("model: {}".format(result.model))
+    fm.append("model_usage: {}".format(json.dumps(sorted(result.model_usage))))
+    if result.judge_model:
+        fm.append("judge_model: {}".format(result.judge_model))
+        fm.append("judge_model_usage: {}".format(json.dumps(sorted(result.judge_model_usage))))
     for g in result.grades:
         fm.append("{}: {} {}".format(g.get("name"), "PASS" if g.get("passed") else "FAIL",
                                      g.get("detail", "")))

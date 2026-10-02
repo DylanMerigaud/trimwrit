@@ -401,6 +401,18 @@ back in the same order a sequential run would produce them: the table, the JSON 
 evidence files and the history line at `--jobs 8` are byte for byte the same as at `--jobs 1`,
 just faster. Only the order progress lines print in is allowed to vary.
 
+## Which model ran: --model and --judge-model
+
+Every `claude -p` trimwrit makes names a full model id, never an alias, because an alias moves
+to a new model under you and two replays a month apart would measure two models while the
+history says they measured one. `--model` picks the model the cases run on (default
+`claude-opus-5-5`), `--judge-model` the one llm graders run on (default `claude-sonnet-5-5`).
+Both are checked against the table in `trimwrit/models.py` before anything runs, and an alias
+such as `sonnet` exits 2 with the list of known ids. Every run then records `model` (the id it
+asked for) and `model_usage` (the `modelUsage` Claude Code reported, so which model actually
+answered) in the JSON payload and the evidence file, and the history line carries `model`,
+`judge_model` and `answered_by`.
+
 ## The whole laptop, one table
 
 `run`, `prune` and `stats` all answer a question about ONE rule file. Nothing answers the
