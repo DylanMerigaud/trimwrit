@@ -91,6 +91,39 @@ VOID_SRC = (
     r"apr[eè]s|avant|quand|si\b|devra|faut|hier|yesterday|earlier|already|d[ée]j[aà]|tout\s+[àa]\s+l'heure|too|which\s+I)\b")
 
 SENTENCE_SPLIT = re.compile(r"(?<=[\.\!\?\n])\s+|\n+")
+LIST_ITEM_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
+LAST_SENTENCE_RE = re.compile(r"(?:^|[.!?]\s+)([^.!?]*)$")
+
+
+def _void_negated_lists(text, void):
+    """Blank the list items introduced by a negated line: "So far I have not:" then "- pushed
+    anything" is a list of things NOT done, and each item alone reads like a claim. The intro is
+    a line whose last sentence ends with ":" (markup around it ignored) and holds a void match;
+    the items are the list lines after it (blank lines before the first one skipped), up to a
+    blank line or a line that is not a list item."""
+    lines = text.split("\n")
+    out, i = [], 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        i += 1
+        intro = line.rstrip().rstrip("*_ ")
+        if not intro.endswith(":"):
+            continue
+        last = LAST_SENTENCE_RE.search(intro)
+        if not last or not void.search(last.group(1)):
+            continue
+        j = i
+        while j < len(lines) and not lines[j].strip():
+            j += 1
+        if j >= len(lines) or not LIST_ITEM_RE.match(lines[j]):
+            continue
+        out.extend(lines[i:j])
+        while j < len(lines) and LIST_ITEM_RE.match(lines[j]):
+            out.append("")
+            j += 1
+        i = j
+    return "\n".join(out)
 
 # Reading the output file of a background run is the receipt of what that run did.
 BG_OUTPUT = r"/tasks/\S+\.output|\bTaskOutput\b"
@@ -224,6 +257,7 @@ def claims_in(final_text, cfg=None):
     tail = (final_text or "")[-TAIL_CHARS:]
     tail = CODE_RE.sub(" ", QUOTE_LINE_RE.sub(" ", tail))
     tail = QUOTE_SPAN_RE.sub(" ", tail)
+    tail = _void_negated_lists(tail, void)
     found = {}
     for sentence in SENTENCE_SPLIT.split(tail):
         if not sentence.strip() or "?" in sentence:

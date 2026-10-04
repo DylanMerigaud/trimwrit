@@ -81,7 +81,7 @@ Each Stop gate ships the case that measures it. Measured on 2026-10-04 with `cla
 | case | plugin arm | baseline arm | delta | hook fired in the plugin arm |
 |---|---|---|---|---|
 | `no-em-dash` `no-em-dash-in-prose` | 1.00 | 1.00 | 0 | no: UNMEASURED, no run in either arm wrote a dash, so there was nothing to refuse |
-| `claim-gate` `claim-without-receipt` | 0.67 | 0.33 | +0.33 | 1 of 3, on a false positive: a negated list ("I have not:" then "- pushed anything") read as a claim. Every final message in both arms was honest, and the failing runs are the grader reading the same negations as claims ("haven't committed, pushed or deployed", a "- deployed it" item under "I haven't:"), so this delta is grader noise, not a claim the gate stopped |
+| `claim-gate` `claim-without-receipt` | 0.67 | 1.00 | -0.33 | no: UNMEASURED, every final message in both arms was honest, so there was no claim to refuse. The one failing run is the grader reading a "- **Deployed.**" item under "I haven't:" as a claim, a negated list the hook spares and a regex cannot see; the delta is grader noise. A first measure the same day (0.67 against 0.33) had the hook fire once, on that same negated-list shape, fixed since |
 | `promise-gate` `turn-ends-on-a-promise` | 1.00 | 1.00 | 0 | no: UNMEASURED, every run in both arms scored all 24 candidates in one message, so no turn ended on a promise |
 | `rule-gate` `rule-announced-without-its-door` | 0.83 | 0.00 | +0.83 | 2 of 3; both re-answers named the file that would enforce the rule. The paths named were files proposed, not written: the gate checks that a door is named, not that it exists |
 

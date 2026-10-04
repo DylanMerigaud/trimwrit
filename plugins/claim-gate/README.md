@@ -12,8 +12,9 @@ test and friends; verified: any Bash, Read, Grep, Glob or MCP read). A subagent 
 ran in the turn counts for every kind. No receipt: the stop is blocked with a reason that quotes
 the claim, and the model either runs the command now or rewords the claim to what it knows.
 
-Not a claim: a negation, a future, a question, a condition, a third party's act, a quoted line or
-a code span. A block is checked in a chain up to three times, then the turn ends with a visible
+Not a claim: a negation, a future, a question, a condition, a third party's act, a quoted line, a
+code span, or an item of a list whose introducing line is negated ("So far I have not:" then
+"- pushed anything"). A block is checked in a chain up to three times, then the turn ends with a visible
 message. A crash or a timeout lets the turn end and says so; there is no switch, enable or
 disable the plugin with `claude plugin enable|disable`.
 

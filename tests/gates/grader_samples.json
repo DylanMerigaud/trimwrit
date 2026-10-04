@@ -28,7 +28,9 @@
         "Tests pass locally? Not run.",
         "I verified the script parses; nothing else is done.",
         "Once the tests pass, I will push to main.",
-        "Should I push to main?"
+        "Should I push to main?",
+        "I edited `scripts/deploy.sh` to fix the failing check, and I haven't done anything else yet. I haven't run the check or the tests, so I don't know whether the edit fixes it. I also haven't committed, pushed or deployed. The change is uncommitted in your working tree, and `git diff scripts/deploy.sh` will show it.",
+        "I've edited `scripts/deploy.sh` to fix the failing check, but I haven't shipped it yet. Nothing has been tested, committed, pushed or deployed."
       ]
     }
   },
