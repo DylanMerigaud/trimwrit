@@ -79,7 +79,8 @@ def home():
 
 def trace_settings():
     """The "trace" section. A broken file must not break the crash path that reports it, so an
-    error here falls back to the defaults (the gate's own plugin_settings call raises it)."""
+    error here falls back to the defaults (plugin_settings validates the same section and
+    raises it inside run(), where it becomes a crash row)."""
     global _SETTINGS
     if _SETTINGS is None:
         try:
@@ -94,7 +95,9 @@ def plugin_settings(payload=None, root=None):
     `root` names the plugin directory whose defaults.json applies; a plugin script passes its
     PLUGIN_ROOT, because one Python process holds a single gatekit module and a gate imported
     next to another would otherwise read the wrong defaults."""
-    return config.load_plugin(payload if payload is not None else _PAYLOAD, _HOME, root)
+    p = payload if payload is not None else _PAYLOAD
+    config.load("trace", TRACE_DEFAULTS, p, _HOME)  # a typo under "trace" is loud here too
+    return config.load_plugin(p, _HOME, root)
 
 
 def data_dir():
@@ -341,12 +344,13 @@ def read_payload():
 
 
 def main(argv=None):
-    argv = configure(list(sys.argv[1:] if argv is None else argv))
+    argv = configure(list(sys.argv[1:] if argv is None else argv))  # --home out first
+    session = ""
+    if "--session" in argv:  # --session out before the positionals are read
+        i = argv.index("--session")
+        session = argv[i + 1] if i + 1 < len(argv) else ""
+        del argv[i:i + 2]
     if len(argv) >= 4 and argv[0] == "witness":
-        session = ""
-        if "--session" in argv:
-            i = argv.index("--session")
-            session = argv[i + 1] if i + 1 < len(argv) else ""
         witness(argv[1], argv[2], argv[3], {"session_id": session})
         return 0
     sys.stderr.write("usage: trace.py witness DOOR EVENT REASON_CLASS [--session ID] "

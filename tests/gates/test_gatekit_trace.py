@@ -7,6 +7,7 @@ import time
 
 import pytest
 
+# relies on tests/gates being a regular package while the root gates/ has no __init__.py
 from gates._hook import clean_env, rows, write_config
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -113,9 +114,10 @@ def test_a_clean_answer_resets_the_count(fx):
     call(fx, "BLOCKME")
     call(fx, "BLOCKME", active=True)
     assert call(fx, "all good", active=True).stdout == ""
-    # block 1 of a fresh count: it takes three more in a row to cap, so the third still blocks
-    for i in range(3):
-        out = call(fx, "BLOCKME", active=i > 0)
+    # chain_clear removed the count: three more blocks inside the same chain do not cap
+    # (without chain_clear the third would hit the cap)
+    for _ in range(3):
+        out = call(fx, "BLOCKME", active=True)
         assert json.loads(out.stdout)["decision"] == "block"
     assert not [r for r in health(fx) if r["outcome"] == "cap"]
 
@@ -159,7 +161,8 @@ def test_each_block_is_witnessed_and_a_door_ledger_takes_over(fx):
     assert not (home / "door-refusals.jsonl").exists()
 
 
-@pytest.mark.parametrize("bad", [json.dumps({"fixture": {"nokey": 1}}), "{not json"])
+@pytest.mark.parametrize("bad", [json.dumps({"fixture": {"nokey": 1}}),
+                                 json.dumps({"trace": {"nokey": 1}}), "{not json"])
 def test_a_broken_config_is_a_loud_crash_never_a_silent_allow(fx, bad):
     _, home = fx
     (home / "trimwrit-gates.json").write_text(bad, encoding="utf-8")
@@ -182,6 +185,16 @@ def test_a_non_object_payload_is_a_crash(fx):
     out = call(fx, None, raw="[1, 2]")
     assert out.returncode == 0
     assert [r["outcome"] for r in health(fx)] == ["crash"]
+
+
+def test_the_witness_cli_does_not_care_where_the_options_sit(tmp_path):
+    out = subprocess.run(
+        [sys.executable, os.path.join(SRC, "trace.py"), "--home", str(tmp_path), "--session", "s9",
+         "witness", "d", "Stop", "c"], capture_output=True, text=True, env=clean_env(),
+        cwd=str(tmp_path), timeout=60)
+    assert out.returncode == 0
+    got = rows(os.path.join(str(tmp_path), "door-refusals.jsonl"))
+    assert [(r["door"], r["session"]) for r in got] == [("d", "s9")]
 
 
 def test_the_witness_cli_writes_one_row(tmp_path):
