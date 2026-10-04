@@ -251,6 +251,13 @@ def test_check_prints_what_it_would_say(tmp_path):
         "no unproven claim"
 
 
+def test_check_without_a_path_prints_the_usage(tmp_path):
+    r = run_py(NAME, SCRIPT, "", tmp_path, "--check")
+    assert r.returncode == 64
+    assert "usage: claim_gate.py --check TRANSCRIPT.jsonl" in r.stderr
+    assert "index" not in r.stderr
+
+
 def test_eval_grader_is_proven():
     sys.path.insert(0, ROOT)
     from trimwrit import cases, check

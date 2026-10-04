@@ -318,10 +318,13 @@ def main():
     trace.configure(sys.argv)
     if "--check" in sys.argv:
         i = sys.argv.index("--check")
+        if i + 1 >= len(sys.argv):
+            sys.stderr.write("usage: claim_gate.py --check TRANSCRIPT.jsonl [--home DIR]\n")
+            return 64
         try:
             return check(sys.argv[i + 1])
-        except (IndexError, config.ConfigError) as e:
-            sys.stderr.write("claim-gate --check: {}\n".format(e or "needs TRANSCRIPT.jsonl"))
+        except config.ConfigError as e:
+            sys.stderr.write("claim-gate --check: {}\n".format(e))
             return 64
     return trace.run(HOOK, "Stop", on_stop, TIMEOUT_S)
 
