@@ -1,0 +1,28 @@
+{
+  "description": "promise-gate: a turn with a target does not end on a promise to continue",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/promise_gate.py\" --prompt",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/promise_gate.py\"",
+            "timeout": 10,
+            "statusMessage": "Turn ending on a promise?"
+          }
+        ]
+      }
+    ]
+  }
+}

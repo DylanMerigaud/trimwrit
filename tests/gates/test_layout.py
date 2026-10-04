@@ -20,7 +20,7 @@ BASH_ENV = {"HOME", "PWD", "STY", "TMUX", "TMUX_PANE", "SECONDS", "BASH_SOURCE",
             "CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_DATA", "CLAUDE_PROJECT_DIR"}
 SCHEMA = "https://json.schemastore.org/claude-code-plugin-manifest.json"
 REPO = "https://github.com/DylanMerigaud/trimwrit"
-COMMAND = re.compile(r'^(python3|bash) "\$\{CLAUDE_PLUGIN_ROOT\}/scripts/[\w.-]+\.(py|sh)"$')
+COMMAND = re.compile(r'^(python3|bash) "\$\{CLAUDE_PLUGIN_ROOT\}/scripts/[\w.-]+\.(py|sh)"(?: --[\w-]+)?$')
 ALLOWED_ENV = {"CLAUDE_SESSION_ID", "CLAUDE_PROJECT_DIR", "CLAUDE_PLUGIN_DATA"}
 REMOVED_SWITCHES = ("AUTO_WORKTREE_ROSTER", "COCKPIT_NO_STOP_GATE", "no-stop-gate",
                     "CLAUDE_ALLOW_DASH")
