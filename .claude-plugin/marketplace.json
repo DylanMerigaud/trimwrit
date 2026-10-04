@@ -95,6 +95,16 @@
       "license": "MIT",
       "category": "productivity",
       "tags": ["github", "pull-request", "safety", "pretooluse", "gate"]
+    },
+    {
+      "name": "worktree-kit",
+      "source": "./plugins/worktree-kit",
+      "description": "One session, one git worktree: on a repository opted in with .claude/auto-worktree, a session starting on the main checkout is told to move into a worktree, edits on the main checkout are refused, the worktree gets the gitignored config files linked in, and at session end a clean branch is rebased and pushed when the repository's own gate passes.",
+      "version": "0.1.0",
+      "author": { "name": "Dylan Merigaud" },
+      "license": "MIT",
+      "category": "productivity",
+      "tags": ["worktree", "git", "isolation", "sessions", "parallel"]
     }
   ]
 }

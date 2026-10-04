@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "worktree-kit",
+  "displayName": "worktree-kit",
+  "description": "One session, one git worktree: on a repository opted in with .claude/auto-worktree, a session starting on the main checkout is told to move into a worktree, edits on the main checkout are refused, the worktree gets the gitignored config files linked in, and at session end a clean branch is rebased and pushed when the repository's own gate passes.",
+  "version": "0.1.0",
+  "author": { "name": "Dylan Merigaud", "url": "https://github.com/DylanMerigaud" },
+  "homepage": "https://github.com/DylanMerigaud/trimwrit/tree/main/plugins/worktree-kit",
+  "repository": "https://github.com/DylanMerigaud/trimwrit",
+  "license": "MIT",
+  "keywords": ["worktree", "git", "isolation", "sessions", "parallel"]
+}

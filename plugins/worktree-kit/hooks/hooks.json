@@ -1,0 +1,8 @@
+{
+  "description": "worktree-kit: one session, one worktree",
+  "hooks": {
+    "SessionStart": [{"matcher": "startup", "hooks": [{"type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/autostart.sh\"", "timeout": 10}]}],
+    "PreToolUse": [{"matcher": "Edit|Write|NotebookEdit", "hooks": [{"type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/guard.sh\"", "timeout": 10}]}],
+    "SessionEnd": [{"hooks": [{"type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/session_end.sh\"", "timeout": 240}]}]
+  }
+}
