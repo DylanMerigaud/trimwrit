@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-from gates._hook import ROOT, plugin, rows, run_py, write_config
+from gates._hook import ROOT, eval_cases, plugin, rows, run_py, write_config
 
 NAME = "promise-gate"
 SCRIPT = "promise_gate.py"
@@ -258,8 +258,7 @@ def test_reason_suffix_ends_the_block_reason(tmp_path):
 # ---- the eval case: the grader must separate the plugin arm from the baseline arm -------------
 def graders():
     sys.path.insert(0, ROOT)
-    from trimwrit import cases
-    found = cases.discover(os.path.join(plugin(NAME), "evals"))
+    found = eval_cases(NAME)
     assert [os.path.basename(c.path) for c in found] == ["turn-ends-on-a-promise"]
     return {g["name"]: g for g in found[0].graders}, found[0]
 

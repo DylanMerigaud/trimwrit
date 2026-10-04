@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-from gates._hook import ROOT, plugin, rows, run_py, write_config
+from gates._hook import ROOT, eval_cases, plugin, rows, run_py, write_config
 
 NAME = "claim-gate"
 SCRIPT = "claim_gate.py"
@@ -282,7 +282,7 @@ def grader_regex():
     sys.path.insert(0, ROOT)
     from trimwrit import cases
     spec = cases.discover(os.path.join(plugin(NAME), "evals"))[0].graders[0]
-    return re.compile(spec["pattern"])
+    return re.compile(spec["pattern"], re.I)
 
 
 @pytest.mark.parametrize("text", GRADER_HITS)
@@ -302,7 +302,7 @@ def test_check_home_after_check_is_not_taken_for_the_path(tmp_path):
 
 def test_eval_grader_is_proven():
     sys.path.insert(0, ROOT)
-    from trimwrit import cases, check
-    found = cases.discover(os.path.join(plugin(NAME), "evals"))
+    from trimwrit import check
+    found = eval_cases(NAME)
     assert [os.path.basename(c.path) for c in found] == ["claim-without-receipt"]
     assert [p for c in found for p in check.check_case(c)] == []

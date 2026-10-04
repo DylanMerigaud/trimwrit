@@ -4,7 +4,7 @@ import os
 import re
 import sys
 
-from gates._hook import ROOT, plugin, rows, run_py, write_config
+from gates._hook import ROOT, eval_cases, plugin, rows, run_py, write_config
 
 EM, EN = chr(0x2014), chr(0x2013)
 STOP, WRITE = "no_em_dash.py", "no_em_dash_write.py"
@@ -115,10 +115,10 @@ def test_multiedit_checks_every_edit(tmp_path):
 
 def test_eval_grader_is_proven():
     """The tracked grader holds the escape, never the character, so its proof here is a
-    must_not_match sample in the file and the must_match sample built at run time."""
+    must_not_match sample in grader_samples.json and the must_match sample built at run time."""
     sys.path.insert(0, ROOT)
-    from trimwrit import cases, check
-    found = cases.discover(os.path.join(plugin(NAME), "evals"))
+    from trimwrit import check
+    found = eval_cases(NAME)
     assert [os.path.basename(c.path) for c in found] == ["no-em-dash-in-prose"]
     problems = [p for c in found for p in check.check_case(c)]
     assert problems == []

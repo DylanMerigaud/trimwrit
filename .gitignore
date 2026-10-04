@@ -11,3 +11,4 @@ build/
 # The ledger of a repo that USES trimwrit is that repo's own record and belongs in its history.
 # This repo's ledger is committed for exactly that reason: it is the dogfood.
 evals/results/
+plugins/*/evals/results/

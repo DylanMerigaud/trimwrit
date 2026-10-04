@@ -291,3 +291,27 @@ def test_no_removed_switch_is_named_anywhere():
                 text = open(os.path.join(base, f), encoding="utf-8").read()
                 for word in REMOVED_SWITCHES:
                     assert word not in text, os.path.join(base, f) + " names " + word
+
+
+# What `claude plugin eval` (2.1.289) accepts in a grader file, measured: any other key fails the
+# whole case at load ("Unrecognized key(s) in object"), and the pattern is compiled as a
+# JavaScript RegExp, which has no inline (?i) group, no \A and no \Z ("Invalid regular
+# expression"). Both broke every Stop-gate case on 2026-10-04 while the pytest proof stayed green.
+NATIVE_GRADER_KEYS = {"type", "name", "pattern", "match", "flags", "target"}
+PYTHON_ONLY_REGEX = re.compile(r"\(\?[aiLmsux]+\)|\(\?P[<=]|\\[AZz]")
+
+
+@pytest.mark.parametrize("name", sorted(STOP_GATES))
+def test_eval_graders_load_in_the_native_runner(name):
+    sys.path.insert(0, ROOT)
+    from trimwrit import cases
+    with open(os.path.join(ROOT, "tests", "gates", "grader_samples.json"), encoding="utf-8") as fh:
+        samples = json.load(fh)[name]
+    found = cases.discover(os.path.join(PLUGINS, name, "evals"))
+    assert found
+    for case in found:
+        for grader in case.graders:
+            keys = {k for k in grader if not k.startswith("_")}  # _note: the grader's body
+            assert keys <= NATIVE_GRADER_KEYS, (case.path, keys - NATIVE_GRADER_KEYS)
+            assert not PYTHON_ONLY_REGEX.search(grader.get("pattern", "")), grader["name"]
+            assert samples.get(grader["name"]), "no proof samples for " + grader["name"]

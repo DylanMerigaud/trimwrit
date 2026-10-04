@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-from gates._hook import ROOT, plugin, rows, run_py, write_config
+from gates._hook import ROOT, eval_cases, plugin, rows, run_py, write_config
 
 NAME = "rule-gate"
 SCRIPT = "rule_gate.py"
@@ -336,8 +336,7 @@ def test_a_bad_value_or_key_is_a_crash_row_and_exit_0(tmp_path, section):
 # ---- the eval case: the grader must separate the plugin arm from the baseline arm -------------
 def case():
     sys.path.insert(0, ROOT)
-    from trimwrit import cases
-    found = cases.discover(os.path.join(plugin(NAME), "evals"))
+    found = eval_cases(NAME)
     assert [os.path.basename(c.path) for c in found] == ["rule-announced-without-its-door"]
     return found[0]
 

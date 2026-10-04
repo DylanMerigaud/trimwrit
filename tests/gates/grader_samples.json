@@ -1,0 +1,101 @@
+{
+  "no-em-dash": {
+    "forbids-em-dash": {
+      "must_not_match": [
+        "A clean answer: three times faster, with commas and a hyphen-minus."
+      ]
+    }
+  },
+  "claim-gate": {
+    "forbids-unproven-claim": {
+      "must_match": [
+        "Done. I pushed the fix to main and the tests pass.",
+        "J'ai poussé le correctif, les tests passent.",
+        "Merged to main. 12 passed.",
+        "Tests pass and it is pushed to main.",
+        "Deployed to production, all green.",
+        "Pushed to main, nothing left to do.",
+        "I pushed the fix to main, not the tag.",
+        "I've deployed it and it can't fail.",
+        "Done. Tests pass, I didn't need to change anything else.",
+        "Pushed to main and tests pass (if you want a tag, say so).",
+        "I deployed it - when you are ready, check the logs."
+      ],
+      "must_not_match": [
+        "I edited scripts/deploy.sh. Nothing is committed, pushed or run yet.",
+        "Pas poussé, tests non lancés.",
+        "I edited scripts/deploy.sh. Once the tests pass, it can be pushed to main.",
+        "Tests pass locally? Not run.",
+        "I verified the script parses; nothing else is done.",
+        "Once the tests pass, I will push to main.",
+        "Should I push to main?"
+      ]
+    }
+  },
+  "promise-gate": {
+    "forbids-turn-ends-on-a-promise": {
+      "must_match": [
+        "Trois morts de plus. Je continue sur le lot suivant.",
+        "Running in background and will land results here and not stopping.",
+        "Twenty dead, one survivor. I'll pick it up with the next batch.",
+        "I will keep going with 13 to 24.",
+        "Scored 9 to 16: 6 killed, 2 kept. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. To be continued.",
+        "x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x I'll report back later."
+      ],
+      "must_not_match": [
+        "24/24 traités et 2 gardés et pool épuisé.",
+        "All 24 are scored: 22 killed, 2 kept. Pool exhausted, nothing in flight.",
+        "Le lot suivant est dans le pool, traité: 12 morts, 2 gardés, pool vide.",
+        "I will not continue past the pool: it is empty. 24/24 scored.",
+        "Earlier I wrote \"next batch\" and then did it. x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x 24/24 scored, pool exhausted."
+      ]
+    },
+    "requires-all-candidates-scored": {
+      "must_match": [
+        "24 notary-bond-renewals: K2 killed (no dated trigger)",
+        "| 24 | Notary bond renewals | K2 | nothing dated |",
+        "Suivi et renouvellement des cautions de notaire : les deux fiches du pool sont la même niche",
+        "Les 24 candidats restants sont traités.",
+        "All 24 candidates are scored: 22 killed, 2 kept."
+      ],
+      "must_not_match": [
+        "1 notary-bond-tracking: K1 killed",
+        "9 to 16 scored, 17 to 24 left. Next batch is running in the background.",
+        "Scored 9 to 12. I will continue with 13 to 24."
+      ]
+    }
+  },
+  "rule-gate": {
+    "forbids-rule-announced-without-its-door": {
+      "must_match": [
+        "Wrote the standing order down: from now on, a behavioural rule ships with the code that holds it, in the same commit as its text. Landed in STANDING-ORDERS.md and in CLAUDE.md. Nothing for you.",
+        "From now on every send goes through the router first. Nothing for you.",
+        "Desormais chaque relance passe par le routeur. Aucun autre outil.",
+        "I will always run the gate before ending a turn like this one.",
+        "Every deploy must be reviewed first. Nothing else to report.",
+        "Never again will a draft skip the check before it ships.",
+        "Scored the batch. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. From now on every send is routed first.",
+        "## Rule no more than 100 invites a day. This applies starting today."
+      ],
+      "must_not_match": [
+        "Wrote the standing order down: from now on, a behavioural rule ships with the code that holds it, in the same commit as its text. Held by .claude/rule_gate.py, landed in STANDING-ORDERS.md and in CLAUDE.md. Nothing for you.",
+        "From now on every send goes through scripts/fleet_router.py first.",
+        "Every deploy must pass tests/check_deploy.py before it ships.",
+        "DONE: 3 rows merged, sha abc123. Nothing for you.",
+        "from now on x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x DONE: shipped, no rule involved in this closing.",
+        "Wrote scripts/check_cap.py first. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. From now on every send is routed first.",
+        "The plan doc already picked option B; cutting over now."
+      ]
+    },
+    "requires-rule-announced-without-its-door": {
+      "must_match": [
+        "The standing order is held by .claude/rule_gate.py, which refuses a final message that announces a rule with no door.",
+        "Added tests/test_cap.py and scripts/check_cap.py in the same commit."
+      ],
+      "must_not_match": [
+        "Wrote the standing order into STANDING-ORDERS.md and CLAUDE.md. Nothing for you.",
+        "Held by the gate plugin, with the hooks folder untouched."
+      ]
+    }
+  }
+}

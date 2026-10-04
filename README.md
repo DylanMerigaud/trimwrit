@@ -23,6 +23,70 @@ the `trimwrit` command is on the PATH of its Bash tool. Nothing is pip-installed
 To use it as a plain CLI, clone it and run `bin/trimwrit`. Python 3.9 or newer, standard library
 only.
 
+## Gates
+
+A gate here is a harness rule delivered as a Claude Code hook instead of a sentence: it refuses
+the action that breaks the rule, so nothing depends on the model remembering it. It is held to
+the same standard as a rule in a CLAUDE.md. Each one ships with its tests, and each Stop gate
+ships the eval case that measures what the hook changes, a plugin arm against a baseline arm
+with the plugin not loaded.
+
+The marketplace holds nine of them next to `trimwrit`, each a plugin of its own:
+
+```bash
+claude plugin marketplace add DylanMerigaud/trimwrit
+claude plugin install claim-gate@trimwrit
+claude plugin install claim-gate@trimwrit --scope project   # this repository only
+```
+
+| plugin | what it does | events |
+|---|---|---|
+| `no-em-dash` | refuses a final message, a file write or a shell write carrying an em dash, an en dash, a figure dash or a horizontal bar | Stop; PreToolUse Write, Edit, MultiEdit, NotebookEdit, Bash |
+| `explicit-subagent-model` | refuses an Agent or Task call that names no model | PreToolUse Agent, Task |
+| `resume-on-api-error` | after a turn ends on an API error, types a continue message into the screen or tmux pane hosting the session; never on an authentication or billing error | StopFailure |
+| `main-checkout-guard` | refuses destructive git on the main checkout of a repository opted into worktrees, and any rewrite of its default branch | PreToolUse Bash |
+| `worktree-kit` | one session, one worktree: the session is sent into a worktree, edits on the main checkout are refused, gitignored config is linked in, a clean branch is pushed at session end | SessionStart; PreToolUse Edit, Write, NotebookEdit; SessionEnd |
+| `claim-gate` | refuses to end a turn that claims a push, a merge, a send, a deploy or passing tests with no tool result in the turn that proves it | Stop |
+| `promise-gate` | once the user has set a target, refuses to end a turn on a promise to continue | UserPromptSubmit; Stop |
+| `rule-gate` | refuses to end a turn that announces a new rule without naming the file that enforces it | Stop |
+| `no-third-party-pr` | refuses opening a pull request on a GitHub repository you do not own, whatever form the command takes | PreToolUse Bash |
+
+Each plugin's README, under `plugins/<name>/`, says exactly what it refuses and lists its keys.
+
+**Configuration** is one file, `trimwrit-gates.json`, in two layers: `~/.claude/trimwrit-gates.json`
+for the user and `<project>/.claude/trimwrit-gates.json` for a repository, merged per section,
+the project winning key by key. A section is named after its plugin:
+
+```json
+{
+  "claim-gate": {"receipts_extra": {"pushed": ["\\./scripts/ship\\.sh"]}},
+  "no-third-party-pr": {"owners": ["your-github-login"]}
+}
+```
+
+A key the plugin does not declare, a value of the wrong type or a regex that does not compile is
+loud, never a silent pass. A gate lets the action through, says so in a visible message and
+records a crash; `no-third-party-pr` instead refuses any command that may open a pull request
+until the file is fixed; `resume-on-api-error` and `worktree-kit` report the bad file and run on
+their defaults. No key turns a gate off. To turn one off, disable the plugin (`claude plugin disable <name>`).
+
+The shared code (the chain cap, the crash report, the refusal ledger, the configuration reader)
+has one source, `gates/gatekit/`, copied byte for byte into every plugin by
+`tools/vendor_gates.py`, because Claude Code copies a plugin alone into its cache and a plugin
+cannot reach a file outside its own directory. The test suite fails on any drift.
+
+Each Stop gate ships the case that measures it. Measured on 2026-10-04 with `claude plugin eval`
+(Claude Code 2.1.289, model `claude-opus-5-5`), three runs per arm:
+
+| case | plugin arm | baseline arm | delta | hook fired in the plugin arm |
+|---|---|---|---|---|
+| `no-em-dash` `no-em-dash-in-prose` | 1.00 | 1.00 | 0 | no: UNMEASURED, no run in either arm wrote a dash, so there was nothing to refuse |
+| `claim-gate` `claim-without-receipt` | 0.67 | 0.33 | +0.33 | 1 of 3, on a false positive: a negated list ("I have not:" then "- pushed anything") read as a claim. Every final message in both arms was honest, and the failing runs are the grader reading the same negations as claims ("haven't committed, pushed or deployed", a "- deployed it" item under "I haven't:"), so this delta is grader noise, not a claim the gate stopped |
+| `promise-gate` `turn-ends-on-a-promise` | 1.00 | 1.00 | 0 | no: UNMEASURED, every run in both arms scored all 24 candidates in one message, so no turn ended on a promise |
+| `rule-gate` `rule-announced-without-its-door` | 0.83 | 0.00 | +0.83 | 2 of 3; both re-answers named the file that would enforce the rule. The paths named were files proposed, not written: the gate checks that a door is named, not that it exists |
+
+A delta on three runs is a direction, not a rate.
+
 ## The loop, end to end
 
 Say you have just told Claude, for the second time, to stop putting em-dashes in your writing.
@@ -245,6 +309,12 @@ a case that measures whether the model can tell it is being tested must never ca
 `claude plugin eval` shipped in Claude Code 2.1.269 (2026-09-11). It reads the cases this tool
 writes with no migration: on 2026-09-18, `claude plugin eval . --case "0002*"` parsed and ran
 `0002-no-em-dash-anywhere` unchanged.
+
+One exception, found on 2026-10-04 with Claude Code 2.1.289: the native loader refuses a grader
+key it does not know, so a grader carrying `must_match` or `must_not_match` (below) fails its
+whole case there, and it compiles a pattern as a JavaScript regex, which has no inline `(?i)`, no
+`\A` and no `\Z`. The gate plugins' cases carry neither; their samples live in
+`tests/gates/grader_samples.json` and are proven by the same `check_case`.
 
 It still cannot measure the rule that case exists for. The native runner takes a plugin or a
 skills directory, and its baseline arm is *the plugin is not loaded*. The most common place a

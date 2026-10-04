@@ -57,3 +57,22 @@ def rows(path):
             return [json.loads(line) for line in fh if line.strip()]
     except FileNotFoundError:
         return []
+
+
+def eval_cases(name):
+    """The plugin's eval cases, each regex grader given its samples from grader_samples.json.
+
+    `claude plugin eval` rejects any grader key it does not know, `must_match` and
+    `must_not_match` among them (Claude Code 2.1.289: "Unrecognized key(s) in object"), so the
+    shipped grader files carry none and their proof samples live here, read back by
+    `trimwrit.check.check_case` exactly as if they sat in the grader."""
+    sys.path.insert(0, ROOT)
+    from trimwrit import cases
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "grader_samples.json"),
+              encoding="utf-8") as fh:
+        samples = json.load(fh).get(name, {})
+    found = cases.discover(os.path.join(plugin(name), "evals"))
+    for case in found:
+        for grader in case.graders:
+            grader.update(samples.get(grader.get("name"), {}))
+    return found

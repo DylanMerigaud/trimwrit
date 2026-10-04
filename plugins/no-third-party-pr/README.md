@@ -14,9 +14,12 @@ by the reader of `main-checkout-guard` (vendored in `lib/`): `&&`, pipes, subshe
 
 The target is resolved the way gh does: `-R/--repo`, else `GH_REPO` set by the command itself,
 else every git remote of the directory the command runs in (a fork whose `upstream` is a third
-party counts as a third-party target). An exported `GH_REPO` is not read (the gate reads no
+party counts as a third-party target). A `GH_REPO` set inside the command is read
+(`GH_REPO=x gh pr create`, `env GH_REPO=x gh ...`, `export GH_REPO=x; gh ...`). A `GH_REPO`
+already in the session's environment before the command runs is not (the gate reads no
 environment beyond its allowlist), so a `gh pr create` that relies on one is judged on the git
-remotes; `-R` with the owner and repository is the reliable form. A target that cannot be resolved is refused (fail closed).
+remotes; `-R` with the owner and repository is the reliable form. A target that cannot be
+resolved is refused (fail closed).
 Reads (`gh pr list`, `gh pr view`, `gh api` GET), `gh pr merge`, issue comments and every pull
 request on your own repositories pass.
 

@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.7.0, 2026-10-04
+
+- **Nine gates, each a plugin of the trimwrit marketplace.** `no-em-dash`,
+  `explicit-subagent-model`, `resume-on-api-error`, `main-checkout-guard`, `worktree-kit`,
+  `claim-gate`, `promise-gate`, `rule-gate` and `no-third-party-pr` live under `plugins/<name>/`,
+  each with its manifest, its `hooks/hooks.json`, its `defaults.json`, its README and its tests
+  under `tests/gates/`. Install one with `claude plugin install <name>@trimwrit`, add
+  `--scope project` for one repository. They come from a working harness, with every path,
+  pattern and command that was specific to it moved into configuration.
+- **gatekit**, the shared standard-library code under `gates/gatekit/`: the chain cap of a Stop
+  gate, the crash report (a crash or a timeout lets the action through and says so in a visible
+  message), the refusal ledger, and the configuration reader.
+- **One configuration file, two layers.** `~/.claude/trimwrit-gates.json` and
+  `<project>/.claude/trimwrit-gates.json`, merged per section, the project winning key by key.
+  Each plugin declares its keys in `defaults.json`, and an undeclared key is a loud error. No key
+  turns a gate off: enabling and disabling the plugin is the only switch, and a test refuses a
+  declared key named like one.
+- **The vendoring rule.** Claude Code copies a plugin alone into its cache, so `gatekit` is copied
+  byte for byte into every plugin by `tools/vendor_gates.py`, along with the shell reader that
+  `no-third-party-pr` borrows from `main-checkout-guard`. `--check` fails the suite on any drift.
+- **The four Stop gates ship the case that measures them**, run with `claude plugin eval`
+  (Claude Code 2.1.289, model `claude-opus-5-5`), three runs per arm, plugin arm against a
+  baseline arm without the plugin:
+  - `no-em-dash`: plugin 1.00, baseline 1.00, delta 0. UNMEASURED: no run in either arm wrote a
+    dash, and the Stop hook never fired.
+  - `claim-gate`: plugin 0.67, baseline 0.33, delta +0.33. The hook fired in 1 of 3 runs, on a
+    false positive (a negated list read as a claim). Every final message in both arms was honest;
+    the delta is the grader reading negations as claims, not a claim the gate stopped.
+  - `promise-gate`: plugin 1.00, baseline 1.00, delta 0. UNMEASURED: every run in both arms
+    scored all 24 candidates in one message, and the Stop hook never fired.
+  - `rule-gate`: plugin 0.83, baseline 0.00, delta +0.83. The hook fired in 2 of 3 runs, and both
+    re-answers named the file that would enforce the rule (a file proposed, not written).
+- **The native runner is stricter than trimwrit's own.** Claude Code 2.1.289 fails a whole case
+  whose grader carries a key it does not know (`must_match`, `must_not_match`) and compiles a
+  pattern as a JavaScript regex (no inline `(?i)`, no `\A`, no `\Z`). The gate cases now carry
+  neither; their samples moved to `tests/gates/grader_samples.json`, still proven by
+  `check.check_case`, and `tests/gates/test_layout.py` refuses a grader the native loader would
+  reject.
+- `no-third-party-pr` README: a `GH_REPO` set inside the command is read, one already in the
+  session's environment is not; `-R owner/repo` is the reliable form.
+
 ## 0.6.0, 2026-10-02
 
 - **Every `claude -p` names a full model id, and every result says who answered.** Case runs
