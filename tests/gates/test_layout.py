@@ -147,7 +147,7 @@ def test_command_regex_bites():
     base = 'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/g.py"'
     assert COMMAND.match(base)
     assert COMMAND.match(base + " --prompt")
-    for bad in (" --home", " --home /x", " --prompt --x", " --homes x"[:0] + " --a --b"):
+    for bad in (" --home", " --home /x", " --prompt --x", " --a --b"):
         assert not COMMAND.match(base + bad), bad
 
 
