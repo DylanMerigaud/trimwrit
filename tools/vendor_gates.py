@@ -39,9 +39,17 @@ def pairs():
             out.append((os.path.join(SOURCE, f), os.path.join(p, "gatekit", f)))
     for src, dst in EXTRA:
         src, dst = os.path.join(ROOT, src), os.path.join(ROOT, dst)
-        if os.path.isfile(src) and os.path.isdir(os.path.dirname(os.path.dirname(dst))):
+        if os.path.isdir(os.path.dirname(os.path.dirname(dst))) and os.path.isfile(src):
             out.append((src, dst))
     return out
+
+
+def missing_sources():
+    """An EXTRA copy whose destination plugin exists but whose source does not: never dropped
+    silently, it is drift."""
+    return [os.path.join(ROOT, src) for src, dst in EXTRA
+            if os.path.isdir(os.path.dirname(os.path.dirname(os.path.join(ROOT, dst))))
+            and not os.path.isfile(os.path.join(ROOT, src))]
 
 
 def stale():
@@ -60,12 +68,17 @@ def main(argv):
     drift = [dst for src, dst in pairs()
              if not (os.path.isfile(dst) and filecmp.cmp(src, dst, shallow=False))]
     old = stale()
+    lost = missing_sources()
+    for path in lost:
+        print("missing source: " + os.path.relpath(path, ROOT))
     if check:
         for path in drift:
             print("drift: " + os.path.relpath(path, ROOT))
         for path in old:
             print("stale: " + os.path.relpath(path, ROOT))
-        return 1 if drift or old else 0
+        return 1 if drift or old or lost else 0
+    if lost:
+        return 1
     for src, dst in pairs():
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copyfile(src, dst)
