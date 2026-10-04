@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "explicit-subagent-model",
+  "displayName": "explicit-subagent-model",
+  "description": "Refuses an Agent or Task call that names no model, so a subagent never silently inherits whatever /model last set.",
+  "version": "0.1.0",
+  "author": { "name": "Dylan Merigaud", "url": "https://github.com/DylanMerigaud" },
+  "homepage": "https://github.com/DylanMerigaud/trimwrit/tree/main/plugins/explicit-subagent-model",
+  "repository": "https://github.com/DylanMerigaud/trimwrit",
+  "license": "MIT",
+  "keywords": ["subagent", "model", "agent", "pretooluse", "gate"]
+}

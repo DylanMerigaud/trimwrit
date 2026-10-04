@@ -1,0 +1,6 @@
+{
+  "description": "explicit-subagent-model: a subagent call names its model",
+  "hooks": {
+    "PreToolUse": [{"matcher": "Agent|Task", "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/explicit_subagent_model.py\"", "timeout": 10}]}]
+  }
+}

@@ -25,6 +25,16 @@
       "license": "MIT",
       "category": "productivity",
       "tags": ["em-dash", "style", "stop-hook", "writing", "gate"]
+    },
+    {
+      "name": "explicit-subagent-model",
+      "source": "./plugins/explicit-subagent-model",
+      "description": "Refuses an Agent or Task call that names no model, so a subagent never silently inherits whatever /model last set.",
+      "version": "0.1.0",
+      "author": { "name": "Dylan Merigaud" },
+      "license": "MIT",
+      "category": "productivity",
+      "tags": ["subagent", "model", "agent", "pretooluse", "gate"]
     }
   ]
 }
