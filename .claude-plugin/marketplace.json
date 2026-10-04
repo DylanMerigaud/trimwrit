@@ -45,6 +45,16 @@
       "license": "MIT",
       "category": "productivity",
       "tags": ["resume", "api-error", "stopfailure", "screen", "tmux"]
+    },
+    {
+      "name": "claim-gate",
+      "source": "./plugins/claim-gate",
+      "description": "Refuses to end a turn whose final message claims a gesture done (pushed, merged, sent, deployed, tests pass, verified) with no tool result in the same turn that proves it.",
+      "version": "0.1.0",
+      "author": { "name": "Dylan Merigaud" },
+      "license": "MIT",
+      "category": "productivity",
+      "tags": ["verification", "claims", "stop-hook", "honesty", "gate"]
     }
   ]
 }

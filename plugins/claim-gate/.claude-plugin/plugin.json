@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "claim-gate",
+  "displayName": "claim-gate",
+  "description": "Refuses to end a turn whose final message claims a gesture done (pushed, merged, sent, deployed, tests pass, verified) with no tool result in the same turn that proves it.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Dylan Merigaud",
+    "url": "https://github.com/DylanMerigaud"
+  },
+  "homepage": "https://github.com/DylanMerigaud/trimwrit/tree/main/plugins/claim-gate",
+  "repository": "https://github.com/DylanMerigaud/trimwrit",
+  "license": "MIT",
+  "keywords": [
+    "verification",
+    "claims",
+    "stop-hook",
+    "honesty",
+    "gate"
+  ],
+  "experimental": {
+    "evals": "evals"
+  }
+}

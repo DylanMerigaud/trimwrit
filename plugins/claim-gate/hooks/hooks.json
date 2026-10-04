@@ -1,0 +1,17 @@
+{
+  "description": "claim-gate: a turn does not end on a claim nothing in the turn proves",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/claim_gate.py\"",
+            "timeout": 10,
+            "statusMessage": "Claiming a gesture with no receipt?"
+          }
+        ]
+      }
+    ]
+  }
+}
