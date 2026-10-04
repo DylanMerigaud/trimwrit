@@ -11,6 +11,7 @@ Claim versus reality: a gesture said done with nothing in the turn that did or c
 claim-gate plugin (its Stop hook `claim_gate.py`) is the door.
 
 A void word anywhere before the claim in the same sentence spares it ("I haven't committed, pushed
-or deployed"). Known gap: a list item under a negated intro ("I haven't:" then "- Deployed.") is
+or deployed"), which also misses a real claim that follows a void word in its sentence ("Once
+CI went green, I pushed to main."). Known gap: a list item under a negated intro ("I haven't:" then "- Deployed.") is
 still read as a claim, which the hook spares; a pattern both Python and JavaScript compile cannot
 look back across lines.

@@ -303,6 +303,9 @@ PYTHON_ONLY_REGEX = re.compile(r"\(\?[aiLmsux]+\)|\(\?P[<=]|\\[AZz]")
 
 @pytest.mark.parametrize("name", sorted(STOP_GATES))
 def test_eval_graders_load_in_the_native_runner(name):
+    """Every grader key read from the file is one the native loader accepts, no pattern uses a
+    construct JavaScript cannot compile, and every grader has proof samples in
+    grader_samples.json."""
     sys.path.insert(0, ROOT)
     from trimwrit import cases
     with open(os.path.join(ROOT, "tests", "gates", "grader_samples.json"), encoding="utf-8") as fh:
@@ -311,7 +314,9 @@ def test_eval_graders_load_in_the_native_runner(name):
     assert found
     for case in found:
         for grader in case.graders:
-            keys = {k for k in grader if not k.startswith("_")}  # _note: the grader's body
+            # trimwrit's reader adds underscore keys (_note holds the body); they are not in the
+            # frontmatter, so they are left out of the native key check
+            keys = {k for k in grader if not k.startswith("_")}
             assert keys <= NATIVE_GRADER_KEYS, (case.path, keys - NATIVE_GRADER_KEYS)
             assert not PYTHON_ONLY_REGEX.search(grader.get("pattern", "")), grader["name"]
             assert samples.get(grader["name"]), "no proof samples for " + grader["name"]

@@ -132,6 +132,17 @@ def test_items_under_a_plain_intro_or_after_the_list_still_count(text):
     assert "pushed" in gate.claims_in(text, CFG)
 
 
+@pytest.mark.parametrize("text", [
+    "I did not wait:\n- pushed to main\n- deployed",
+    "Done, since you asked before:\n- pushed to main",
+    "What I did after the review:\n- pushed to main\n- deployed to prod",
+    "Shipped, as you asked earlier:\n- pushed to main",
+    "Nothing blocked me:\n- pushed to main\n- tests pass",
+])
+def test_a_void_word_that_does_not_govern_the_colon_leaves_the_list_a_claim(text):
+    assert "pushed" in gate.claims_in(text, CFG)
+
+
 def test_the_same_items_under_done_are_blocked(tmp_path):
     r = go(tmp_path, "Done:\n\n- pushed anything\n- deployed", [], "done")
     reason = blocked(r)

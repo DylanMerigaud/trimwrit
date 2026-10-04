@@ -13,8 +13,11 @@ ran in the turn counts for every kind. No receipt: the stop is blocked with a re
 the claim, and the model either runs the command now or rewords the claim to what it knows.
 
 Not a claim: a negation, a future, a question, a condition, a third party's act, a quoted line, a
-code span, or an item of a list whose introducing line is negated ("So far I have not:" then
-"- pushed anything"). A block is checked in a chain up to three times, then the turn ends with a visible
+code span, or an item of a list whose introducing line ends on a negation governing its colon:
+the negation is the last word before ":", or is followed only by "yet"/"encore" or one
+auxiliary or participle ("So far I have not:", "I haven't yet:", "Nothing was:", "Je n'ai pas
+:"), emphasis markup ignored. A negation earlier in the line ("I did not wait:", "Nothing
+blocked me:") or another void word ("Done, since you asked before:") does not void the list. A block is checked in a chain up to three times, then the turn ends with a visible
 message. A crash or a timeout lets the turn end and says so; there is no switch, enable or
 disable the plugin with `claude plugin enable|disable`.
 

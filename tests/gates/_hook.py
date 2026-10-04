@@ -72,6 +72,9 @@ def eval_cases(name):
               encoding="utf-8") as fh:
         samples = json.load(fh).get(name, {})
     found = cases.discover(os.path.join(plugin(name), "evals"))
+    names = {g.get("name") for case in found for g in case.graders}
+    stale = sorted(set(samples) - names)
+    assert not stale, "grader_samples.json names graders {} no longer has: {}".format(name, stale)
     for case in found:
         for grader in case.graders:
             grader.update(samples.get(grader.get("name"), {}))

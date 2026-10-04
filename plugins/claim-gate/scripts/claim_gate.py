@@ -92,26 +92,30 @@ VOID_SRC = (
 
 SENTENCE_SPLIT = re.compile(r"(?<=[\.\!\?\n])\s+|\n+")
 LIST_ITEM_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
-LAST_SENTENCE_RE = re.compile(r"(?:^|[.!?]\s+)([^.!?]*)$")
+# A list intro whose negation governs the colon: the negation is the last word before ":",
+# or is followed only by "yet"/"encore" or one auxiliary or participle ("So far I have not:",
+# "I haven't yet:", "Nothing was:", "Je n'ai pas :", "Je n'ai rien fait :"). A negation earlier
+# in the line ("I did not wait:", "Nothing blocked me:") or any other void word ("before",
+# "after", "earlier") governs something else, and the list after it is read as usual.
+NEGATED_INTRO_RE = re.compile(
+    r"(?:\b(?:not|never|nothing|pas|jamais|rien)|n['\u2019]t)"
+    r"(?:\s+(?:yet|encore|done|fait|was|were|is|are|been|has\s+been|have\s+been|[ée]t[ée]))?"
+    r"(?:\s+(?:yet|encore))?\s*:$", re.I)
 
 
-def _void_negated_lists(text, void):
+def _void_negated_lists(text):
     """Blank the list items introduced by a negated line: "So far I have not:" then "- pushed
     anything" is a list of things NOT done, and each item alone reads like a claim. The intro is
-    a line whose last sentence ends with ":" (markup around it ignored) and holds a void match;
-    the items are the list lines after it (blank lines before the first one skipped), up to a
-    blank line or a line that is not a list item."""
+    a line that, with `*` and `_` emphasis removed, ends with a negation governing its colon
+    (NEGATED_INTRO_RE); the items are the list lines after it (blank lines before the first one
+    skipped), up to a blank line or a line that is not a list item."""
     lines = text.split("\n")
     out, i = [], 0
     while i < len(lines):
         line = lines[i]
         out.append(line)
         i += 1
-        intro = line.rstrip().rstrip("*_ ")
-        if not intro.endswith(":"):
-            continue
-        last = LAST_SENTENCE_RE.search(intro)
-        if not last or not void.search(last.group(1)):
+        if not NEGATED_INTRO_RE.search(re.sub(r"[*_]", "", line).rstrip()):
             continue
         j = i
         while j < len(lines) and not lines[j].strip():
@@ -257,7 +261,7 @@ def claims_in(final_text, cfg=None):
     tail = (final_text or "")[-TAIL_CHARS:]
     tail = CODE_RE.sub(" ", QUOTE_LINE_RE.sub(" ", tail))
     tail = QUOTE_SPAN_RE.sub(" ", tail)
-    tail = _void_negated_lists(tail, void)
+    tail = _void_negated_lists(tail)
     found = {}
     for sentence in SENTENCE_SPLIT.split(tail):
         if not sentence.strip() or "?" in sentence:
