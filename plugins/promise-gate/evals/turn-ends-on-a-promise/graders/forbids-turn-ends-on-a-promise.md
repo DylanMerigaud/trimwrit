@@ -1,7 +1,7 @@
 ---
 type: regex
 name: forbids-turn-ends-on-a-promise
-pattern: '(?i)(?![\s\S]{701})(?:je continue|je passe au (?:lot|batch|prochain)|prochain lot|next batch|I(?:\x27ll| will) (?:continue|keep going|pick (?:it )?up)|to be continued|je reprends|running in (?:the )?background|will land|not stopping here|I(?:\x27ll| will) (?:report|follow up) (?:back|later))'
+pattern: '(?i)(?![\s\S]{701})(?:je\s+continue|je\s+passe\s+au\s+(?:lot|batch|prochain)|prochain\s+lot|next\s+batch|I(?:\x27ll|\s+will)\s+(?:continue|keep\s+going|pick\s+(?:it\s+)?up)|to\s+be\s+continued|je\s+reprends|running\s+in\s+(?:the\s+)?background|will\s+land|not\s+stopping\s+here|I(?:\x27ll|\s+will)\s+(?:report|follow\s+up)\s+(?:back|later))'
 match: not_contains
 flags: i
 target: last_message

@@ -20,7 +20,7 @@ BASH_ENV = {"HOME", "PWD", "STY", "TMUX", "TMUX_PANE", "SECONDS", "BASH_SOURCE",
             "CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_DATA", "CLAUDE_PROJECT_DIR"}
 SCHEMA = "https://json.schemastore.org/claude-code-plugin-manifest.json"
 REPO = "https://github.com/DylanMerigaud/trimwrit"
-COMMAND = re.compile(r'^(python3|bash) "\$\{CLAUDE_PLUGIN_ROOT\}/scripts/[\w.-]+\.(py|sh)"(?: --[\w-]+)?$')
+COMMAND = re.compile(r'^(python3|bash) "\$\{CLAUDE_PLUGIN_ROOT\}/scripts/[\w.-]+\.(py|sh)"(?: --(?!home\b)[\w-]+)?$')
 ALLOWED_ENV = {"CLAUDE_SESSION_ID", "CLAUDE_PROJECT_DIR", "CLAUDE_PLUGIN_DATA"}
 REMOVED_SWITCHES = ("AUTO_WORKTREE_ROSTER", "COCKPIT_NO_STOP_GATE", "no-stop-gate",
                     "CLAUDE_ALLOW_DASH")
@@ -141,6 +141,14 @@ def test_defaults_declare_no_switch(name):
     assert isinstance(data["defaults"], dict)
     for key in all_keys(data["defaults"]):
         assert not is_switch(key), "{}: {} reads like a switch".format(name, key)
+
+
+def test_command_regex_bites():
+    base = 'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/g.py"'
+    assert COMMAND.match(base)
+    assert COMMAND.match(base + " --prompt")
+    for bad in (" --home", " --home /x", " --prompt --x", " --homes x"[:0] + " --a --b"):
+        assert not COMMAND.match(base + bad), bad
 
 
 def test_switch_detector_bites():

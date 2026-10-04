@@ -60,7 +60,7 @@ def blocked(r):
 
 
 TARGETS = [
-    "je vais dormir. ne t'arrete pas avant d'avoir identifie 5+ candidats fiables",
+    "je vais dormir. ne t'arrete pas avant d'avoir identifié 5+ candidats fiables",
     "FAIT TOUT PUTIN TROUVEM OI DES BON CANDIDATS T'ARRETE PAS",
     "understoud? never stop untill results",
     "pourquoi tu fais pas tout le pool d'un coup?",
@@ -75,9 +75,9 @@ PROMISES = [
     "Twenty dead, one survivor. I'll pick it up with the next batch.",
 ]
 FINISHED = [
-    "24/24 traites et 2 gardes et pool epuise.",
+    "24/24 traités et 2 gardés et pool épuisé.",
     "Rien en vol. tu peux tuer la session",
-    "Le lot suivant est dans le pool, traite: 12 morts, 2 gardes, pool vide.",
+    "Le lot suivant est dans le pool, traite: 12 morts, 2 gardés, pool vide.",
 ]
 
 
@@ -102,7 +102,7 @@ def test_a_finished_turn_is_no_promise(text):
 
 
 def test_only_the_tail_counts():
-    assert not gate.promise_in("je continue " + "x" * 5000 + " pool epuise, 24/24.", CFG)
+    assert not gate.promise_in("je continue " + "x" * 5000 + " pool épuisé, 24/24.", CFG)
 
 
 def test_public_functions_load_their_own_settings_when_cfg_is_none(tmp_path, monkeypatch):
@@ -112,7 +112,7 @@ def test_public_functions_load_their_own_settings_when_cfg_is_none(tmp_path, mon
     try:
         assert gate.promise_in(PROMISE) == "Je continue"
         assert gate.target_in("never stop") is True
-        assert gate.promise_in("Pool epuise.") is None
+        assert gate.promise_in("Pool épuisé.") is None
     finally:
         gate.trace._HOME = None
         gate.trace._SETTINGS = None
@@ -137,7 +137,7 @@ def test_unarmed_session_is_never_held(tmp_path):
 
 
 def test_prompt_with_a_target_arms_and_a_promise_blocks_until_the_chain_cap(tmp_path):
-    r = prompt(tmp_path, "s", "je vais dormir. ne t'arrete pas avant d'avoir identifie 5+ candidats")
+    r = prompt(tmp_path, "s", "je vais dormir. ne t'arrete pas avant d'avoir identifié 5+ candidats")
     assert (r.returncode, r.stdout.strip()) == (0, "")
     path = make_transcript(tmp_path, "Vingt morts, un survivant. Je continue sur le lot suivant.")
     outs = [run_py(NAME, SCRIPT, stop(path, "s", active=i > 0), tmp_path).stdout.strip()
@@ -158,7 +158,7 @@ def test_prompt_with_a_target_arms_and_a_promise_blocks_until_the_chain_cap(tmp_
 
 def test_armed_session_with_a_finished_turn_is_silent(tmp_path):
     prompt(tmp_path, "a", "never stop until results")
-    path = make_transcript(tmp_path, "24/24 traites, 2 gardes, pool epuise. Rien en vol.")
+    path = make_transcript(tmp_path, "24/24 traités, 2 gardés, pool épuisé. Rien en vol.")
     r = run_py(NAME, SCRIPT, stop(path, "a"), tmp_path)
     assert (r.returncode, r.stdout.strip()) == (0, "")
 
@@ -186,7 +186,7 @@ def test_the_old_cockpit_escape_variable_changes_nothing(tmp_path):
 
 def test_last_assistant_message_wins_over_a_lagging_transcript(tmp_path):
     prompt(tmp_path, "lag", "fait tout")
-    path = make_transcript(tmp_path, "Pool epuise.")
+    path = make_transcript(tmp_path, "Pool épuisé.")
     blocked(run_py(NAME, SCRIPT, stop(path, "lag", message=PROMISE), tmp_path))
 
 
@@ -232,7 +232,7 @@ def test_an_extra_with_a_comment_cannot_swallow_the_base_alternatives():
 ])
 def test_a_bad_extra_or_key_is_a_crash_row_and_exit_0(tmp_path, section):
     write_config(tmp_path, {NAME: section})
-    path = make_transcript(tmp_path, "Pool epuise.")
+    path = make_transcript(tmp_path, "Pool épuisé.")
     r = run_py(NAME, SCRIPT, stop(path, "bad"), tmp_path)
     assert r.returncode == 0
     assert "UNGUARDED" in json.loads(r.stdout)["systemMessage"]
@@ -282,6 +282,9 @@ def forbid():
 
 @pytest.mark.parametrize("text", PROMISES + [
     "I will keep going with 13 to 24.",
+    "Scored 9 to 16.\nI will\n continue.",
+    "Scored 9 to 16.  Je   continue  sur le lot suivant.",
+    "Next\nbatch is running in  the  background.",
     "x " * 300 + "I'll report back later.",
     "Scored 9 to 16. " + "Details follow. " * 20 + "To be continued.",
 ])
