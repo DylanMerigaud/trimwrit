@@ -15,6 +15,16 @@
       "license": "MIT",
       "category": "productivity",
       "tags": ["evals", "claude-md", "harness", "prune"]
+    },
+    {
+      "name": "no-em-dash",
+      "source": "./plugins/no-em-dash",
+      "description": "Refuses a final message, a file write or a shell write that carries an em dash, an en dash, a figure dash or a horizontal bar. The characters are configurable.",
+      "version": "0.1.0",
+      "author": { "name": "Dylan Merigaud" },
+      "license": "MIT",
+      "category": "productivity",
+      "tags": ["em-dash", "style", "stop-hook", "writing", "gate"]
     }
   ]
 }

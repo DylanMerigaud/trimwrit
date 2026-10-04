@@ -1,0 +1,7 @@
+{
+  "description": "no-em-dash: no forbidden dash in what Claude says or writes",
+  "hooks": {
+    "Stop": [{"hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/no_em_dash.py\"", "timeout": 10}]}],
+    "PreToolUse": [{"matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash", "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/no_em_dash_write.py\"", "timeout": 10}]}]
+  }
+}
