@@ -9,6 +9,7 @@ FIXTURES: `hub` is a repo whose toplevel carries `.claude/auto-worktree` (and an
 `.claude/auto-worktree-off`, which must NOT disarm the door), `wt` a linked worktree of it under
 `.claude/worktrees/`, `plain` a repo with no marker.
 """
+import importlib.util
 import json
 import os
 import shutil
@@ -22,11 +23,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 HOOK = os.path.join(ROOT, "plugins", "main-checkout-guard", "scripts", "git_hub_guard.py")
 GIT_HOME = tempfile.mkdtemp(prefix="git-hub-guard-gitconfig-")
 
-def clean_env():
+def clean_env(extra=None):
     """No inherited GIT_* (a test run from inside a git hook carries GIT_DIR and GIT_INDEX_FILE)
     and no CLAUDE_*, with an isolated HOME and git config so no real configuration is read."""
     env = {k: v for k, v in os.environ.items() if not k.startswith(("GIT_", "CLAUDE_"))}
     env.update({"HOME": GIT_HOME, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
+    env.update(extra or {})
     return env
 
 
@@ -88,7 +90,43 @@ def run_hook(command, cwd, home, tool="Bash", raw=None):
                           capture_output=True, text=True, env=clean_env(), cwd=ROOT, timeout=60)
 
 
+os.environ.update({"HOME": GIT_HOME, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
+for _k in [k for k in os.environ if k.startswith("GIT_") and k not in
+           ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM")]:
+    del os.environ[_k]
+
+_MOD = []
+
+
+def guard_module():
+    """The hook script loaded once, in this process, under a unique module name, configured
+    with the defaults (nothing protected but marker repos)."""
+    if not _MOD:
+        spec = importlib.util.spec_from_file_location("main_checkout_guard_under_test", HOOK)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.configure_from({})
+        _MOD.append(mod)
+    return _MOD[0]
+
+
+class Result:
+    def __init__(self, returncode, stderr, stdout=""):
+        self.returncode, self.stderr, self.stdout = returncode, stderr, stdout
+
+
+def run_inproc(command, cwd, tool="Bash"):
+    """body() of the hook without the process: same judge, same render, same exit code."""
+    mod = guard_module()
+    if tool != "Bash" or "git" not in command:
+        return Result(0, "")
+    findings = mod.Guard(os.path.normpath(cwd)).check(command)
+    return Result(2, mod.render(findings)) if findings else Result(0, "")
+
+
 class Base(unittest.TestCase):
+    INPROC = True
+
     @classmethod
     def setUpClass(cls):
         cls.fx = Fixture()
@@ -97,8 +135,13 @@ class Base(unittest.TestCase):
     def tearDownClass(cls):
         cls.fx.cleanup()
 
+    def judge(self, command, cwd):
+        if self.INPROC:
+            return run_inproc(command, cwd)
+        return run_hook(command, cwd, self.fx.home)
+
     def refused(self, command, cwd, *needles):
-        r = run_hook(command, cwd, self.fx.home)
+        r = self.judge(command, cwd)
         self.assertEqual(r.returncode, 2, "not refused: {!r} in {}\nstderr: {}".format(
             command, cwd, r.stderr))
         self.assertIn("git-hub-guard REFUSED", r.stderr)
@@ -108,7 +151,7 @@ class Base(unittest.TestCase):
         return r
 
     def allowed(self, command, cwd):
-        r = run_hook(command, cwd, self.fx.home)
+        r = self.judge(command, cwd)
         self.assertEqual((r.returncode, r.stderr), (0, ""),
                          "refused or noisy: {!r} in {}".format(command, cwd))
         return r
@@ -329,11 +372,13 @@ class Allowed(Base):
 
     def test_no_git_at_all_and_other_tools(self):
         self.allowed("ls -la && rm -rf build", self.fx.hub)
-        r = run_hook("git checkout -- .", self.fx.hub, self.fx.home, tool="Write")
+        r = run_inproc("git checkout -- .", self.fx.hub, tool="Write")
         self.assertEqual((r.returncode, r.stderr), (0, ""))
 
 
 class FailsClosed(Base):
+    INPROC = False
+
     def test_an_unresolved_directory_inside_a_protected_repo_is_refused(self):
         for cmd in ('cd "$SOMEWHERE" && git reset --hard', "cd - && git checkout -- .",
                     'git -C "$X" stash', "popd && git clean -fd",
@@ -477,6 +522,8 @@ class ReviewRegressions(Base):
 
 
 class Witness(Base):
+    INPROC = False
+
     def test_one_refusal_writes_one_row_and_a_pass_writes_none(self):
         ledger = os.path.join(self.fx.home, "door-refusals.jsonl")
         if os.path.exists(ledger):
@@ -497,6 +544,21 @@ class Witness(Base):
             rows = [json.loads(line) for line in fh if line.strip()]
         self.assertEqual([(x["hook"], x["outcome"]) for x in rows][-1:],
                          [("git-hub-guard.py", "crash")])
+
+    def test_inherited_git_dir_and_index_file_do_not_redirect_the_probe(self):
+        elsewhere = os.path.join(self.fx.root, "elsewhere")
+        os.makedirs(elsewhere)
+        git(elsewhere, "init", "-q", "--template=", "-b", "main")
+        env = clean_env({"GIT_DIR": os.path.join(elsewhere, ".git"),
+                         "GIT_INDEX_FILE": os.path.join(elsewhere, ".git", "index"),
+                         "GIT_WORK_TREE": elsewhere})
+        payload = json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Bash",
+                              "session_id": "git-hub-guard-test", "cwd": self.fx.hub,
+                              "tool_input": {"command": "git checkout -- ."}})
+        r = subprocess.run([sys.executable, HOOK, "--home", self.fx.home], input=payload,
+                           capture_output=True, text=True, env=env, cwd=ROOT, timeout=60)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("git-hub-guard REFUSED", r.stderr)
 
     def test_a_mistyped_config_key_is_a_loud_crash(self):
         home = tempfile.mkdtemp(prefix="git-hub-guard-badcfg-")

@@ -731,32 +731,24 @@ def same(a, b):
         return False
 
 
-_LOCAL_GIT_VARS = None
-_STATIC_GIT_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
-                    "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE",
-                    "GIT_PREFIX", "GIT_IMPLICIT_WORK_TREE", "GIT_CEILING_DIRECTORIES",
-                    "GIT_DISCOVERY_ACROSS_FILESYSTEM", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS",
-                    "GIT_CONFIG_COUNT")
+# Every variable `git rev-parse --local-env-vars` prints (git 2.x), plus the discovery knobs
+# that also pick the repository. Hardcoded: no extra process, and no read of the environment.
+_LOCAL_GIT_VARS = (
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CEILING_DIRECTORIES", "GIT_COMMON_DIR",
+    "GIT_CONFIG", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS",
+    "GIT_DIR", "GIT_DISCOVERY_ACROSS_FILESYSTEM", "GIT_GRAFT_FILE", "GIT_IMPLICIT_WORK_TREE",
+    "GIT_INDEX_FILE", "GIT_INTERNAL_SUPER_PREFIX", "GIT_NAMESPACE", "GIT_NO_REPLACE_OBJECTS",
+    "GIT_OBJECT_DIRECTORY", "GIT_PREFIX", "GIT_REPLACE_REF_BASE", "GIT_SHALLOW_FILE",
+    "GIT_WORK_TREE")
 
 
-def git_env():
-    """The argv prefix that runs git without the repository-selecting GIT_* variables the hook
-    happens to inherit (what the command says, not what the hook inherits, decides the
-    repository). A gate source reads no environment variable beyond three, so the variables are
-    unset by name through `env -u`: git itself lists them (`rev-parse --local-env-vars`), a
-    static list backs it when git cannot answer."""
-    global _LOCAL_GIT_VARS
-    if _LOCAL_GIT_VARS is None:
-        names = set(_STATIC_GIT_VARS)
-        try:
-            r = subprocess.run(["git", "rev-parse", "--local-env-vars"],
-                               stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                               timeout=GIT_TIMEOUT_S)
-            if r.returncode == 0:
-                names |= {w for w in r.stdout.split() if w.startswith("GIT_")}
-        except (OSError, subprocess.SubprocessError):
-            pass
-        _LOCAL_GIT_VARS = tuple(sorted(names))
+def git_argv_prefix():
+    """The argv prefix (`env -u VAR ...`) that runs git without the variables that select a
+    repository, so the command's own words, not what the hook inherited, decide it. It returns
+    an argv prefix, NOT an environment mapping: do not pass it as `env=`. It unsets git's
+    repository-local variables only (not every GIT_*), so the probe sees the same config
+    environment (GIT_CONFIG_GLOBAL, GIT_CONFIG_NOSYSTEM, GIT_SSH...) as the user's command. A
+    gate source reads no environment variable beyond three, hence `env -u` by name."""
     out = ["env"]
     for name in _LOCAL_GIT_VARS:
         out += ["-u", name]
@@ -765,7 +757,7 @@ def git_env():
 
 def run_git(argv, cwd):
     try:
-        r = subprocess.run(git_env() + list(argv), cwd=cwd, stdin=subprocess.DEVNULL,
+        r = subprocess.run(git_argv_prefix() + list(argv), cwd=cwd, stdin=subprocess.DEVNULL,
                            capture_output=True, text=True, timeout=GIT_TIMEOUT_S)
     except (OSError, subprocess.SubprocessError):
         return None
