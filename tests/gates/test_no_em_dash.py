@@ -127,3 +127,24 @@ def test_eval_grader_is_proven():
     pat = re.compile(spec["pattern"], re.I)
     assert pat.search("a " + EM + " b") and pat.search("3" + EN + "5")
     assert not pat.search("a - b, c")
+
+
+def test_codepoints_that_would_refuse_nothing_are_a_loud_crash(tmp_path):
+    for i, bad in enumerate([[EM], [], [True], [-1], [0x110000], "x", [8212.0]]):
+        home = tmp_path / str(i)
+        write_config(home, {NAME: {"codepoints": bad}})
+        for script, payload in ((STOP, stop("a " + EM + " b", "cp" + str(i))),
+                                (WRITE, tool("Write", {"content": "a" + EM}))):
+            r = run_py(NAME, script, payload, home)
+            assert r.returncode == 0, (bad, r.stderr)
+            assert "UNGUARDED" in json.loads(r.stdout)["systemMessage"], (bad, script)
+
+
+def test_stop_reads_the_transcript_when_the_payload_has_no_final_message(tmp_path):
+    path = tmp_path / "t.jsonl"
+    path.write_text(json.dumps({"type": "assistant", "message": {"content": [
+        {"type": "text", "text": "late " + EM + " news"}]}}) + "\n", encoding="utf-8")
+    payload = {"hook_event_name": "Stop", "session_id": "tr", "stop_hook_active": False,
+               "transcript_path": str(path)}
+    r = run_py(NAME, STOP, payload, tmp_path)
+    assert r.returncode == 2 and "em-dash" in r.stderr

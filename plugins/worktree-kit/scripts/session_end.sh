@@ -29,8 +29,15 @@ chain_start=$SECONDS
 run_step automerge "$ROOT/scripts/automerge.sh"
 run_step cleanup "$ROOT/scripts/cleanup.sh"
 
+# The after-commands run where the session ran: the payload's cwd, else PWD.
+cwd="$(printf '%s' "$input" | { jq -r '.cwd // empty' 2>/dev/null || true; })"
+if [ -z "$cwd" ]; then
+  cwd="$(printf '%s' "$input" | sed -n 's/.*"cwd"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+fi
+[ -d "$cwd" ] || cwd="${PWD}"
+
 t0=$SECONDS
-printf '%s' "$input" | python3 "$ROOT/gatekit/config.py" run session_end_after --cwd "${PWD}"
+printf '%s' "$input" | python3 "$ROOT/gatekit/config.py" run session_end_after --cwd "$cwd"
 rc=$?
 if [ "$rc" -ne 0 ]; then
   echo "worktree-kit: session_end_after not run (config error above)" >&2

@@ -8,8 +8,8 @@ the top level or from exit code 2, and an unrecognized key is dropped without an
 block written there announced itself and held nothing. This hook exits 2 with the reason on
 stderr, and checks the re-answers of a stop chain like the first one, up to the chain cap.
 
-It checks the final assistant message the Stop payload hands over, not the transcript, which
-lags the current turn. Anything inside a fenced block or inline backticks is exempt: quoting a
+It checks the final assistant message the Stop payload hands over (the transcript only when
+the payload lacks it: it lags the current turn). Anything inside a fenced block or inline backticks is exempt: quoting a
 diff or a tool output is not the failure this gate polices, and to talk about the character you
 put it in backticks. That is the rule's own exemption, not a bypass.
 
@@ -23,7 +23,8 @@ import sys
 
 PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PLUGIN_ROOT)
-from gatekit import trace  # noqa: E402
+from gatekit import trace, transcript  # noqa: E402
+import _codepoints  # noqa: E402
 
 HOOK = "no-em-dash.py"
 TIMEOUT_S = 8
@@ -65,8 +66,8 @@ def reason_text(found):
 
 def body():
     payload = trace.read_payload()
-    bad = set(trace.plugin_settings(payload, root=PLUGIN_ROOT)["codepoints"])
-    message = payload.get("last_assistant_message")
+    bad = _codepoints.refused(trace.plugin_settings(payload, root=PLUGIN_ROOT))
+    message = transcript.final_text(payload)
     found = offenders(message, bad) if isinstance(message, str) and message else []
     if not found:
         trace.chain_clear(HOOK, payload)

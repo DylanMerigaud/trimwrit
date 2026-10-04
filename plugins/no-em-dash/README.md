@@ -33,6 +33,16 @@ crash, not a silent pass.
 |---|---|---|
 | `codepoints` | `[8212, 8211, 8210, 8213]` | decimal codepoints refused (em, en, figure dash, horizontal bar) |
 
+## Where the ledgers land
+
+Crashes, timeouts and, for a Stop gate, chain caps are appended to `hook-health.jsonl`; every
+refusal is counted in `door-refusals.jsonl` next to it. By default both sit in the plugin's data
+directory (`$CLAUDE_PLUGIN_DATA`, which Claude Code keeps at `~/.claude/plugins/data/no-em-dash-trimwrit/`),
+or in `~/.claude/trimwrit-gates/` when that variable is not set. The `trace` section of
+`trimwrit-gates.json` moves them: `ledger` is the path of the health file (the refusal file stays
+beside it), and `witness_module` is a Python file exposing `log(door, event, reason_class,
+session_id)` that counts refusals instead of `door-refusals.jsonl`.
+
 ## Proof
 
 `tests/gates/test_no_em_dash.py` replays both hooks through their stdin contract. The eval case

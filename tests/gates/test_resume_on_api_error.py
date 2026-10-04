@@ -55,14 +55,14 @@ def test_vim_mode_adds_escape_and_i(tmp_path):
     assert "stuff 'icontinue: the previous" in out.stdout
     out, _ = run(tmp_path, "server_error", TMUX, config={"vim_mode": True})
     assert "send-keys -t '%3' Escape; sleep 0.4; " in out.stdout
-    assert "-l 'icontinue: the previous" in out.stdout
+    assert "-l -- 'icontinue: the previous" in out.stdout
 
 
 def test_tmux_pane_gets_send_keys(tmp_path):
     out, log = run(tmp_path, "overloaded", TMUX)
     assert out.stdout.startswith("sleep 120; ")
     assert "tmux send-keys -t %3 -l 'continue" not in out.stdout  # the pane is quoted
-    assert "tmux send-keys -t '%3' -l 'continue: the previous turn" in out.stdout
+    assert "tmux send-keys -t '%3' -l -- 'continue: the previous turn" in out.stdout
     assert "tmux send-keys -t '%3' Enter" in out.stdout
     assert "screen" not in out.stdout.replace("resumed tmux", "")
     assert "tmux_pane=%3" in log
@@ -113,3 +113,8 @@ def test_a_bad_config_is_loud_and_the_defaults_apply(tmp_path, config):
 def test_a_garbage_payload_does_not_crash(tmp_path):
     out = run_sh(NAME, SCRIPT, "not json", "--dry-run", env=dict(NO_MUX, HOME=str(tmp_path), **SCREEN))
     assert out.returncode == 0 and "(unknown)" in out.stdout
+
+
+def test_tmux_text_starting_with_a_dash_is_not_read_as_a_flag(tmp_path):
+    out, _ = run(tmp_path, "overloaded", TMUX, config={"text": "-keep going"})
+    assert "tmux send-keys -t '%3' -l -- '-keep going (overloaded)'" in out.stdout

@@ -35,7 +35,7 @@ kind or a regex that does not compile is a loud crash, not a silent pass. Kinds 
 | key | default | meaning |
 |---|---|---|
 | `claims_extra` | `{}` | kind to a list of regex alternatives that also count as that claim |
-| `receipts_extra` | `{}` | kind to a list of regex alternatives matched against `ToolName command` that also count as that receipt (a custom `land_on_main` script for `pushed`) |
+| `receipts_extra` | `{}` | kind to a list of regex alternatives matched against `ToolName command` that also count as that receipt (for example your own `./scripts/ship.sh` for `pushed`) |
 | `void_extra` | `[]` | regex alternatives that void a claim sentence, like "not" or "once" |
 | `reason_suffix` | `""` | text appended to the block reason |
 
@@ -47,6 +47,16 @@ instance). With no `cfg` they load the settings of the current directory.
 
 `python3 scripts/claim_gate.py --check TRANSCRIPT.jsonl` prints what the gate would say about a
 transcript, blocking nothing.
+
+## Where the ledgers land
+
+Crashes, timeouts and, for a Stop gate, chain caps are appended to `hook-health.jsonl`; every
+refusal is counted in `door-refusals.jsonl` next to it. By default both sit in the plugin's data
+directory (`$CLAUDE_PLUGIN_DATA`, which Claude Code keeps at `~/.claude/plugins/data/claim-gate-trimwrit/`),
+or in `~/.claude/trimwrit-gates/` when that variable is not set. The `trace` section of
+`trimwrit-gates.json` moves them: `ledger` is the path of the health file (the refusal file stays
+beside it), and `witness_module` is a Python file exposing `log(door, event, reason_class,
+session_id)` that counts refusals instead of `door-refusals.jsonl`.
 
 ## Proof
 

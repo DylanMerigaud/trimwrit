@@ -43,10 +43,20 @@ crash, not a silent pass.
 | key | default | meaning |
 |---|---|---|
 | `protected_roots` | `[]` | extra repository paths protected without the marker (`~` expands) |
-| `default_branch` | `"main"` | the branch the door keeps safe |
-| `note` | `""` | one sentence appended to every refusal ("... This door exists since.") |
+| `default_branch` | `"main"` | the one branch the door keeps safe, and the branch its reasons name. For a repository whose trunk is not `main`, set it in that project's own `<project>/.claude/trimwrit-gates.json`, not in the user layer: it is a single value shared by every repository the user layer covers |
+| `note` | `""` | one sentence appended to every refusal as "Why this door exists: <note>" (a final full stop is added when missing) |
 | `remedy_main_checkout` | worktree, pull request, `git pull --ff-only` | the "Do instead" line for the main checkout |
 | `remedy_default_branch` | merged pull request only | the "Do instead" line for default-branch rewrites |
+
+## Where the ledgers land
+
+Crashes, timeouts and, for a Stop gate, chain caps are appended to `hook-health.jsonl`; every
+refusal is counted in `door-refusals.jsonl` next to it. By default both sit in the plugin's data
+directory (`$CLAUDE_PLUGIN_DATA`, which Claude Code keeps at `~/.claude/plugins/data/main-checkout-guard-trimwrit/`),
+or in `~/.claude/trimwrit-gates/` when that variable is not set. The `trace` section of
+`trimwrit-gates.json` moves them: `ledger` is the path of the health file (the refusal file stays
+beside it), and `witness_module` is a Python file exposing `log(door, event, reason_class,
+session_id)` that counts refusals instead of `door-refusals.jsonl`.
 
 ## Proof
 

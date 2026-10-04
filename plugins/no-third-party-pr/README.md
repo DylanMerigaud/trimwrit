@@ -14,7 +14,9 @@ by the reader of `main-checkout-guard` (vendored in `lib/`): `&&`, pipes, subshe
 
 The target is resolved the way gh does: `-R/--repo`, else `GH_REPO` set by the command itself,
 else every git remote of the directory the command runs in (a fork whose `upstream` is a third
-party counts as a third-party target). A target that cannot be resolved is refused (fail closed).
+party counts as a third-party target). An exported `GH_REPO` is not read (the gate reads no
+environment beyond its allowlist), so a `gh pr create` that relies on one is judged on the git
+remotes; `-R` with the owner and repository is the reliable form. A target that cannot be resolved is refused (fail closed).
 Reads (`gh pr list`, `gh pr view`, `gh api` GET), `gh pr merge`, issue comments and every pull
 request on your own repositories pass.
 
@@ -61,6 +63,16 @@ redirected, substituted or globbed, and no `--fill`, `--editor`, `--web`, `--tem
 and expects one JSON object on stdout within 10 seconds: `{"ok": true, "reason": "..."}`. Any
 other outcome (a non-zero answer that is not that object, garbage, a list, a timeout, a missing
 program) is a refusal whose `Ticket:` line says the exemption command failed or gives its reason.
+
+## Where the ledgers land
+
+Crashes, timeouts and, for a Stop gate, chain caps are appended to `hook-health.jsonl`; every
+refusal is counted in `door-refusals.jsonl` next to it. By default both sit in the plugin's data
+directory (`$CLAUDE_PLUGIN_DATA`, which Claude Code keeps at `~/.claude/plugins/data/no-third-party-pr-trimwrit/`),
+or in `~/.claude/trimwrit-gates/` when that variable is not set. The `trace` section of
+`trimwrit-gates.json` moves them: `ledger` is the path of the health file (the refusal file stays
+beside it), and `witness_module` is a Python file exposing `log(door, event, reason_class,
+session_id)` that counts refusals instead of `door-refusals.jsonl`.
 
 ## Proof
 

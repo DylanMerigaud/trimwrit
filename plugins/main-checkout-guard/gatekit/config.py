@@ -26,7 +26,7 @@ import sys
 
 FILE = "trimwrit-gates.json"
 MAX_UP = 12
-RUN_TIMEOUT_S = 600
+RUN_TIMEOUT_S = 200
 
 
 class ConfigError(ValueError):

@@ -30,7 +30,8 @@
 #     reliable and the first commit of a branch says nothing about the date of the checkout.
 #
 # The ages file is the configured `ages_file`, else
-# ${CLAUDE_PLUGIN_DATA:-$HOME/.claude/trimwrit-gates}/worktree-ages.tsv.
+# $HOME/.claude/trimwrit-gates/worktree-ages.tsv (a fixed path: cleanup.sh runs in the hook
+# with CLAUDE_PLUGIN_DATA set and report.sh by hand without it, and both must read one file).
 # Compatible with /bin/bash 3.2.
 set -euo pipefail
 
@@ -60,7 +61,7 @@ git rev-parse --git-dir >/dev/null 2>&1 || exit 0
 
 load_config "$PWD"
 AGES="$cfg_ages"
-[ -n "$AGES" ] || AGES="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/trimwrit-gates}/worktree-ages.tsv"
+[ -n "$AGES" ] || AGES="$HOME/.claude/trimwrit-gates/worktree-ages.tsv"
 
 # Registry entries whose directory no longer exists. No file is touched.
 git worktree prune 2>/dev/null || true

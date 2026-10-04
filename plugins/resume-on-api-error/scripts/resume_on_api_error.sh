@@ -123,7 +123,7 @@ if [ "${target}" = "screen" ]; then
   where="${STY}"
 else
   [ "${CFG_VIM}" = "1" ] && cmd="${cmd}tmux send-keys -t $(sq "${TMUX_PANE}") Escape; sleep 0.4; "
-  cmd="${cmd}tmux send-keys -t $(sq "${TMUX_PANE}") -l $(sq "${text}") && tmux send-keys -t $(sq "${TMUX_PANE}") Enter"
+  cmd="${cmd}tmux send-keys -t $(sq "${TMUX_PANE}") -l -- $(sq "${text}") && tmux send-keys -t $(sq "${TMUX_PANE}") Enter"
   where="${TMUX_PANE}"
 fi
 cmd="${cmd} && echo \"\$(date '+%F %T')   resumed ${target} ${where} after ${delay}s\" >> $(sq "${LOG}")"

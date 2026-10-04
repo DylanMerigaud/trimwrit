@@ -374,7 +374,7 @@ def test_automerge_uses_the_configured_remote(sb):
 
 
 def ages_path(sb):
-    return sb.data / "worktree-ages.tsv"
+    return sb.home / ".claude" / "trimwrit-gates" / "worktree-ages.tsv"
 
 
 def test_cleanup_prunes_the_registry_dates_worktrees_and_removes_none(sb):
@@ -404,6 +404,23 @@ def test_cleanup_one_row_per_worktree_and_the_configured_ages_file(sb):
     got = [l.split("\t")[0] for l in custom.read_text().splitlines()[1:]]
     assert sorted(got) == sorted([str(a), str(b)])
     assert not ages_path(sb).exists()
+
+
+def test_report_by_hand_reads_the_dates_the_hook_wrote(sb):
+    sb.make_hub()
+    wt = sb.worktree("old")
+    # the hook runs with CLAUDE_PLUGIN_DATA set, the report by hand without it
+    assert sb.run("cleanup.sh", {"cwd": str(wt)}, cwd=wt).returncode == 0
+    lines = ages_path(sb).read_text().splitlines()
+    ages_path(sb).write_text("\n".join(
+        [lines[0]] + [l.split("\t")[0] + "\t2020-01-01" for l in lines[1:]]) + "\n")
+    env = sb.env()
+    del env["CLAUDE_PLUGIN_DATA"]
+    out = run_sh(NAME, "report.sh", None, env=env, cwd=str(sb.hub))
+    assert out.returncode == 0, out.stderr
+    row = [l.split() for l in out.stdout.splitlines() if l.startswith("hub")][0]
+    assert row[2].endswith("d") and int(row[2][:-1]) > 1000, row
+    assert not sb.data.exists()
 
 
 # 6. report
@@ -479,6 +496,18 @@ def test_session_end_runs_automerge_then_cleanup_then_session_end_after(sb):
     assert json.loads((sb.root / "payload.json").read_text())["session_id"] == "s1"
     assert out.stderr.index("automerge took") < out.stderr.index("cleanup took") \
         < out.stderr.index("session_end_after took") < out.stderr.index("total")
+
+
+def test_session_end_after_commands_run_in_the_payload_cwd(sb):
+    sb.make_hub()
+    wt = sb.worktree()
+    sb.user_config({"session_end_after": [["sh", "-c", "pwd -P > " + str(sb.root / "where.txt")]]})
+    out = sb.run("session_end.sh", {"cwd": str(wt)}, cwd=sb.root)
+    assert out.returncode == 0, out.stderr
+    assert (sb.root / "where.txt").read_text().strip() == os.path.realpath(str(wt))
+    # no cwd in the payload: the process directory
+    out = sb.run("session_end.sh", {"reason": "other"}, cwd=sb.root)
+    assert (sb.root / "where.txt").read_text().strip() == os.path.realpath(str(sb.root))
 
 
 def test_session_end_a_failing_after_command_blocks_nothing(sb):

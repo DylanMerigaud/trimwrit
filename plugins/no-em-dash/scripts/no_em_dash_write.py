@@ -34,6 +34,7 @@ import sys
 PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PLUGIN_ROOT)
 from gatekit import trace  # noqa: E402
+import _codepoints  # noqa: E402
 
 HOOK = "no-em-dash-write.py"
 TIMEOUT_S = 8
@@ -100,7 +101,7 @@ def payload_text(tool, tool_input):
 
 def body():
     payload = trace.read_payload()
-    bad = set(trace.plugin_settings(payload, root=PLUGIN_ROOT)["codepoints"])
+    bad = _codepoints.refused(trace.plugin_settings(payload, root=PLUGIN_ROOT))
     tool = payload.get("tool_name")
     tool_input = payload.get("tool_input")
     if not isinstance(tool_input, dict):

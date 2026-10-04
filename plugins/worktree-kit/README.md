@@ -25,7 +25,7 @@ branch is rebased and pushed when the repository's own gate passes.
   commit the remote lacks, the repository's own `.claude/automerge-gate.sh` exits 0 (no file, no
   merge), and the rebase has no conflict. It never forces a push. Cleanup runs `git worktree
   prune` and records first-seen dates; it never removes a worktree.
-- **report.sh** (run by hand): a table of every worktree with REPO, WORKTREE, AGE, UNPUSHED,
+- **report.sh** (run by hand, `bash ~/.claude/plugins/marketplaces/trimwrit/plugins/worktree-kit/scripts/report.sh`): a table of every worktree with REPO, WORKTREE, AGE, UNPUSHED,
   UNMERGED, DIRTY and IGNORED, plus the branches whose worktree is gone. It deletes nothing.
 
 There is no switch: enable or disable the plugin with `claude plugin enable|disable`. A bad
@@ -47,11 +47,21 @@ Section `worktree-kit` of `~/.claude/trimwrit-gates.json` (user) and
 | key | default | meaning |
 |---|---|---|
 | `roster` | `""` | file listing repository toplevels, one per line: the anomaly check of autostart and the repositories `report.sh` walks (empty: the current repository only) |
-| `ages_file` | `""` | first-seen dates; empty means `$CLAUDE_PLUGIN_DATA/worktree-ages.tsv`, else `~/.claude/trimwrit-gates/worktree-ages.tsv` |
+| `ages_file` | `""` | first-seen dates; empty means `~/.claude/trimwrit-gates/worktree-ages.tsv`, the same file for the SessionEnd hook and for `report.sh` run by hand |
 | `link_extra` | `[]` | globs (matched on the path and on the basename) of extra gitignored files to link, for example `["*.db"]` |
 | `postenter_after` | `[]` | argv lists run in the worktree after the links, for example `[["sh", "-c", "make setup"]]` |
 | `session_end_after` | `[]` | argv lists run after automerge and cleanup, the SessionEnd payload on stdin |
 | `remote` | `"origin"` | the remote to fetch from and push to |
+
+## Where the ledgers land
+
+Crashes, timeouts and, for a Stop gate, chain caps are appended to `hook-health.jsonl`; every
+refusal is counted in `door-refusals.jsonl` next to it. By default both sit in the plugin's data
+directory (`$CLAUDE_PLUGIN_DATA`, which Claude Code keeps at `~/.claude/plugins/data/worktree-kit-trimwrit/`),
+or in `~/.claude/trimwrit-gates/` when that variable is not set. The `trace` section of
+`trimwrit-gates.json` moves them: `ledger` is the path of the health file (the refusal file stays
+beside it), and `witness_module` is a Python file exposing `log(door, event, reason_class,
+session_id)` that counts refusals instead of `door-refusals.jsonl`.
 
 ## Proof
 

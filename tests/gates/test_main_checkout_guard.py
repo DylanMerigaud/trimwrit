@@ -21,7 +21,8 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 HOOK = os.path.join(ROOT, "plugins", "main-checkout-guard", "scripts", "git_hub_guard.py")
-GIT_HOME = tempfile.mkdtemp(prefix="git-hub-guard-gitconfig-")
+GIT_HOME = None          # set by setUpModule, removed by tearDownModule
+_SAVED_ENV = {}
 
 def clean_env(extra=None):
     """No inherited GIT_* (a test run from inside a git hook carries GIT_DIR and GIT_INDEX_FILE)
@@ -90,10 +91,27 @@ def run_hook(command, cwd, home, tool="Bash", raw=None):
                           capture_output=True, text=True, env=clean_env(), cwd=ROOT, timeout=60)
 
 
-os.environ.update({"HOME": GIT_HOME, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
-for _k in [k for k in os.environ if k.startswith("GIT_") and k not in
-           ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM")]:
-    del os.environ[_k]
+def setUpModule():
+    """Isolate this module's process environment, and put it back afterwards: the in-process
+    judge runs git with os.environ, but nothing here may leak into the rest of the session."""
+    global GIT_HOME
+    GIT_HOME = tempfile.mkdtemp(prefix="git-hub-guard-gitconfig-")
+    _SAVED_ENV.clear()
+    _SAVED_ENV.update(os.environ)
+    os.environ.update({"HOME": GIT_HOME, "GIT_CONFIG_GLOBAL": os.devnull,
+                       "GIT_CONFIG_NOSYSTEM": "1"})
+    for k in [k for k in os.environ if k.startswith("GIT_") and k not in
+              ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM")]:
+        del os.environ[k]
+
+
+def tearDownModule():
+    global GIT_HOME
+    os.environ.clear()
+    os.environ.update(_SAVED_ENV)
+    shutil.rmtree(GIT_HOME, ignore_errors=True)
+    GIT_HOME = None
+
 
 _MOD = []
 
@@ -619,7 +637,7 @@ class ConfiguredRoot(unittest.TestCase):
                "remedy_main_checkout": "run the sync script, nothing else"}
         r = run_hook("git checkout -- .", self.repo, self.home(cfg))
         self.assertEqual(r.returncode, 2, r.stderr)
-        self.assertIn("On 2026-01-01 a checkout wiped work. This door exists since.", r.stderr)
+        self.assertIn("Why this door exists: On 2026-01-01 a checkout wiped work.", r.stderr)
         self.assertIn("run the sync script, nothing else", r.stderr)
 
     def test_with_nothing_configured_the_default_texts_apply(self):
@@ -638,6 +656,22 @@ class ConfiguredRoot(unittest.TestCase):
         self.assertEqual((r.returncode, r.stderr), (0, ""))
         r = run_hook("git branch -D trunk", self.trunk, home)
         self.assertEqual(r.returncode, 2, r.stderr)
+
+    def test_a_note_reads_naturally_after_its_label(self):
+        cfg = {"protected_roots": [self.repo], "note": "A checkout once wiped work."}
+        r = run_hook("git checkout -- .", self.repo, self.home(cfg))
+        self.assertIn("Why this door exists: A checkout once wiped work.", r.stderr)
+        self.assertNotIn("This door exists since", r.stderr)
+
+    def test_reasons_name_the_configured_default_branch_not_main(self):
+        home = self.home({"default_branch": "trunk"})
+        for command in ("git push --force origin trunk", "git branch -D trunk",
+                        "git commit -m x", "git checkout feature", "git merge feature"):
+            r = run_hook(command, self.trunk, home)
+            self.assertEqual(r.returncode, 2, (command, r.stderr))
+            why = [l for l in r.stderr.splitlines() if l.startswith("Why:")][0]
+            self.assertIn("trunk", why, command)
+            self.assertNotRegex(why, r"\bmain\b(?! checkout)", command)
 
 
 if __name__ == "__main__":

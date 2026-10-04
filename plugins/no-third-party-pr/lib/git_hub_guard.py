@@ -1118,7 +1118,10 @@ def j_branch(args, t):
     return None
 
 
-PUSH_MAIN = re.compile(r"^refs/remotes/[^/]+/main$")
+
+
+def push_dest_is_default(dest):
+    return re.match(r"^refs/remotes/[^/]+/" + re.escape(DEFAULT_BRANCH) + "$", dest) is not None
 
 
 def j_push(args, t):
@@ -1166,7 +1169,7 @@ def j_push(args, t):
             return ref("`git push --all --force` force-pushes main too")
         dest = t.push_dest()
         if dest is not None:
-            if PUSH_MAIN.match(dest):
+            if push_dest_is_default(dest):
                 return ref("`git push --force` from main force-pushes the remote main")
         elif t.branch() in (None, DEFAULT_BRANCH):
             return ref("`git push --force` from main force-pushes the remote main")
@@ -2188,6 +2191,15 @@ def unwrap(node):
 # The door.
 # ---------------------------------------------------------------------------------------------
 
+def trunk_text(text):
+    """The reasons are written for a trunk called main. Say the configured default branch
+    instead, except in "main checkout" and "main working tree", where main means the primary
+    working tree and not a branch."""
+    if DEFAULT_BRANCH == "main":
+        return text
+    return re.sub(r"\bmain\b(?! (?:checkout|working tree))", lambda m: DEFAULT_BRANCH, text)
+
+
 def render(findings):
     lines = ["git-hub-guard REFUSED this Bash call. Nothing ran."]
     for f in findings:
@@ -2197,11 +2209,12 @@ def render(findings):
         if f.note:
             lines.append("Unresolved: " + f.note + ". This session runs inside a protected "
                          "repo, so the door fails closed; spell the directory out literally.")
-        lines.append("Why: " + f.why + ".")
+        lines.append("Why: " + trunk_text(f.why) + ".")
         lines.append("Do instead: " + f.remedy)
     lines.append("")
     if NOTE:
-        lines.append(NOTE + " This door exists since.")
+        lines.append("Why this door exists: " + NOTE.rstrip() + ("" if NOTE.rstrip().endswith(
+            (".", "!", "?")) else "."))
     lines.append("There is no bypass (no environment variable, no marker file, no flag), and "
                  ".claude/auto-worktree-off does not disarm this door.")
     return "\n".join(lines) + "\n"

@@ -32,7 +32,8 @@
 #
 # Repositories: the lines of the configured `roster` file; with no roster, the repository of the
 # current directory only. The ages file is the configured `ages_file`, else
-# ${CLAUDE_PLUGIN_DATA:-$HOME/.claude/trimwrit-gates}/worktree-ages.tsv.
+# $HOME/.claude/trimwrit-gates/worktree-ages.tsv (a fixed path: cleanup.sh runs in the hook
+# with CLAUDE_PLUGIN_DATA set and report.sh by hand without it, and both must read one file).
 #
 # Usage: bash <plugin root>/scripts/report.sh
 # Compatible with /bin/bash 3.2.
@@ -46,7 +47,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 load_config "$PWD"
 REMOTE="$cfg_remote"
 AGES="$cfg_ages"
-[ -n "$AGES" ] || AGES="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/trimwrit-gates}/worktree-ages.tsv"
+[ -n "$AGES" ] || AGES="$HOME/.claude/trimwrit-gates/worktree-ages.tsv"
 mkdir -p "$(dirname "$AGES")" 2>/dev/null || true
 [ -f "$AGES" ] || printf '# path\tfirst_seen\n' > "$AGES" 2>/dev/null || true
 
