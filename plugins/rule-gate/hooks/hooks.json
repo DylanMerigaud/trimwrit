@@ -1,0 +1,17 @@
+{
+  "description": "rule-gate: a final message that announces a new rule names the code that holds it",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/rule_gate.py\"",
+            "timeout": 10,
+            "statusMessage": "Announcing a rule with no door?"
+          }
+        ]
+      }
+    ]
+  }
+}

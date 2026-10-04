@@ -1,0 +1,6 @@
+{"section": "rule-gate", "defaults": {
+  "phrase_patterns_extra": [],
+  "vendor_names": ["LinkedIn", "X", "Twitter", "Google", "GitHub", "Vercel", "Stripe", "Anthropic", "OpenAI", "Meta", "TikTok", "Instagram", "YouTube", "Cloudflare", "Apple", "Microsoft", "Slack", "AWS"],
+  "vendor_names_extra": [],
+  "enforcer_path_prefixes": [".claude", ".github", "hooks", "plugins", "scripts", "tests"],
+  "reason_suffix": ""}}

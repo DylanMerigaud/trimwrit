@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "rule-gate",
+  "displayName": "rule-gate",
+  "description": "Refuses to end a turn that announces a new behavioural rule (from now on, never again, every X must) without naming the code that enforces it.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Dylan Merigaud",
+    "url": "https://github.com/DylanMerigaud"
+  },
+  "homepage": "https://github.com/DylanMerigaud/trimwrit/tree/main/plugins/rule-gate",
+  "repository": "https://github.com/DylanMerigaud/trimwrit",
+  "license": "MIT",
+  "keywords": [
+    "rules",
+    "enforcement",
+    "stop-hook",
+    "harness",
+    "gate"
+  ],
+  "experimental": {
+    "evals": "evals"
+  }
+}
