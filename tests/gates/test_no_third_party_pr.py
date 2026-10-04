@@ -556,3 +556,93 @@ def test_no_exemption_command_means_no_exemption(repos):
     found = gate.decide(EXEMPT_OK, repos["own"])
     assert found and found[0]["class"] == "third_party_pr" and "ticket" not in found[0]
     assert gate.exemption((), "a/b", "t", "b", "c") == (False, "no exemption command is configured")
+
+
+# -- fix round 1: three fail-open paths ----------------------------------------------------------
+
+def test_hosts_yml_takes_users_from_configured_hosts_only(repos, tmp_path, monkeypatch):
+    _hosts(tmp_path, monkeypatch,
+           "github.example.com:\n    user: stranger\ngithub.com:\n    user: someone\n")
+    gate.configure_from(dict(DEFAULTS))
+    assert gate.OWNERS == frozenset({"someone"})
+    assert refused("gh pr create -R stranger/lib --fill", repos["own"])
+
+
+def test_a_ghe_login_alone_owns_nothing_on_github(repos, tmp_path, monkeypatch):
+    _hosts(tmp_path, monkeypatch, "ghe.corp.example:\n    user: stranger\n")
+    gate.configure_from(dict(DEFAULTS))
+    assert gate.OWNERS == frozenset()
+    assert refused("gh pr create -R stranger/lib --fill", repos["own"])
+
+
+def test_an_empty_user_line_adds_no_owner(tmp_path, monkeypatch):
+    _hosts(tmp_path, monkeypatch, "github.com:\n    user:\n    git_protocol: ssh\n")
+    gate.configure_from(dict(DEFAULTS))
+    assert gate.OWNERS == frozenset()
+
+
+def test_a_gh_alias_is_gated_when_the_configuration_is_broken(repos, tmp_path):
+    home, fake = tmp_path / "h", tmp_path / "ghhome"
+    (fake / ".config" / "gh").mkdir(parents=True)
+    (fake / ".config" / "gh" / "config.yml").write_text(
+        "aliases:\n    mk: pr create --fill -R psf/requests\n")
+    home.mkdir()
+    (home / "trimwrit-gates.json").write_text("{not json")
+    out = _decision(_run(repos["own"], "gh mk", home, fake))
+    assert out["permissionDecision"] == "deny"
+    assert "configuration is broken" in out["permissionDecisionReason"]
+
+
+@pytest.mark.parametrize("answer,code", [('{"ok": "false"}', 0), ('{"ok": 1}', 0),
+                                         ('{"ok": true}', 3)])
+def test_only_a_true_ok_with_exit_zero_allows(answer, code, tmp_path):
+    script = tmp_path / "e.py"
+    script.write_text("import sys\nprint({!r})\nsys.exit({})\n".format(answer, code))
+    ok, reason = gate.exemption([sys.executable, str(script)], "a/b", "t", "b", "c")
+    assert ok is False, reason
+    if code:
+        assert "the exemption command failed" in reason
+
+
+def test_a_true_ok_with_exit_zero_allows(tmp_path):
+    script = tmp_path / "e.py"
+    script.write_text("print('{\"ok\": true, \"reason\": \"fine\"}')\n")
+    assert gate.exemption([sys.executable, str(script)], "a/b", "t", "b", "c") == (True, "fine")
+
+
+def test_the_exemption_timeout_fits_inside_the_hook_timeout():
+    assert gate.EXEMPTION_TIMEOUT_S < gate.TIMEOUT_S
+
+
+def test_a_slow_exemption_reads_as_its_failure_in_the_refusal(exempt, repos, monkeypatch):
+    exempt.answer({"mode": "sleep"})
+    gate.configure_from(dict(OWNED, exemption_command=exempt.cmd_))
+    monkeypatch.setattr(gate, "EXEMPTION_TIMEOUT_S", 1)
+    text = gate.reason_text(gate.decide(EXEMPT_OK, repos["own"]))
+    assert "Ticket: the exemption command failed" in text
+
+
+def _inproc_body(monkeypatch, repos):
+    monkeypatch.setattr(gate.trace, "read_payload", lambda: _payload(
+        repos["own"], "gh pr create -R psf/requests --fill"))
+    monkeypatch.setattr(gate.trace, "plugin_settings", lambda *a, **k: OWNED)
+
+
+def test_the_deny_is_printed_before_any_ledger_write(repos, monkeypatch, capsys):
+    seen = []
+    monkeypatch.setattr(gate.trace, "witness",
+                        lambda *a, **k: seen.append(capsys.readouterr().out))
+    _inproc_body(monkeypatch, repos)
+    assert gate.body() == 0
+    assert seen and "permissionDecision" in seen[0]
+
+
+def test_a_failing_ledger_cannot_turn_a_deny_into_an_allow(repos, monkeypatch, capsys):
+    def boom(*a, **k):
+        raise RuntimeError("ledger down")
+    monkeypatch.setattr(gate.trace, "witness", boom)
+    _inproc_body(monkeypatch, repos)
+    assert gate.body() == 0
+    out = capsys.readouterr()
+    assert json.loads(out.out)["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "ledger down" in out.err

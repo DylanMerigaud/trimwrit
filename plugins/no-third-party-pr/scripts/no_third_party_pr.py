@@ -81,7 +81,7 @@ HOOK = "third_party_pr_gate.py"
 DOOR = "third-party-pr"
 TIMEOUT_S = 8
 GIT_TIMEOUT_S = 3
-EXEMPTION_TIMEOUT_S = 10
+EXEMPTION_TIMEOUT_S = 6   # under TIMEOUT_S and the hook's 10s, so a slow command reads as its failure
 PARSER_PATH = os.path.join(PLUGIN_ROOT, "lib", "git_hub_guard.py")
 SCRIPT_MAX_BYTES = 256 * 1024
 
@@ -187,25 +187,39 @@ def parse_repo(text):
     return None
 
 
-def gh_hosts_users(path=None):
-    """The `user:` of each host block of gh's hosts.yml, [] when unreadable."""
+def gh_hosts_users(hosts, path=None):
+    """The `user:` of each host block of gh's hosts.yml whose host is in `hosts`, [] when
+    unreadable. A block is a top-level `host:` line and the indented lines under it."""
     path = path or os.path.expanduser(os.path.join("~", ".config", "gh", "hosts.yml"))
     try:
         with open(path, encoding="utf-8") as fh:
-            text = fh.read()
+            lines = fh.read().splitlines()
     except (OSError, UnicodeDecodeError):
         return []
-    return re.findall(r"^\s+user:\s*(\S+)", text, re.M)
+    out, inside = [], False
+    for line in lines:
+        m = re.match(r"^([^\s#][^:\s]*):[ \t]*$", line)
+        if m:
+            inside = m.group(1).strip("'\"").lower() in hosts
+            continue
+        if not line[:1].isspace():
+            inside = False
+            continue
+        u = re.match(r"^[ \t]+user:[ \t]*(\S+)[ \t]*$", line)
+        if inside and u:
+            out.append(u.group(1))
+    return out
 
 
 def configure_from(cfg):
     """Apply one plugin_settings() dict to the module globals the judges read."""
     global OWNERS, GITHUB_HOSTS, EXEMPTION_COMMAND, NOTE, REASON_EXTRA
+    hosts = frozenset(str(h).strip().lower() for h in cfg.get("hosts") or ())
     owners = [str(o).strip().lower() for o in cfg.get("owners") or () if str(o).strip()]
     if not owners:
-        owners = [u.strip("'\"").lower() for u in gh_hosts_users()]
+        owners = [u.strip("'\"").lower() for u in gh_hosts_users(hosts)]
     OWNERS = frozenset(o for o in owners if o)
-    GITHUB_HOSTS = frozenset(str(h).strip().lower() for h in cfg.get("hosts") or ())
+    GITHUB_HOSTS = hosts
     EXEMPTION_COMMAND = tuple(cfg.get("exemption_command") or ())
     NOTE = cfg.get("note") or ""
     REASON_EXTRA = cfg.get("reason_extra") or ""
@@ -855,7 +869,11 @@ def exemption(cmd, repo, title, body, command):
         answer = json.loads(out.stdout or "{}")
         if not isinstance(answer, dict):
             return False, "the exemption command failed: the answer is not a JSON object"
-        return bool(answer.get("ok")), str(answer.get("reason") or "no reason given")
+        reason = str(answer.get("reason") or "no reason given")
+        if out.returncode != 0:
+            return False, "the exemption command failed: exit {} ({})".format(
+                out.returncode, reason)
+        return answer.get("ok") is True, reason
     except (OSError, ValueError, subprocess.TimeoutExpired) as e:
         return False, "the exemption command failed: {}".format(e)
 
@@ -965,7 +983,19 @@ def deny(reason):
         "hookEventName": "PreToolUse",
         "permissionDecision": "deny",
         "permissionDecisionReason": reason}}))
-    sys.exit(0)
+    sys.stdout.flush()
+
+
+def record(outcome, detail, payload, klass):
+    """The rows of a refusal, written AFTER the decision is printed. A ledger failure is said on
+    stderr and never prints a second document next to the deny."""
+    try:
+        if outcome:
+            trace.trace(HOOK, "PreToolUse", outcome, payload, detail=detail,
+                        autofix=trace.autofix(HOOK, ok=False, detail=detail))
+        trace.witness(DOOR, "PreToolUse", klass, payload)
+    except Exception as e:  # noqa: BLE001
+        sys.stderr.write("no-third-party-pr: could not record the refusal: {}\n".format(e))
 
 
 def body():
@@ -980,27 +1010,23 @@ def body():
         configure_from(trace.plugin_settings(payload, root=PLUGIN_ROOT))
     except config.ConfigError as exc:
         # Fail closed: a broken configuration cannot tell whose repository this is.
-        if not (PR_TEXT_RE.search(command) or SCRIPT_RUN_RE.search(command)):
+        if not needs_reading(command, read_gh_aliases()):
             raise
         detail = "config error: {}".format(exc)
-        trace.trace(HOOK, "PreToolUse", "crash", payload, detail=detail,
-                    autofix=trace.autofix(HOOK, ok=False, detail=detail))
-        trace.witness(DOOR, "PreToolUse", "config_error", payload)
         deny("refused: third-party-pr. Nothing ran.\n\nCommand: {}\n\nThe configuration is "
              "broken ({}), so the gate cannot tell whose repository this is and fails closed. "
              "Fix trimwrit-gates.json (user layer ~/.claude/trimwrit-gates.json, project layer "
              "<project>/.claude/trimwrit-gates.json). No bypass. (no-third-party-pr)".format(
                  " ".join(command.split())[:300], str(exc)[:300]))
+        record("crash", detail, payload, "config_error")
+        return 0
     found = decide(command, payload.get("cwd") or os.getcwd())
     if not found:
         return 0
+    deny(reason_text(found))  # the decision is out before any ledger write can fail
     crash = [f for f in found if f["class"] == "door_crash"]
-    if crash:
-        detail = crash[0]["why"]
-        trace.trace(HOOK, "PreToolUse", "crash", payload, detail=detail,
-                    autofix=trace.autofix(HOOK, ok=False, detail=detail))
-    trace.witness(DOOR, "PreToolUse", found[0]["class"], payload)
-    deny(reason_text(found))
+    record("crash" if crash else None, crash[0]["why"] if crash else "", payload,
+           found[0]["class"])
     return 0
 
 
