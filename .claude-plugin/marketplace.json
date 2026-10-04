@@ -85,6 +85,16 @@
       "license": "MIT",
       "category": "productivity",
       "tags": ["git", "worktree", "safety", "pretooluse", "gate"]
+    },
+    {
+      "name": "no-third-party-pr",
+      "source": "./plugins/no-third-party-pr",
+      "description": "Refuses opening a pull request on a GitHub repository you do not own, whatever form the command takes (gh, gh api, curl, a script, an alias); one optional exemption command decides the exceptions.",
+      "version": "0.1.0",
+      "author": { "name": "Dylan Merigaud" },
+      "license": "MIT",
+      "category": "productivity",
+      "tags": ["github", "pull-request", "safety", "pretooluse", "gate"]
     }
   ]
 }

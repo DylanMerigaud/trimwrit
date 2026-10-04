@@ -1,0 +1,17 @@
+{
+  "description": "no-third-party-pr: no pull request on a GitHub repository you do not own",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/no_third_party_pr.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

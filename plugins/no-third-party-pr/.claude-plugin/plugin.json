@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "no-third-party-pr",
+  "displayName": "no-third-party-pr",
+  "description": "Refuses opening a pull request on a GitHub repository you do not own, whatever form the command takes (gh, gh api, curl, a script, an alias); one optional exemption command decides the exceptions.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Dylan Merigaud",
+    "url": "https://github.com/DylanMerigaud"
+  },
+  "homepage": "https://github.com/DylanMerigaud/trimwrit/tree/main/plugins/no-third-party-pr",
+  "repository": "https://github.com/DylanMerigaud/trimwrit",
+  "license": "MIT",
+  "keywords": [
+    "github",
+    "pull-request",
+    "safety",
+    "pretooluse",
+    "gate"
+  ]
+}

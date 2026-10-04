@@ -1,0 +1,6 @@
+{"section": "no-third-party-pr", "defaults": {
+  "owners": [],
+  "hosts": ["github.com", "www.github.com", "api.github.com", "ssh.github.com"],
+  "exemption_command": [],
+  "note": "",
+  "reason_extra": ""}}
