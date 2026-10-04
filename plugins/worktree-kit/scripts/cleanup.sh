@@ -36,40 +36,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Every setting in one python call, printed as shell assignments. A config error lands in
-# CFG_ERROR and the defaults of defaults.json apply: the script never fails over a bad file.
-load_config() {
-  local out
-  out="$(python3 - "$ROOT" "$1" <<'PY' 2>/dev/null
-import json, os, shlex, sys
-root, cwd = sys.argv[1], sys.argv[2]
-sys.path.insert(0, root)
-with open(os.path.join(root, "defaults.json"), encoding="utf-8") as fh:
-    cfg = json.load(fh)["defaults"]
-err = ""
-try:
-    from gatekit import config
-    got = config.load_plugin({"cwd": cwd}, None, root)
-    for key in ("roster", "ages_file", "remote"):
-        if not isinstance(got[key], str):
-            raise config.ConfigError("{} must be a string".format(key))
-    cfg = got
-except Exception as e:
-    err = "{}: {}".format(type(e).__name__, e).replace("\n", " ")[:300]
-for name, value in (("CFG_ERROR", err), ("CFG_ROSTER", os.path.expanduser(cfg["roster"])),
-                    ("CFG_AGES", os.path.expanduser(cfg["ages_file"])),
-                    ("CFG_REMOTE", cfg["remote"])):
-    print("{}={}".format(name, shlex.quote(value)))
-PY
-)"
-  CFG_ERROR="python3 failed"; CFG_ROSTER=""; CFG_AGES=""; CFG_REMOTE="origin"
-  case "$out" in
-    CFG_ERROR=*) eval "$out" ;;
-  esac
-  if [ -n "$CFG_ERROR" ]; then
-    echo "worktree-kit: config error, defaults applied: $CFG_ERROR" >&2
-  fi
-}
+# Settings: load_config, validated in one place.
+. "$ROOT/scripts/_config.sh"
 
 input="$(cat 2>/dev/null || true)"
 
@@ -91,7 +59,7 @@ command -v git >/dev/null 2>&1 || exit 0
 git rev-parse --git-dir >/dev/null 2>&1 || exit 0
 
 load_config "$PWD"
-AGES="$CFG_AGES"
+AGES="$cfg_ages"
 [ -n "$AGES" ] || AGES="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/trimwrit-gates}/worktree-ages.tsv"
 
 # Registry entries whose directory no longer exists. No file is touched.

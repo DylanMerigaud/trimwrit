@@ -15,44 +15,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Every setting in one python call, printed as shell assignments. A config error lands in
-# CFG_ERROR and the defaults of defaults.json apply: the hook never fails over a bad file.
-load_config() {
-  local out
-  out="$(python3 - "$ROOT" "$1" <<'PY' 2>/dev/null
-import json, os, shlex, sys
-root, cwd = sys.argv[1], sys.argv[2]
-sys.path.insert(0, root)
-with open(os.path.join(root, "defaults.json"), encoding="utf-8") as fh:
-    cfg = json.load(fh)["defaults"]
-err = ""
-try:
-    from gatekit import config
-    got = config.load_plugin({"cwd": cwd}, None, root)
-    for key in ("roster", "ages_file", "remote"):
-        if not isinstance(got[key], str):
-            raise config.ConfigError("{} must be a string".format(key))
-    if not got["remote"].strip():
-        raise config.ConfigError("remote must not be empty")
-    if not all(isinstance(g, str) for g in got["link_extra"]):
-        raise config.ConfigError("link_extra must be a list of strings")
-    cfg = got
-except Exception as e:
-    err = "{}: {}".format(type(e).__name__, e).replace("\n", " ")[:300]
-for name, value in (("CFG_ERROR", err), ("CFG_ROSTER", os.path.expanduser(cfg["roster"])),
-                    ("CFG_AGES", os.path.expanduser(cfg["ages_file"])),
-                    ("CFG_REMOTE", cfg["remote"]), ("CFG_LINK_EXTRA", "\n".join(cfg["link_extra"]))):
-    print("{}={}".format(name, shlex.quote(value)))
-PY
-)"
-  CFG_ERROR="python3 failed"; CFG_ROSTER=""; CFG_AGES=""; CFG_REMOTE="origin"; CFG_LINK_EXTRA=""
-  case "$out" in
-    CFG_ERROR=*) eval "$out" ;;
-  esac
-  if [ -n "$CFG_ERROR" ]; then
-    echo "worktree-kit: config error, defaults applied: $CFG_ERROR" >&2
-  fi
-}
+# Settings: load_config, validated in one place.
+. "$ROOT/scripts/_config.sh"
 
 # --- read hook input from stdin (cwd + source). jq if present, sed fallback otherwise. ---
 input="$(cat 2>/dev/null || true)"
@@ -115,7 +79,7 @@ emit() {
 # an anomaly, not a choice. No roster configured means no anomaly check.
 if [ ! -f "$toplevel/.claude/auto-worktree" ]; then
   load_config "$toplevel"
-  ROSTER="$CFG_ROSTER"
+  ROSTER="$cfg_roster"
   if [ -n "$ROSTER" ] && [ -f "$ROSTER" ] && grep -qxF "$toplevel" "$ROSTER" 2>/dev/null; then
     warn="AUTO-WORKTREE ANOMALY: this repository is listed in the roster ($ROSTER) as isolating every session, but its marker $toplevel/.claude/auto-worktree is MISSING, so isolation is off and two sessions can overwrite each other in the same tree. Tell the user first, before anything else, and offer to re-arm it (touch $toplevel/.claude/auto-worktree) or to remove the roster line. Do not choose alone."
     emit "$warn"

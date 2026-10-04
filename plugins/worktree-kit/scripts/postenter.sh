@@ -15,44 +15,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Every setting in one python call, printed as shell assignments. A config error lands in
-# CFG_ERROR and the defaults of defaults.json apply: the script never fails over a bad file.
-load_config() {
-  local out
-  out="$(python3 - "$ROOT" "$1" <<'PY' 2>/dev/null
-import json, os, shlex, sys
-root, cwd = sys.argv[1], sys.argv[2]
-sys.path.insert(0, root)
-with open(os.path.join(root, "defaults.json"), encoding="utf-8") as fh:
-    cfg = json.load(fh)["defaults"]
-err = ""
-try:
-    from gatekit import config
-    got = config.load_plugin({"cwd": cwd}, None, root)
-    for key in ("roster", "ages_file", "remote"):
-        if not isinstance(got[key], str):
-            raise config.ConfigError("{} must be a string".format(key))
-    if not got["remote"].strip():
-        raise config.ConfigError("remote must not be empty")
-    if not all(isinstance(g, str) for g in got["link_extra"]):
-        raise config.ConfigError("link_extra must be a list of strings")
-    cfg = got
-except Exception as e:
-    err = "{}: {}".format(type(e).__name__, e).replace("\n", " ")[:300]
-for name, value in (("CFG_ERROR", err), ("CFG_ROSTER", os.path.expanduser(cfg["roster"])),
-                    ("CFG_AGES", os.path.expanduser(cfg["ages_file"])),
-                    ("CFG_REMOTE", cfg["remote"]), ("CFG_LINK_EXTRA", "\n".join(cfg["link_extra"]))):
-    print("{}={}".format(name, shlex.quote(value)))
-PY
-)"
-  CFG_ERROR="python3 failed"; CFG_ROSTER=""; CFG_AGES=""; CFG_REMOTE="origin"; CFG_LINK_EXTRA=""
-  case "$out" in
-    CFG_ERROR=*) eval "$out" ;;
-  esac
-  if [ -n "$CFG_ERROR" ]; then
-    echo "worktree-kit: config error, defaults applied: $CFG_ERROR" >&2
-  fi
-}
+# Settings: load_config, validated in one place.
+. "$ROOT/scripts/_config.sh"
 
 command -v git >/dev/null 2>&1 || { echo "postenter: git not found; skipping." >&2; exit 0; }
 
@@ -62,12 +26,12 @@ WT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 cd "$WT" || exit 0
 
 load_config "$WT"
-REMOTE="$CFG_REMOTE"
+REMOTE="$cfg_remote"
 LINK_EXTRA=()
 while IFS= read -r g; do
   if [ -n "$g" ]; then LINK_EXTRA+=("$g"); fi
 done <<LIST
-$CFG_LINK_EXTRA
+$cfg_link_extra
 LIST
 
 # A file also links when its path or its basename matches a configured link_extra glob.

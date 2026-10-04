@@ -40,54 +40,20 @@ set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Every setting in one python call, printed as shell assignments. A config error lands in
-# CFG_ERROR and the defaults of defaults.json apply: the script never fails over a bad file.
-load_config() {
-  local out
-  out="$(python3 - "$ROOT" "$1" <<'PY' 2>/dev/null
-import json, os, shlex, sys
-root, cwd = sys.argv[1], sys.argv[2]
-sys.path.insert(0, root)
-with open(os.path.join(root, "defaults.json"), encoding="utf-8") as fh:
-    cfg = json.load(fh)["defaults"]
-err = ""
-try:
-    from gatekit import config
-    got = config.load_plugin({"cwd": cwd}, None, root)
-    for key in ("roster", "ages_file", "remote"):
-        if not isinstance(got[key], str):
-            raise config.ConfigError("{} must be a string".format(key))
-    if not got["remote"].strip():
-        raise config.ConfigError("remote must not be empty")
-    cfg = got
-except Exception as e:
-    err = "{}: {}".format(type(e).__name__, e).replace("\n", " ")[:300]
-for name, value in (("CFG_ERROR", err), ("CFG_ROSTER", os.path.expanduser(cfg["roster"])),
-                    ("CFG_AGES", os.path.expanduser(cfg["ages_file"])),
-                    ("CFG_REMOTE", cfg["remote"])):
-    print("{}={}".format(name, shlex.quote(value)))
-PY
-)"
-  CFG_ERROR="python3 failed"; CFG_ROSTER=""; CFG_AGES=""; CFG_REMOTE="origin"
-  case "$out" in
-    CFG_ERROR=*) eval "$out" ;;
-  esac
-  if [ -n "$CFG_ERROR" ]; then
-    echo "worktree-kit: config error, defaults applied: $CFG_ERROR" >&2
-  fi
-}
+# Settings: load_config, validated in one place.
+. "$ROOT/scripts/_config.sh"
 
 load_config "$PWD"
-REMOTE="$CFG_REMOTE"
-AGES="$CFG_AGES"
+REMOTE="$cfg_remote"
+AGES="$cfg_ages"
 [ -n "$AGES" ] || AGES="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/trimwrit-gates}/worktree-ages.tsv"
 mkdir -p "$(dirname "$AGES")" 2>/dev/null || true
 [ -f "$AGES" ] || printf '# path\tfirst_seen\n' > "$AGES" 2>/dev/null || true
 
 # The repositories to walk, one per line.
 REPOS=""
-if [ -n "$CFG_ROSTER" ] && [ -f "$CFG_ROSTER" ]; then
-  REPOS="$(grep -v -e '^[[:space:]]*$' -e '^#' "$CFG_ROSTER" 2>/dev/null || true)"
+if [ -n "$cfg_roster" ] && [ -f "$cfg_roster" ]; then
+  REPOS="$(grep -v -e '^[[:space:]]*$' -e '^#' "$cfg_roster" 2>/dev/null || true)"
 else
   REPOS="$(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{if (!seen) {print substr($0, 10); seen=1}}')"
 fi

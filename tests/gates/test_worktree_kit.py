@@ -499,3 +499,59 @@ def test_session_end_a_broken_config_is_loud_and_exits_zero(sb):
     out = sb.run("session_end.sh", {"cwd": str(wt)}, cwd=wt)
     assert out.returncode == 0
     assert "worktree-kit:" in out.stderr
+
+
+# review fixes
+
+
+@pytest.mark.parametrize("set_head", [False, True])
+def test_automerge_lands_on_the_remote_default_branch_never_the_hubs_branch(sb, set_head):
+    sb.make_hub(gate=0)
+    if set_head:
+        sb.git(sb.hub, "remote", "set-head", "origin", "main")
+    sb.git(sb.hub, "checkout", "-q", "-b", "feat")
+    wt = sb.worktree()
+    sb.commit(wt)
+    head = sb.git(wt, "rev-parse", "HEAD")
+    out = automerge(sb, wt)
+    assert out.returncode == 0
+    assert origin_main(sb) == head
+    probe = subprocess.run(["git", "--git-dir", str(sb.origin), "rev-parse", "--verify", "--quiet",
+                            "refs/heads/feat"], capture_output=True, text=True)
+    assert probe.returncode != 0
+
+
+@pytest.mark.parametrize("remote", ["--upload-pack=touch pwned", "-x", ""])
+def test_a_remote_that_reads_as_an_option_is_refused_loudly(sb, remote):
+    sb.make_hub(gate=0)
+    before = origin_main(sb)
+    wt = sb.worktree()
+    sb.commit(wt)
+    sb.user_config({"remote": remote})
+    out = automerge(sb, wt)
+    assert out.returncode == 0
+    assert "worktree-kit: config error, defaults applied" in out.stderr
+    assert not (sb.root / "pwned").exists() and not (wt / "pwned").exists()
+    # the defaults apply: origin is used, so the branch still lands
+    assert origin_main(sb) != before
+
+
+def test_postenter_still_links_when_python3_itself_fails(sb):
+    sb.make_hub(gitignore=".env.local\n")
+    (sb.hub / ".env.local").write_text("A=1\n")
+    wt = sb.worktree()
+    shim = sb.root / "shim"
+    shim.mkdir()
+    (shim / "python3").write_text("#!/bin/sh\nexit 1\n")
+    (shim / "python3").chmod(0o755)
+    out = sb.run("postenter.sh", None, cwd=wt, PATH="{}:{}".format(shim, os.environ["PATH"]))
+    assert out.returncode == 0
+    assert "config error, defaults applied: python3 failed" in out.stderr
+    assert (wt / ".env.local").is_symlink()
+
+
+def test_a_malformed_argv_list_is_a_config_error(sb):
+    hub = sb.make_hub(marker=True)
+    sb.user_config({"postenter_after": [["ok"], "not-a-list"]})
+    out = sb.run("autostart.sh", {"cwd": str(hub), "source": "startup"})
+    assert out.returncode == 0 and "AUTO-WORKTREE:" in context(out)
