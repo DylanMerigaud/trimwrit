@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "main-checkout-guard",
+  "displayName": "main-checkout-guard",
+  "description": "Refuses destructive git on the main checkout of a repository opted into worktree isolation (.claude/auto-worktree): checkout or restore over local changes, reset --hard, clean, stash drops, history rewrites, force pushes of the default branch. Reads the whole bash command, aliases and subshells included.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Dylan Merigaud",
+    "url": "https://github.com/DylanMerigaud"
+  },
+  "homepage": "https://github.com/DylanMerigaud/trimwrit/tree/main/plugins/main-checkout-guard",
+  "repository": "https://github.com/DylanMerigaud/trimwrit",
+  "license": "MIT",
+  "keywords": [
+    "git",
+    "worktree",
+    "safety",
+    "pretooluse",
+    "gate"
+  ]
+}

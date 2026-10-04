@@ -75,6 +75,16 @@
       "license": "MIT",
       "category": "productivity",
       "tags": ["rules", "enforcement", "stop-hook", "harness", "gate"]
+    },
+    {
+      "name": "main-checkout-guard",
+      "source": "./plugins/main-checkout-guard",
+      "description": "Refuses destructive git on the main checkout of a repository opted into worktree isolation (.claude/auto-worktree): checkout or restore over local changes, reset --hard, clean, stash drops, history rewrites, force pushes of the default branch. Reads the whole bash command, aliases and subshells included.",
+      "version": "0.1.0",
+      "author": { "name": "Dylan Merigaud" },
+      "license": "MIT",
+      "category": "productivity",
+      "tags": ["git", "worktree", "safety", "pretooluse", "gate"]
     }
   ]
 }

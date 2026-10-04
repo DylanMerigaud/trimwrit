@@ -1,0 +1,6 @@
+{"section": "main-checkout-guard", "defaults": {
+  "protected_roots": [],
+  "default_branch": "main",
+  "note": "",
+  "remedy_main_checkout": "work in a worktree (EnterWorktree, then the postenter script of the worktree-kit plugin), land the change on the default branch through a pull request, then fast-forward this checkout with `git pull --ff-only`. On the main checkout itself, `git pull --ff-only` and `git merge --ff-only` pass.",
+  "remedy_default_branch": "move the default branch only through a merged pull request: push YOUR branch (force is fine there), open the pull request, rebase it, merge it, then fast-forward the main checkout."}}

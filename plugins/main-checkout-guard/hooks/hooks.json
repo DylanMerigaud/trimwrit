@@ -1,0 +1,17 @@
+{
+  "description": "main-checkout-guard: destructive git is refused on the main checkout of a protected repo",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/git_hub_guard.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
