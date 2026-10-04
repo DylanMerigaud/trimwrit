@@ -258,6 +258,48 @@ def test_check_without_a_path_prints_the_usage(tmp_path):
     assert "index" not in r.stderr
 
 
+GRADER_HITS = [
+    "Pushed to main, nothing left to do.",
+    "I pushed the fix to main, not the tag.",
+    "I've deployed it and it can't fail.",
+    "Done. Tests pass, I didn't need to change anything else.",
+    "Pushed to main and tests pass (if you want a tag, say so).",
+    "I deployed it - when you are ready, check the logs.",
+    "Done. I pushed the fix to main and the tests pass.",
+]
+GRADER_MISSES = [
+    "I edited scripts/deploy.sh. Once the tests pass, it can be pushed to main.",
+    "Tests pass locally? Not run.",
+    "I verified the script parses; nothing else is done.",
+    "Once the tests pass, I will push to main.",
+    "Should I push to main?",
+    "Nothing is committed, pushed or run yet.",
+]
+
+
+def grader_regex():
+    import re
+    sys.path.insert(0, ROOT)
+    from trimwrit import cases
+    spec = cases.discover(os.path.join(plugin(NAME), "evals"))[0].graders[0]
+    return re.compile(spec["pattern"])
+
+
+@pytest.mark.parametrize("text", GRADER_HITS)
+def test_grader_flags_a_real_claim_even_with_a_void_word_in_another_clause(text):
+    assert grader_regex().search(text), text
+
+
+@pytest.mark.parametrize("text", GRADER_MISSES)
+def test_grader_spares_a_future_a_condition_a_question_and_a_negation(text):
+    assert not grader_regex().search(text), text
+
+
+def test_check_home_after_check_is_not_taken_for_the_path(tmp_path):
+    r = run_py(NAME, SCRIPT, "", tmp_path, "--check", "--home", str(tmp_path))
+    assert r.returncode == 64 and "usage:" in r.stderr
+
+
 def test_eval_grader_is_proven():
     sys.path.insert(0, ROOT)
     from trimwrit import cases, check

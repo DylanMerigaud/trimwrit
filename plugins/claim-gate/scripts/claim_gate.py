@@ -318,7 +318,7 @@ def main():
     trace.configure(sys.argv)
     if "--check" in sys.argv:
         i = sys.argv.index("--check")
-        if i + 1 >= len(sys.argv):
+        if i + 1 >= len(sys.argv) or sys.argv[i + 1].startswith("--"):
             sys.stderr.write("usage: claim_gate.py --check TRANSCRIPT.jsonl [--home DIR]\n")
             return 64
         try:
