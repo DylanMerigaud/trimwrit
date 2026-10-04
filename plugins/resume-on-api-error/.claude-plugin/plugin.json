@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "resume-on-api-error",
+  "displayName": "resume-on-api-error",
+  "description": "When a turn ends on an API error, types a continue message into the GNU screen or tmux pane hosting the session, after a delay; never on an authentication or billing error.",
+  "version": "0.1.0",
+  "author": { "name": "Dylan Merigaud", "url": "https://github.com/DylanMerigaud" },
+  "homepage": "https://github.com/DylanMerigaud/trimwrit/tree/main/plugins/resume-on-api-error",
+  "repository": "https://github.com/DylanMerigaud/trimwrit",
+  "license": "MIT",
+  "keywords": ["resume", "api-error", "stopfailure", "screen", "tmux"]
+}

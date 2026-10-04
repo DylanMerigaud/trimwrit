@@ -1,0 +1,6 @@
+{
+  "description": "resume-on-api-error: a turn that died on an API error resumes itself",
+  "hooks": {
+    "StopFailure": [{"hooks": [{"type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/resume_on_api_error.sh\"", "timeout": 10, "async": true}]}]
+  }
+}

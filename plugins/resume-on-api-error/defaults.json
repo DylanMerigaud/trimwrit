@@ -1,0 +1,1 @@
+{"section": "resume-on-api-error", "defaults": {"log": "", "vim_mode": false, "delay_s": 60, "rate_limit_delay_s": 120, "text": "continue: the previous turn ended on an API error; resume exactly where you were and retry what failed"}}
