@@ -39,6 +39,20 @@
 # Compatible with /bin/bash 3.2.
 set -u
 
+# A reader that stops early (`| head`) closes the pipe. The signal is ignored here so every
+# shell, whatever it inherited, reaches the same path: a failed write to stdout ends the report
+# quietly with exit 0, instead of a SIGPIPE death (exit 141) or, where the parent already
+# ignored the signal, one "write error: Broken pipe" per remaining line.
+trap '' PIPE
+
+# Every line meant for the reader goes through say. A failed write leaves with 141, from a
+# pipeline subshell too (the line after its loop passes it on), and the EXIT trap turns that
+# one status into a quiet 0.
+say() {
+  printf "$@" 2>/dev/null || exit 141
+}
+trap '[ "$?" -eq 141 ] && exit 0' EXIT
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Settings: load_config, validated in one place.
@@ -78,9 +92,9 @@ default_ref() {
   printf '%s' "$ref"
 }
 
-printf '%-20s %-34s %6s %9s %9s %6s %9s\n' \
+say '%-20s %-34s %6s %9s %9s %6s %9s\n' \
   "REPO" "WORKTREE" "AGE" "UNPUSHED" "UNMERGED" "DIRTY" "IGNORED"
-printf '%s\n' "----------------------------------------------------------------------------------------------"
+say '%s\n' "----------------------------------------------------------------------------------------------"
 
 while IFS= read -r repo; do
   [ -n "$repo" ] || continue
@@ -121,9 +135,10 @@ while IFS= read -r repo; do
                awk '{s+=$1} END {if (s>1024) printf "%dMB", s/1024; else printf "%dKB", s}')
     fi
 
-    printf '%-20s %-34s %6s %9s %9s %6s %9s\n' \
+    say '%-20s %-34s %6s %9s %9s %6s %9s\n' \
       "$(basename "$repo")" "$(basename "$wt")" "$age" "$unpushed" "$unmerged" "$dirty" "${weight:-0}"
   done
+  [ "$?" -eq 141 ] && exit 141
 done <<LIST
 $REPOS
 LIST
@@ -145,23 +160,23 @@ while IFS= read -r repo; do
     new=$(git -C "$repo" cherry "$head_ref" "$b" 2>/dev/null | awk '$1 == "+"' | wc -l | tr -d ' ')
     if [ "${new:-0}" -gt 0 ] 2>/dev/null; then
       if [ "$first" -eq 1 ]; then
-        printf '\nBRANCHES WITHOUT A WORKTREE, work absent from the remote default branch\n'
-        printf '(merge it or abandon it explicitly, nothing is deleted here):\n'
+        say '\nBRANCHES WITHOUT A WORKTREE, work absent from the remote default branch\n'
+        say '(merge it or abandon it explicitly, nothing is deleted here):\n'
         first=0
       fi
-      printf '  %-24s %s (+%s)\n' "$(basename "$repo")" "$b" "$new"
+      say '  %-24s %s (+%s)\n' "$(basename "$repo")" "$b" "$new"
     fi
   done < <(git -C "$repo" branch --no-merged "$head_ref" --format='%(refname:short)' 2>/dev/null)
 done <<LIST
 $REPOS
 LIST
 
-printf '\n'
-printf 'Nothing was deleted. To remove one, after reading its line:\n'
-printf '    git -C <repo> worktree remove <path>\n'
-printf 'The IGNORED column is the one that cost hours of harvesting: it counts in NEITHER\n'
-printf '"unpushed" NOR "dirty", and the old automatic deletion missed it.\n'
-printf 'The UNMERGED column is PUSHED work nobody reads: it is neither on the default branch nor\n'
-printf 'in any log one consults. A non-zero figure is merged or abandoned explicitly, it is not\n'
-printf 'left to sleep.\n'
+say '\n'
+say 'Nothing was deleted. To remove one, after reading its line:\n'
+say '    git -C <repo> worktree remove <path>\n'
+say 'The IGNORED column is the one that cost hours of harvesting: it counts in NEITHER\n'
+say '"unpushed" NOR "dirty", and the old automatic deletion missed it.\n'
+say 'The UNMERGED column is PUSHED work nobody reads: it is neither on the default branch nor\n'
+say 'in any log one consults. A non-zero figure is merged or abandoned explicitly, it is not\n'
+say 'left to sleep.\n'
 exit 0

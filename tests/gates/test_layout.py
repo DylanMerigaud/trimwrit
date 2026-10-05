@@ -72,7 +72,7 @@ def test_plugin_manifest(name):
     assert m["$schema"] == SCHEMA
     assert m["name"] == name
     assert m["displayName"] == name
-    assert m["version"] == "0.1.0"
+    assert re.fullmatch(r"\d+\.\d+\.\d+", m["version"]), m["version"]
     assert m["author"] == {"name": "Dylan Merigaud", "url": "https://github.com/DylanMerigaud"}
     assert m["homepage"] == REPO + "/tree/main/plugins/" + name
     assert m["repository"] == REPO

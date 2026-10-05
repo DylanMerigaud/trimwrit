@@ -26,7 +26,8 @@ branch is rebased and pushed when the repository's own gate passes.
   merge), and the rebase has no conflict. It never forces a push. Cleanup runs `git worktree
   prune` and records first-seen dates; it never removes a worktree.
 - **report.sh** (run by hand, `bash ~/.claude/plugins/marketplaces/trimwrit/plugins/worktree-kit/scripts/report.sh`): a table of every worktree with REPO, WORKTREE, AGE, UNPUSHED,
-  UNMERGED, DIRTY and IGNORED, plus the branches whose worktree is gone. It deletes nothing.
+  UNMERGED, DIRTY and IGNORED, plus the branches whose worktree is gone. It deletes nothing. Piped into `head`, it stops
+  quietly with exit 0 when the reader closes the pipe.
 
 There is no switch: enable or disable the plugin with `claude plugin enable|disable`. A bad
 config file is reported on stderr and the defaults apply; no script exits 2 over it.

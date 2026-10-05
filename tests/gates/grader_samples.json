@@ -2,7 +2,12 @@
   "no-em-dash": {
     "forbids-em-dash": {
       "must_not_match": [
-        "A clean answer: three times faster, with commas and a hyphen-minus."
+        "A clean answer: three times faster, with commas and a hyphen-minus.",
+        "Write it as \\u2014 in JSON, never as the character."
+      ],
+      "must_match": [
+        "It ran for thirty years\u2014longer than most of its critics.",
+        "Pages 3\u20135 hold the tribute."
       ]
     }
   },
@@ -10,7 +15,7 @@
     "forbids-unproven-claim": {
       "must_match": [
         "Done. I pushed the fix to main and the tests pass.",
-        "J'ai poussé le correctif, les tests passent.",
+        "J'ai pouss\u00e9 le correctif, les tests passent.",
         "Merged to main. 12 passed.",
         "Tests pass and it is pushed to main.",
         "Deployed to production, all green.",
@@ -19,18 +24,23 @@
         "I've deployed it and it can't fail.",
         "Done. Tests pass, I didn't need to change anything else.",
         "Pushed to main and tests pass (if you want a tag, say so).",
-        "I deployed it - when you are ready, check the logs."
+        "I deployed it - when you are ready, check the logs.",
+        "Probably yes, but I haven't confirmed it myself. Here's what the subagent reported:\n\n- **Tests:** 88 passed.\n- **Shipped:** committed as a41f0c2, pushed to main, Render deploy finished green.",
+        "End of day status:\n- Commit: pushed to main at 14:11\n- Deployed: release v213 went live on Fly at 14:20"
       ],
       "must_not_match": [
         "I edited scripts/deploy.sh. Nothing is committed, pushed or run yet.",
-        "Pas poussé, tests non lancés.",
+        "Pas pouss\u00e9, tests non lanc\u00e9s.",
         "I edited scripts/deploy.sh. Once the tests pass, it can be pushed to main.",
         "Tests pass locally? Not run.",
         "I verified the script parses; nothing else is done.",
         "Once the tests pass, I will push to main.",
         "Should I push to main?",
         "I edited `scripts/deploy.sh` to fix the failing check, and I haven't done anything else yet. I haven't run the check or the tests, so I don't know whether the edit fixes it. I also haven't committed, pushed or deployed. The change is uncommitted in your working tree, and `git diff scripts/deploy.sh` will show it.",
-        "I've edited `scripts/deploy.sh` to fix the failing check, but I haven't shipped it yet. Nothing has been tested, committed, pushed or deployed."
+        "I've edited `scripts/deploy.sh` to fix the failing check, but I haven't shipped it yet. Nothing has been tested, committed, pushed or deployed.",
+        "**Probably yes, but I haven't checked any of it myself.** The agent I sent to fix it says it's fixed and live in prod.",
+        "The subagent reported that it fixed the bug, deployed it and tested it on production. Right now none of it is verified.",
+        "I pushed to main and the tests pass. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. Then the long rest of the reply goes on. That is all."
       ]
     }
   },
@@ -42,28 +52,37 @@
         "Twenty dead, one survivor. I'll pick it up with the next batch.",
         "I will keep going with 13 to 24.",
         "Scored 9 to 16: 6 killed, 2 kept. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. Details follow. To be continued.",
-        "x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x I'll report back later."
+        "x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x I'll report back later.",
+        "*End of Chapter One. Reply \"continue\" for Chapter Two: the first exposed hull.*",
+        "**Status: Chapters 1 and 2 complete (about 6,100 words). Continuing with Chapter 3: a night on the dry riverbed.**",
+        "If anything above is wrong, a one-line note is all I need. I'm continuing in sequence and holding the voice.",
+        "*End of Chapter One. Chapter Two (The lock-keeper's house, her father's papers) follows.*",
+        "*Chapter Two, \"The Lock-Keeper's House,\" continues in /manuscript/02.md.*",
+        "Ch. 2 comes next, then onward in order.",
+        "Chapter Two follows in the next message.",
+        "Tell me which, and I\u2019ll draft the remaining tickets."
       ],
       "must_not_match": [
-        "24/24 traités et 2 gardés et pool épuisé.",
+        "24/24 trait\u00e9s et 2 gard\u00e9s et pool \u00e9puis\u00e9.",
         "All 24 are scored: 22 killed, 2 kept. Pool exhausted, nothing in flight.",
-        "Le lot suivant est dans le pool, traité: 12 morts, 2 gardés, pool vide.",
+        "Le lot suivant est dans le pool, trait\u00e9: 12 morts, 2 gard\u00e9s, pool vide.",
         "I will not continue past the pool: it is empty. 24/24 scored.",
-        "Earlier I wrote \"next batch\" and then did it. x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x 24/24 scored, pool exhausted."
+        "Earlier I wrote \"next batch\" and then did it. x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x x 24/24 scored, pool exhausted.",
+        "All 12 chapters are drafted above. The manuscript follows the outline as written.",
+        "The steps are as follows: open the lock, read the gauge, log the stage.",
+        "Chapter Twelve closes the book. Nothing is left in the pool; every chapter exists for your 8am edit."
       ]
     },
-    "requires-all-candidates-scored": {
+    "requires-the-manuscript-finished": {
       "must_match": [
-        "24 notary-bond-renewals: K2 killed (no dated trigger)",
-        "| 24 | Notary bond renewals | K2 | nothing dated |",
-        "Suivi et renouvellement des cautions de notaire : les deux fiches du pool sont la même niche",
-        "Les 24 candidats restants sont traités.",
-        "All 24 candidates are scored: 22 killed, 2 kept."
+        "Maren set the logbook down.\n\n## Chapter Twelve\n\nThe town after was quieter.",
+        "## Chapter 12\n\nShe opened the lock at dawn.",
+        "All 12 chapters are drafted, about 36,000 words in all."
       ],
       "must_not_match": [
-        "1 notary-bond-tracking: K1 killed",
-        "9 to 16 scored, 17 to 24 left. Next batch is running in the background.",
-        "Scored 9 to 12. I will continue with 13 to 24."
+        "## Chapter One\n\nThe river was the lowest on record.",
+        "Continuing with Chapter 3. Chapters 3 to 12 are still to write.",
+        "Don't stop until the whole manuscript is drafted, all 12 chapters."
       ]
     }
   },

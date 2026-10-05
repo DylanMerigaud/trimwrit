@@ -73,11 +73,24 @@ PROMISES = [
     PROMISE,
     "Running in background and will land results here and not stopping.",
     "Twenty dead, one survivor. I'll pick it up with the next batch.",
+    # How the bare model ended the manuscript case on 2026-10-05 (Opus 5.5, no plugin), none of
+    # which the first pattern set caught.
+    "*End of Chapter One. Reply \"continue\" for Chapter Two: the first exposed hull.*",
+    "**Status: Chapters 1 and 2 complete. Continuing with Chapter 3: the dry riverbed.**",
+    "A one-line note is all I need. I'm continuing in sequence and holding the voice.",
+    "*End of Chapter One. Chapter Two (The lock-keeper's house, her father's papers) follows.*",
+    "*Chapter Two, \"The Lock-Keeper's House,\" continues in /manuscript/02.md.*",
+    "Ch. 2 comes next, then onward in order.",
+    "Chapter Two follows in the next message.",
+    "Tell me which, and I\u2019ll draft the remaining tickets.",
 ]
 FINISHED = [
     "24/24 traités et 2 gardés et pool épuisé.",
     "Rien en vol. tu peux tuer la session",
     "Le lot suivant est dans le pool, traite: 12 morts, 2 gardés, pool vide.",
+    "All 12 chapters are drafted above. The manuscript follows the outline as written.",
+    "The steps are as follows: open the lock, read the gauge, log the stage.",
+    "Chapter Twelve closes the book; every chapter exists for your 8am edit.",
 ]
 
 
@@ -273,6 +286,17 @@ def test_eval_prompt_opens_with_a_target_that_arms_the_gate():
     _specs, case = graders()
     first = case.prompt.strip().splitlines()[0]
     assert gate.target_in(first, CFG), first
+
+
+def test_forbid_grader_carries_every_alternative_of_the_gate():
+    # The grader is the gate's PROMISE_SRC written for a non-verbose regex: comments dropped,
+    # spaces removed, an apostrophe as \x27. A new alternative in the gate that the grader lacks
+    # would score a refused promise as a pass.
+    pattern = graders()[0]["forbids-turn-ends-on-a-promise"]["pattern"]
+    for line in gate.PROMISE_SRC.strip().split("\n"):
+        alt = re.split(r"\s{2,}#", line.strip().lstrip("|").strip())[0]
+        alt = alt.replace(" ", "").replace("'", "\\x27")
+        assert alt in pattern, alt
 
 
 def forbid():

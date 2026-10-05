@@ -72,13 +72,24 @@ PROMISE_SRC = r"""
   | je\s+passe\s+au\s+(?:lot|batch|prochain)
   | prochain\s+lot
   | next\s+batch
-  | I(?:'ll|\s+will)\s+(?:continue|keep\s+going|pick\s+(?:it\s+)?up)
+  | I(?:['\u2019]ll|\s+will)\s+(?:continue|keep\s+going|pick\s+(?:it\s+)?up)
   | to\s+be\s+continued
   | je\s+reprends
   | running\s+in\s+(?:the\s+)?background
   | will\s+land
   | not\s+stopping\s+here
-  | I(?:'ll|\s+will)\s+(?:report|follow\s+up)\s+(?:back|later)
+  | I(?:['\u2019]ll|\s+will)\s+(?:report|follow\s+up)\s+(?:back|later)
+  | I(?:['\u2019]ll|\s+will)\s+(?:draft|write|do|finish|score|process|handle|cover)\s+(?:the\s+)?(?:remaining|rest)\b
+  | I(?:['\u2019]m|\s+am)\s+continuing\b                     # "I'm continuing in sequence"
+  | (?:^|(?<=[\n.!?*_]))\s*continuing\s+(?:with|in|on|to)\b   # "Continuing with Chapter 3."
+  | \b(?:follows|comes)\s+next\b                    # "Ch. 2 comes next"
+  | \bup\s+next\b
+  | \bfollows\s*[.)\]*]                             # "Chapter Two (the papers) follows."
+  | \bcontinues\s+in\s+\S                            # "continues in /manuscript/02.md"
+  | in\s+(?:the|my)\s+next\s+(?:message|reply|turn|response)
+  | (?:reply|say|type|answer)\s+\W{0,2}(?:continue|go|next|more)\b   # "Reply "continue" for Chapter Two"
+  | dans\s+(?:le|mon)\s+prochain\s+message
+  | la\s+suite\s+(?:arrive|suit|dans)
 """
 
 FLAGS = re.I | re.X

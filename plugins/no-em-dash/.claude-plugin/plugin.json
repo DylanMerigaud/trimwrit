@@ -3,7 +3,7 @@
   "name": "no-em-dash",
   "displayName": "no-em-dash",
   "description": "Refuses a final message, a file write or a shell write that carries an em dash, an en dash, a figure dash or a horizontal bar. The characters are configurable.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": { "name": "Dylan Merigaud", "url": "https://github.com/DylanMerigaud" },
   "homepage": "https://github.com/DylanMerigaud/trimwrit/tree/main/plugins/no-em-dash",
   "repository": "https://github.com/DylanMerigaud/trimwrit",

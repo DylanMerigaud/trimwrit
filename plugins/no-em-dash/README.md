@@ -47,4 +47,5 @@ session_id)` that counts refusals instead of `door-refusals.jsonl`.
 
 `tests/gates/test_no_em_dash.py` replays both hooks through their stdin contract. The eval case
 `evals/no-em-dash-in-prose` measures the Stop hook with `claude plugin eval`: a plugin arm and a
-baseline arm on a prompt that pulls dashes in, graded by a regex on the final message.
+baseline arm on a prompt that pulls dashes in (a warm, funny tribute: the bare model wrote one
+in 3 runs of 3), graded by a regex on the final message.

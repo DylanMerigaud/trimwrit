@@ -16,8 +16,76 @@ class FrontmatterError(Exception):
 _TRUE = ("true", "yes", "on", "1")
 _FALSE = ("false", "no", "off", "0")
 
+# The keys whose double-quoted values are read with YAML's backslash escapes. A grader's proof
+# samples are the one place a file must be able to CARRY a character it may not CONTAIN: the
+# proof that `forbids-em-dash` fires is a sample holding an em dash, and the hooks of the harness
+# refuse that character in any file. So `must_match: ["a pause \u2014 then"]` is the dash. Only
+# here: a pattern is never decoded, because a double-quoted pattern written as `"\bword"` has
+# always reached `re.compile` verbatim and YAML would turn its `\b` into a backspace.
+ESCAPED_KEYS = ("must_match", "must_not_match")
 
-def _scalar(raw):
+# Characters a rendered sample writes as an escape rather than as itself, for the same reason.
+_WRITE_ESCAPED = (chr(0x2012), chr(0x2013), chr(0x2014), chr(0x2015))
+
+_SIMPLE_ESCAPES = {"0": "\0", "a": "\a", "b": "\b", "t": "\t", "\t": "\t", "n": "\n",
+                   "v": "\v", "f": "\f", "r": "\r", "e": "\x1b", " ": " ", '"': '"',
+                   "/": "/", "\\": "\\", "N": "\x85", "_": "\xa0", "L": "\u2028",
+                   "P": "\u2029"}
+_HEX_ESCAPES = {"x": 2, "u": 4, "U": 8}
+
+
+def _unescape_double(v):
+    """The YAML 1.2 escapes of a double-quoted scalar. An unknown escape raises: a sample that
+    does not mean what it says would prove the wrong text."""
+    out, i = [], 0
+    while i < len(v):
+        ch = v[i]
+        if ch != "\\":
+            out.append(ch)
+            i += 1
+            continue
+        if i + 1 >= len(v):
+            raise FrontmatterError("a double-quoted value ends on a lone backslash: {!r}".format(v))
+        code = v[i + 1]
+        if code in _SIMPLE_ESCAPES:
+            out.append(_SIMPLE_ESCAPES[code])
+            i += 2
+            continue
+        if code in _HEX_ESCAPES:
+            n = _HEX_ESCAPES[code]
+            digits = v[i + 2:i + 2 + n]
+            try:
+                if len(digits) != n:
+                    raise ValueError(digits)
+                out.append(chr(int(digits, 16)))
+            except ValueError:
+                raise FrontmatterError("bad \\{} escape in {!r}".format(code, v))
+            i += 2 + n
+            continue
+        raise FrontmatterError("unknown escape \\{} in {!r}".format(code, v))
+    return "".join(out)
+
+
+def _escape_double(v):
+    """A double-quoted scalar whose escapes give back `v`, the forbidden characters as \\u."""
+    out = []
+    for ch in v:
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == '"':
+            out.append('\\"')
+        elif ch == "\n":
+            out.append("\\n")
+        elif ch == "\t":
+            out.append("\\t")
+        elif ch in _WRITE_ESCAPED:
+            out.append("\\u{:04x}".format(ord(ch)))
+        else:
+            out.append(ch)
+    return '"{}"'.format("".join(out))
+
+
+def _scalar(raw, escapes=False):
     v = raw.strip()
     if not v:
         return ""
@@ -28,10 +96,10 @@ def _scalar(raw):
         # quote character: it round-trips as an extra quote character rather than one real one.
         return v[1:-1].replace("''", "'")
     if v[0] == '"' and len(v) > 1 and v[-1] == '"':
-        return v[1:-1]
+        return _unescape_double(v[1:-1]) if escapes else v[1:-1]
     if v.startswith("[") and v.endswith("]"):
         inner = v[1:-1].strip()
-        return [_scalar(x) for x in _split_inline(inner)] if inner else []
+        return [_scalar(x, escapes) for x in _split_inline(inner)] if inner else []
     low = v.lower()
     if low in _TRUE:
         return True
@@ -93,8 +161,9 @@ def parse_block(text):
             body, i = _block_scalar(lines, i + 1)
             data[key] = body if rest.startswith("|") else " ".join(body.split())
             continue
+        escapes = key in ESCAPED_KEYS
         if rest == "":
-            items, consumed = _block_list(lines, i + 1)
+            items, consumed = _block_list(lines, i + 1, escapes)
             if items is not None:
                 data[key] = items
                 i = consumed
@@ -102,7 +171,7 @@ def parse_block(text):
             data[key] = ""
             i += 1
             continue
-        data[key] = _scalar(rest)
+        data[key] = _scalar(rest, escapes)
         i += 1
     return data
 
@@ -152,7 +221,7 @@ def _list_block_scalar(lines, start, dash_col, keep_trailing_newline):
     return text, i
 
 
-def _block_list(lines, start):
+def _block_list(lines, start, escapes=False):
     items, i = [], start
     while i < len(lines) and lines[i].strip().startswith("- "):
         line = lines[i]
@@ -166,7 +235,7 @@ def _block_list(lines, start):
                                          keep_trailing_newline=(rest == "|"))
             items.append(body)
             continue
-        items.append(_scalar(rest))
+        items.append(_scalar(rest, escapes))
         i += 1
     return (items, i) if items else (None, start)
 
@@ -234,7 +303,7 @@ def _quote(v):
     return "'{}'".format(v.replace("'", "''"))
 
 
-def _render_list_block(k, v):
+def _render_list_block(k, v, escapes=False):
     """A list holding at least one multi-line string, as a dash list with a `- |` block scalar
     for each multi-line item.
 
@@ -247,7 +316,9 @@ def _render_list_block(k, v):
     out = ["{}:".format(k)]
     for x in v:
         s = str(x)
-        if isinstance(x, str) and "\n" in s:
+        if escapes and any(c in s for c in _WRITE_ESCAPED):
+            out.append("- {}".format(_escape_double(s)))
+        elif isinstance(x, str) and "\n" in s:
             core = s.rstrip("\n")
             indicator = "|" if core != s else "|-"
             out.append("- {}".format(indicator))
@@ -267,8 +338,10 @@ def render(data):
         if isinstance(v, bool):
             out.append("{}: {}".format(k, "true" if v else "false"))
         elif isinstance(v, (list, tuple)):
-            if any(isinstance(x, str) and "\n" in x for x in v):
-                out.extend(_render_list_block(k, v))
+            escapes = k in ESCAPED_KEYS and any(
+                isinstance(x, str) and any(c in x for c in _WRITE_ESCAPED) for x in v)
+            if escapes or any(isinstance(x, str) and "\n" in x for x in v):
+                out.extend(_render_list_block(k, v, escapes))
             else:
                 out.append("{}: [{}]".format(
                     k, ", ".join(_quote(str(x)) if _needs_quote(str(x)) else str(x) for x in v)))

@@ -476,6 +476,32 @@ def test_report_walks_the_roster_and_the_age_math_is_python(sb):
     assert row[2].endswith("d") and int(row[2][:-1]) > 2000
 
 
+@pytest.mark.parametrize("ignored", [False, True])
+def test_report_ends_quietly_when_the_reader_closes_the_pipe(sb, ignored):
+    # `report.sh | head` closes the pipe early. Default SIGPIPE killed the report with 141; a
+    # parent that ignores the signal got one "write error: Broken pipe" per remaining line.
+    # The read end is closed before the start so every write fails, whatever the timing.
+    import signal
+    sb.make_hub()
+    sb.worktree("a")
+    sb.worktree("b")
+    r, w = os.pipe()
+    os.close(r)
+
+    def pre():
+        signal.signal(signal.SIGPIPE, signal.SIG_IGN if ignored else signal.SIG_DFL)
+
+    try:
+        out = subprocess.run(["bash", os.path.join(plugin(NAME), "scripts", "report.sh")],
+                             stdin=subprocess.DEVNULL, stdout=w, stderr=subprocess.PIPE,
+                             text=True, env=clean_env(sb.env()), cwd=str(sb.hub), timeout=120,
+                             preexec_fn=pre, restore_signals=False)
+    finally:
+        os.close(w)
+    assert out.returncode == 0
+    assert out.stderr == ""
+
+
 # 7. session end
 
 

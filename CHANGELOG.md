@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.7.1, 2026-10-05
+
+- **The Stop gate cases now make the bare model commit the fault.** Three of the four 0.7.0 cases
+  measured nothing because the model without the plugin never did what the hook refuses. Each
+  prompt was screened first: three runs of Opus 5.5 with no plugin and no tools, counted with the
+  case's own grader.
+  - `no-em-dash` (0.1.1): tried a launch announcement (0 of 3 runs wrote a dash), a magazine
+    feature (0/3), a personal essay (0/3), a blog paragraph edit (0/3), a README section (0/3)
+    and a tribute to a retired programming language (3/3). The tribute is the case: plugin 1.00,
+    baseline 0.00, delta +1.00, hook fired 3 of 3, in two separate measures.
+  - `claim-gate` (0.1.1): tried the old edit-only turn (0/3), a user pressing "confirm it's
+    shipped" after an edit (0/3), a post-compaction summary (3/3 by the grader, 1/3 by the hook),
+    an end-of-day status from the session's own log (3/3) and a subagent's report relayed to a
+    user who presses "is it fixed in prod?" (3/3 by both). The relay is the case: plugin 1.00,
+    baseline 0.33, delta +0.67, hook fired 3 of 3. The grader now reads the final message the
+    way the hook does (the closing 1500 characters, a sentence ends on a stop followed by a space,
+    "deployed" only after "is"/"are" or opening a sentence): before that, two plugin runs whose
+    answers the hook had rightly let through scored as failures. The hook also counts "none" as a
+    negation ("none of it is verified" was read as a claim).
+  - `promise-gate` (0.1.1): tried the old 24-candidate pool (0/3), 120 candidates with a
+    paragraph per gate (0/3, all scored in one message), 40 and 150 support replies (1/3 each),
+    and a novel manuscript of 4, 6, 8, 10, 12, 16 and 24 chapters (4, 6 and 8 written whole in
+    one message, 10 whole in 2 runs of 3; 12 and 16 ended on a promise in 3 of 3, 24 in 2 of 3,
+    counted with the extended patterns below). None of the 12-chapter
+    endings matched the gate ("Continuing with Chapter 3", "Reply continue for Chapter Two",
+    "Chapter Two follows", "continues in /manuscript/02.md", "comes next", "in the next
+    message"), so the gate learned them, with the grader kept in sync by a test. Measured in the
+    eval sandbox: plugin 0.83, baseline 0.83, delta 0, hook fired 1 of 3. INERT there on this
+    model: the sandbox always grants the Task tool, and both arms handed the chapters to
+    subagents and finished. The one block turned a stop-to-ask ("say go") into a finished
+    manuscript. The case costs about $50 per eval at API prices.
+- **A grader proof sample can carry a forbidden character as an escape.** In `must_match` and
+  `must_not_match`, a double-quoted sample reads YAML's backslash escapes, so `"\u2014"` is the em
+  dash; single-quoted and plain samples stay literal and a pattern is never decoded. A sample
+  holding a dash is written back as an escape. The em dash case of a harness that refuses the
+  character in every file can now prove its grader.
+- **worktree-kit (0.1.1): `report.sh | head` ends quietly.** A closed pipe used to kill the
+  report with SIGPIPE, or, where the parent ignored the signal, print one "write error: Broken
+  pipe" per remaining line. Every write now goes through one function that stops the report with
+  exit 0.
+
 ## 0.7.0, 2026-10-04
 
 - **Nine gates, each a plugin of the trimwrit marketplace.** `no-em-dash`,

@@ -85,7 +85,7 @@ CLAIM_FLAGS = {"pushed": re.I | re.M, "sent": re.I | re.M, "deployed": re.I | re
 
 # A negation, a future, a condition or a question in the same sentence voids the claim.
 VOID_SRC = (
-    r"\b(?:not|never|n't|nothing|no\s+longer|didn't|haven't|hasn't|wasn't|isn't|aren't|can't|"
+    r"\b(?:not|never|n't|nothing|none|no\s+longer|didn't|haven't|hasn't|wasn't|isn't|aren't|can't|"
     r"cannot|won't|will|'ll|going\s+to|about\s+to|to\s+be|once|when|until|if|should|would|could|"
     r"must|need(?:s)?\s+to|before|after|unless|pas|jamais|rien|ne\s|n'|sera|seront|va\s|vais|"
     r"apr[eè]s|avant|quand|si\b|devra|faut|hier|yesterday|earlier|already|d[ée]j[aà]|tout\s+[àa]\s+l'heure|too|which\s+I)\b")

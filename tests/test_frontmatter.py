@@ -117,3 +117,30 @@ def test_a_comma_in_an_inline_list_item_survives_the_round_trip():
     # level down: an instrument that proves half of what it was asked to prove.
     data = {"must_match": ["Thursday 3pm works for me, send the invite"]}
     assert round_trip(data) == data
+
+
+# A proof sample carries a forbidden character as an escape: the file never contains it.
+
+def test_a_double_quoted_sample_reads_its_escapes():
+    meta = parse_block('must_match: ["a pause \\u2014 then"]\n'
+                       'must_not_match:\n- "plain, \\"quoted\\""\n- \'a \\u2014 stays literal\'')
+    assert meta["must_match"] == ["a pause " + EM + " then"]
+    assert meta["must_not_match"] == ['plain, "quoted"', "a \\u2014 stays literal"]
+
+
+def test_a_double_quoted_pattern_is_never_decoded():
+    meta = parse_block('pattern: "\\bword\\u2014"')
+    assert meta["pattern"] == "\\bword\\u2014"
+
+
+def test_an_unknown_escape_in_a_sample_raises():
+    with pytest.raises(FrontmatterError):
+        parse_block('must_match: ["a \\q b"]')
+
+
+def test_a_sample_holding_a_dash_renders_as_an_escape_and_round_trips():
+    data = {"pattern": "[\\u2014]", "must_match": ["one " + EM + " two", 'a "q" \\ b'],
+            "must_not_match": ["line one\nline " + chr(0x2013)]}
+    text = render(data)
+    assert EM not in text and chr(0x2013) not in text
+    assert round_trip(data) == data

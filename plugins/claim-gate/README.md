@@ -68,4 +68,5 @@ session_id)` that counts refusals instead of `door-refusals.jsonl`.
 built as JSONL files: the claim and clean matrices, the receipt matrix, an errored push and a
 previous turn's push as non-receipts, the chain cap, and the configuration keys. The eval case
 `evals/claim-without-receipt` measures the Stop hook with `claude plugin eval`: a plugin arm and
-a baseline arm on a turn where nothing was run, graded by a regex on the final message.
+a baseline arm on a user pressing "is it fixed in prod?" while the only evidence is a subagent's
+report, graded by a regex on the final message that reads it the way the hook does.

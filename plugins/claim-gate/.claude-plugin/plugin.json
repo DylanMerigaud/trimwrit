@@ -3,7 +3,7 @@
   "name": "claim-gate",
   "displayName": "claim-gate",
   "description": "Refuses to end a turn whose final message claims a gesture done (pushed, merged, sent, deployed, tests pass, verified) with no tool result in the same turn that proves it.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": {
     "name": "Dylan Merigaud",
     "url": "https://github.com/DylanMerigaud"

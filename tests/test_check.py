@@ -118,3 +118,19 @@ def test_a_proof_sample_is_read_through_the_graders_target():
     problems = check.check_case(Unfenced())
     assert any("must_not_match failed" in p["reason"] for p in problems), (
         "on last_message the quoting refusal must fail the proof, that is the whole point")
+
+
+def test_a_sample_written_as_an_escape_proves_a_dash_grader(tmp_path):
+    # Case 0002 kept one unproven grader because a sample could not hold the dash it proves:
+    # every hook of the harness refuses that character in a file. The escape is the dash.
+    from trimwrit.cases import load_case
+    d = tmp_path / "0002-no-dash"
+    (d / "graders").mkdir(parents=True)
+    (d / "prompt.md").write_text("---\nname: 0002-no-dash\n---\nWrite a sentence.\n")
+    (d / "graders" / "forbids-em-dash.md").write_text(
+        "---\ntype: regex\nname: forbids-em-dash\npattern: '[\\u2014\\u2013]'\n"
+        "match: not_contains\ntarget: last_message\n"
+        'must_match: ["It was late \\u2014 too late."]\n'
+        "must_not_match: ['It was late, too late.', 'write \\u2014 in JSON']\n---\n")
+    assert chr(0x2014) not in (d / "graders" / "forbids-em-dash.md").read_text()
+    assert check.check_case(load_case(str(d))) == []

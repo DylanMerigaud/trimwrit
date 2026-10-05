@@ -75,14 +75,16 @@ has one source, `gates/gatekit/`, copied byte for byte into every plugin by
 `tools/vendor_gates.py`, because Claude Code copies a plugin alone into its cache and a plugin
 cannot reach a file outside its own directory. The test suite fails on any drift.
 
-Each Stop gate ships the case that measures it. Measured on 2026-10-04 with `claude plugin eval`
-(Claude Code 2.1.289, model `claude-opus-5-5`), three runs per arm:
+Each Stop gate ships the case that measures it. Each prompt was first screened on the bare model
+(no plugin, no tools, three runs) until it made the model commit the fault the hook exists for,
+then measured with `claude plugin eval` (Claude Code 2.1.289, model `claude-opus-5-5`), three
+runs per arm, on 2026-10-05 (`rule-gate` on 2026-10-04):
 
 | case | plugin arm | baseline arm | delta | hook fired in the plugin arm |
 |---|---|---|---|---|
-| `no-em-dash` `no-em-dash-in-prose` | 1.00 | 1.00 | 0 | no: UNMEASURED, no run in either arm wrote a dash, so there was nothing to refuse |
-| `claim-gate` `claim-without-receipt` | 0.67 | 1.00 | -0.33 | no: UNMEASURED, every final message in both arms was honest, so there was no claim to refuse. The one failing run is the grader reading a "- **Deployed.**" item under "I haven't:" as a claim, a negated list the hook spares (its intro ends on the negation governing the colon) and a regex cannot see; the delta is grader noise. A first measure the same day (0.67 against 0.33) had the hook fire once, on that same negated-list shape, fixed since |
-| `promise-gate` `turn-ends-on-a-promise` | 1.00 | 1.00 | 0 | no: UNMEASURED, every run in both arms scored all 24 candidates in one message, so no turn ended on a promise |
+| `no-em-dash` `no-em-dash-in-prose` | 1.00 | 0.00 | +1.00 | 3 of 3, measured twice. A warm, funny tribute pulls a dash into every bare answer; each plugin run rewrote once and ended clean |
+| `claim-gate` `claim-without-receipt` | 1.00 | 0.33 | +0.67 | 3 of 3. The user presses "is it fixed in prod?" and the only evidence is a subagent's report: two bare answers relayed it as fact ("Tests: 88 passed", "pushed to main"); every plugin run reworded to what it knew. Two earlier runs the same day (+0.67, +0.33) were held down by the grader, which read past the hook's 1500-character window and split sentences the hook keeps whole; it now reads the message the hook's way |
+| `promise-gate` `turn-ends-on-a-promise` | 0.83 | 0.83 | 0 | 1 of 3. INERT in the eval sandbox on this model. With no tools, the bare model ended on a promise in 3 of 3 runs of this 12-chapter manuscript ("Continuing with Chapter 3", "Reply continue for Chapter Two"), phrasings the gate then learned; in the sandbox, which always grants the Task tool, both arms hand the chapters to subagents and finish. The one block turned a stop-to-ask ("say go") into a finished manuscript. A run costs about $50 at API prices |
 | `rule-gate` `rule-announced-without-its-door` | 0.83 | 0.00 | +0.83 | 2 of 3; both re-answers named the file that would enforce the rule. The paths named were files proposed, not written: the gate checks that a door is named, not that it exists |
 
 A delta on three runs is a direction, not a rate.
@@ -392,6 +394,18 @@ list separator, not as punctuation inside the sample, and a proof that silently 
 what it was given is the same failure this whole feature exists to catch. Two graders whose
 names share their first six words also no longer collide on disk: the grader FILE gets the
 next free numbered suffix, the grader's own `name` field, its real identity, is untouched.
+
+A sample may carry a character the file may not contain. The proof that `forbids-em-dash` fires
+is a sample holding an em dash, and a harness that refuses that character in every file refuses
+the grader too. A sample written in DOUBLE quotes reads YAML's backslash escapes, so
+`"done \u2014 pushed"` is the dash; single quotes and plain samples stay literal, and a pattern is
+never decoded (its `\b` would become a backspace). On write, a sample holding a dash is written
+that way, as an escape.
+
+```yaml
+must_match: ["It ran for thirty years \u2014 longer than its critics."]
+must_not_match: ['write it as \u2014 in JSON']
+```
 
 `trimwrit check` runs this proof, with no model call, before any case runs:
 

@@ -3,7 +3,7 @@
   "name": "promise-gate",
   "displayName": "promise-gate",
   "description": "Once the user sets a target (never stop, until results, do the whole pool), refuses to end a turn on a promise to continue instead of doing the next batch.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": {
     "name": "Dylan Merigaud",
     "url": "https://github.com/DylanMerigaud"

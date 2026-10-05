@@ -2,7 +2,8 @@
 
 Once the user sets a target ("never stop", "do not stop until...", "until results", "do the whole
 pool"), refuses to end a turn on a promise to continue ("I will continue with the next batch",
-"running in the background, will land") instead of doing the next batch.
+"running in the background, will land", "Continuing with Chapter 3", "Chapter Two follows in
+the next message", "Reply continue for the rest") instead of doing the next batch.
 
 Two hooks. `UserPromptSubmit` (`promise_gate.py --prompt`) reads each prompt and, when it sets a
 target, writes a per-session marker with an excerpt of it. `Stop` (`promise_gate.py`) does
