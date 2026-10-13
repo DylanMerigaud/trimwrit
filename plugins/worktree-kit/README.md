@@ -13,6 +13,17 @@ branch is rebased and pushed when the repository's own gate passes.
   repository, anything inside a linked worktree, and any repository where
   `.claude/auto-worktree-off` exists. A denial is counted in `door-refusals.jsonl` (door
   `worktree-guard`).
+- **PreToolUse Bash** (`heredoc_file.py`): inside a linked worktree, a command whose heredocs are
+  all quoted (`<<'EOF'`, `<<"EOF"`, `<<\EOF`) has each body written to a file named by its hash
+  under `/private/tmp/claude-<uid>/trimwrit-heredoc/` and the operator replaced by a plain
+  `< file` redirect. Why: Claude Code refuses, in a worktree-isolated session or subagent, any
+  command its guard cannot parse ("too complex to verify that it stays inside the worktree"), and
+  a quoted heredoc body (a `python3 - <<'EOF'` script with `{"k": len("T3")}` in it) is enough to
+  trip it. 61 percent of 2631 refusals in 1229 of Dylan's sessions were this. A quoted heredoc is
+  inert stdin, so the rewrite changes nothing the command does, and the guard still judges any git
+  the command names. An unquoted heredoc, one inside a command substitution, a subshell or
+  backticks, an open quote, an unterminated body: left untouched, counted `left-alone` in
+  `hook-health.jsonl`; a rewrite is counted `rewrote`. Files older than two days are swept.
 - **postenter.sh** (run by Claude inside the new worktree): fast-forwards the fresh branch onto
   the remote, makes the hub ignore `.claude/worktrees/`, symlinks the hub's gitignored config
   into the worktree (`.vercel/project.json` at any depth, dot files outside dot directories,
