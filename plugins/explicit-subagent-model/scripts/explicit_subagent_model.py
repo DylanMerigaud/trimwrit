@@ -10,7 +10,8 @@ hard coded, never a configuration key.
 A crash or a timeout lets the call through and is reported loudly; no environment variable and
 no configuration key turns the gate off. The optional `guidance` key of the
 `explicit-subagent-model` section of trimwrit-gates.json is appended to the refusal reason
-(for instance which model fits which kind of work).
+(for instance which model fits which kind of work). The opt-in `require_effort` key makes a
+missing or blank `effort` a refusal too (a fork stays exempt: the harness ignores effort on one).
 """
 import os
 import sys
@@ -25,24 +26,35 @@ EXEMPT_TYPES = ("fork",)
 
 REASON = ("This Agent call names no model, so the subagent would inherit the session's /model. "
           "Pass model explicitly.")
+EFFORT_REASON = ("This Agent call names no effort, so the subagent would run at whatever effort "
+                 "its model defaults to. Pass effort explicitly (low, medium, high, xhigh, max).")
 
 
-def verdict(payload, guidance=""):
-    """None when the call may run, else the refusal text."""
+def verdict(payload, guidance="", require_effort=False):
+    """None when the call may run, else the refusal text. A missing model gives REASON, a
+    missing effort (only when `require_effort`) gives EFFORT_REASON, both give both, model
+    first; `guidance` closes the text once."""
     if payload.get("tool_name") not in ("Agent", "Task"):
         return None
     ti = payload.get("tool_input") or {}
     if str(ti.get("subagent_type") or "") in EXEMPT_TYPES:
         return None
-    if str(ti.get("model") or "").strip():
+    reasons = []
+    if not str(ti.get("model") or "").strip():
+        reasons.append(REASON)
+    if require_effort and not str(ti.get("effort") or "").strip():
+        reasons.append(EFFORT_REASON)
+    if not reasons:
         return None
-    return REASON + (" " + guidance if guidance else "")
+    if guidance:
+        reasons.append(guidance)
+    return " ".join(reasons)
 
 
 def body():
     payload = trace.read_payload()
-    guidance = trace.plugin_settings(payload, root=PLUGIN_ROOT)["guidance"]
-    reason = verdict(payload, guidance)
+    settings = trace.plugin_settings(payload, root=PLUGIN_ROOT)
+    reason = verdict(payload, settings["guidance"], settings["require_effort"])
     if reason:
         sys.stderr.write(reason + "\n")
         return 2

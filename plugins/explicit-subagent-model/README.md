@@ -1,12 +1,18 @@
 # explicit-subagent-model
 
-Refuses an Agent or Task call that names no model, so a subagent never silently inherits
-whatever /model last set.
+Refuses an Agent or Task call that names no model (and, opt-in, no effort), so a subagent never
+silently inherits the session's tier. Optionally gives every session a short routing card at its
+start.
 
 - **PreToolUse hook** (`explicit_subagent_model.py`, matcher `Agent|Task`): a call whose `model`
   is missing or blank is refused with exit 2 and a reason on stderr; the model reads it and calls
-  again with a model. A `fork` is exempt, because the harness ignores `model` on a fork. That is
-  the one exemption and it is not configurable.
+  again with a model. With `require_effort` on, a missing or blank `effort` is refused the same
+  way, and a call missing both gets both sentences, model first. A `fork` is exempt, because the
+  harness ignores `model` and `effort` on a fork. That is the one exemption and it is not
+  configurable.
+- **SessionStart hook** (`route_card.py`, matcher `startup|clear|compact`): when `route_card` is
+  non-empty, prints it as one `additionalContext` object so the main session starts knowing which
+  model and effort fit which work. Empty, it prints nothing.
 
 A crash or a timeout lets the call through and says so in a systemMessage. There is no switch:
 enable or disable the plugin with `claude plugin enable|disable`.
@@ -26,7 +32,9 @@ crash, not a silent pass.
 
 | key | default | meaning |
 |---|---|---|
-| `guidance` | `""` | text appended to the refusal reason, e.g. which model fits which work |
+| `guidance` | `""` | text appended once at the end of the refusal reason, e.g. which model fits which work |
+| `require_effort` | `false` | when `true`, an Agent or Task call (a `fork` excepted) with a missing or blank `effort` is refused too |
+| `route_card` | `""` | text printed as SessionStart `additionalContext` on `startup`, `clear` and `compact`; empty prints nothing |
 
 ## Where the ledgers land
 
@@ -40,5 +48,9 @@ session_id)` that counts refusals instead of `door-refusals.jsonl`.
 
 ## Proof
 
-`tests/gates/test_explicit_subagent_model.py` replays the hook through its stdin contract. A
-PreToolUse gate is deterministic, so it ships no model-run eval.
+`tests/gates/test_explicit_subagent_model.py` replays both hooks through their stdin contract:
+the model refusals and the fork exemption, `require_effort` (off by default; missing and blank
+effort refused, both present passes, a fork passes, both missing gives both sentences in order
+with the guidance once at the end), and the route card (valid JSON with the configured text,
+nothing printed when the key is empty or absent, the SessionStart wiring, a crash passing
+loudly). A hook of this kind is deterministic, so it ships no model-run eval.

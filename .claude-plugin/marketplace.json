@@ -29,12 +29,12 @@
     {
       "name": "explicit-subagent-model",
       "source": "./plugins/explicit-subagent-model",
-      "description": "Refuses an Agent or Task call that names no model, so a subagent never silently inherits whatever /model last set.",
-      "version": "0.1.0",
+      "description": "Refuses an Agent or Task call that names no model (and, opt-in, no effort), so a subagent never silently inherits the session's tier; optional routing card at session start.",
+      "version": "0.2.0",
       "author": { "name": "Dylan Merigaud" },
       "license": "MIT",
       "category": "productivity",
-      "tags": ["subagent", "model", "agent", "pretooluse", "gate"]
+      "tags": ["subagent", "model", "effort", "agent", "pretooluse", "gate"]
     },
     {
       "name": "resume-on-api-error",

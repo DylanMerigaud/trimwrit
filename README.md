@@ -42,7 +42,7 @@ claude plugin install claim-gate@trimwrit --scope project   # this repository on
 | plugin | what it does | events |
 |---|---|---|
 | `no-em-dash` | refuses a final message, a file write or a shell write carrying an em dash, an en dash, a figure dash or a horizontal bar | Stop; PreToolUse Write, Edit, MultiEdit, NotebookEdit, Bash |
-| `explicit-subagent-model` | refuses an Agent or Task call that names no model | PreToolUse Agent, Task |
+| `explicit-subagent-model` | refuses an Agent or Task call that names no model (opt-in: no effort); optional routing card | PreToolUse Agent, Task; SessionStart |
 | `resume-on-api-error` | after a turn ends on an API error, types a continue message into the screen or tmux pane hosting the session; never on an authentication or billing error | StopFailure |
 | `main-checkout-guard` | refuses destructive git on the main checkout of a repository opted into worktrees, and any rewrite of its default branch | PreToolUse Bash |
 | `worktree-kit` | one session, one worktree: the session is sent into a worktree, edits on the main checkout are refused, gitignored config is linked in, a clean branch is pushed at session end | SessionStart; PreToolUse Edit, Write, NotebookEdit; SessionEnd |

@@ -1,6 +1,7 @@
 {
-  "description": "explicit-subagent-model: a subagent call names its model",
+  "description": "explicit-subagent-model: a subagent call names its model (and, opt-in, its effort); optional routing card at session start",
   "hooks": {
-    "PreToolUse": [{"matcher": "Agent|Task", "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/explicit_subagent_model.py\"", "timeout": 10}]}]
+    "PreToolUse": [{"matcher": "Agent|Task", "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/explicit_subagent_model.py\"", "timeout": 10}]}],
+    "SessionStart": [{"matcher": "startup|clear|compact", "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/route_card.py\"", "timeout": 10}]}]
   }
 }
