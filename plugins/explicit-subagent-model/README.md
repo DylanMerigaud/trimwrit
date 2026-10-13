@@ -1,13 +1,15 @@
 # explicit-subagent-model
 
-Refuses an Agent or Task call that names no model (and, opt-in, no effort), so a subagent never
-silently inherits the session's tier. Optionally gives every session a short routing card at its
+Refuses an Agent or Task call that names no model (and, opt-in, no effort or no subagent_type), so a
+subagent never silently inherits the session's tier or the full instruction load. Optionally gives every session a short routing card at its
 start.
 
 - **PreToolUse hook** (`explicit_subagent_model.py`, matcher `Agent|Task`): a call whose `model`
   is missing or blank is refused with exit 2 and a reason on stderr; the model reads it and calls
   again with a model. With `require_effort` on, a missing or blank `effort` is refused the same
-  way, and a call missing both gets both sentences, model first. A `fork` is exempt, because the
+  way, and with `require_subagent_type` on, so is a missing or blank `subagent_type` (it would run
+  as general-purpose with every CLAUDE.md loaded). A call missing several gets several sentences,
+  in the order model, effort, subagent_type. A `fork` is exempt, because the
   harness ignores `model` and `effort` on a fork. That is the one exemption and it is not
   configurable.
 - **SessionStart hook** (`route_card.py`, matcher `startup|clear|compact`): when `route_card` is
@@ -34,6 +36,7 @@ crash, not a silent pass.
 |---|---|---|
 | `guidance` | `""` | text appended once at the end of the refusal reason, e.g. which model fits which work |
 | `require_effort` | `false` | when `true`, an Agent or Task call (a `fork` excepted) with a missing or blank `effort` is refused too |
+| `require_subagent_type` | `false` | when `true`, an Agent or Task call with a missing or blank `subagent_type` is refused too; an explicit `lean` or `general-purpose` passes, and a `fork` names its type by definition |
 | `route_card` | `""` | text printed as SessionStart `additionalContext` on `startup`, `clear` and `compact`; empty prints nothing |
 
 ## Where the ledgers land
@@ -51,6 +54,6 @@ session_id)` that counts refusals instead of `door-refusals.jsonl`.
 `tests/gates/test_explicit_subagent_model.py` replays both hooks through their stdin contract:
 the model refusals and the fork exemption, `require_effort` (off by default; missing and blank
 effort refused, both present passes, a fork passes, both missing gives both sentences in order
-with the guidance once at the end), and the route card (valid JSON with the configured text,
+with the guidance once at the end), `require_subagent_type` (same shape: off by default, missing and blank refused, explicit types pass, all three missing gives model, effort, subagent_type in order), and the route card (valid JSON with the configured text,
 nothing printed when the key is empty or absent, the SessionStart wiring, a crash passing
 loudly). A hook of this kind is deterministic, so it ships no model-run eval.

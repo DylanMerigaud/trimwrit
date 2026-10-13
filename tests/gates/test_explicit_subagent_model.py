@@ -130,6 +130,53 @@ def test_missing_model_alone_keeps_its_sentence_when_effort_is_required(tmp_path
     assert r.returncode == 2 and r.stderr.strip() == MODEL_SENTENCE
 
 
+# require_subagent_type: the opt-in subagent_type half of the gate
+
+TYPE_SENTENCE = ("This Agent call names no subagent_type, so it would run as general-purpose with "
+                 "every CLAUDE.md loaded (about 50 to 60k tokens before its first word). Pass "
+                 "subagent_type explicitly: lean when the brief carries what the agent needs, "
+                 "general-purpose only when it must apply a repository's whole doctrine.")
+
+
+def test_subagent_type_is_not_required_by_default(tmp_path):
+    r = run_py(NAME, SCRIPT, call("Agent", {"prompt": "x", "model": "sonnet"}), tmp_path)
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+
+
+def test_missing_and_blank_subagent_type_are_refused_when_required(tmp_path):
+    write_config(tmp_path, {NAME: {"require_subagent_type": True}})
+    for ti in ({"prompt": "x", "model": "sonnet"},
+               {"prompt": "x", "model": "sonnet", "subagent_type": ""},
+               {"prompt": "x", "model": "sonnet", "subagent_type": "  "}):
+        r = run_py(NAME, SCRIPT, call("Agent", ti), tmp_path)
+        assert r.returncode == 2 and r.stdout == "", ti
+        assert r.stderr.strip() == TYPE_SENTENCE, ti
+
+
+def test_explicit_subagent_type_passes_when_required(tmp_path):
+    write_config(tmp_path, {NAME: {"require_subagent_type": True}})
+    for st in ("lean", "general-purpose"):
+        r = run_py(NAME, SCRIPT, call("Agent", {"prompt": "x", "model": "sonnet",
+                                                "subagent_type": st}), tmp_path)
+        assert (r.returncode, r.stdout, r.stderr) == (0, "", ""), st
+
+
+def test_fork_passes_when_subagent_type_is_required(tmp_path):
+    write_config(tmp_path, {NAME: {"require_subagent_type": True}})
+    r = run_py(NAME, SCRIPT, call("Agent", {"subagent_type": "fork", "prompt": "x"}), tmp_path)
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+
+
+def test_all_three_missing_gives_three_sentences_in_order_and_guidance_once(tmp_path):
+    write_config(tmp_path, {NAME: {"require_effort": True, "require_subagent_type": True,
+                                   "guidance": "Use haiku for sweeps."}})
+    r = run_py(NAME, SCRIPT, call("Agent", {"prompt": "x"}), tmp_path)
+    assert r.returncode == 2
+    assert r.stderr.strip() == " ".join([MODEL_SENTENCE, EFFORT_SENTENCE, TYPE_SENTENCE,
+                                         "Use haiku for sweeps."])
+    assert r.stderr.count("Use haiku for sweeps.") == 1
+
+
 # route_card: the SessionStart routing card
 
 CARD_SCRIPT = "route_card.py"

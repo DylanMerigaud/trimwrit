@@ -1,1 +1,1 @@
-{"section": "explicit-subagent-model", "defaults": {"guidance": "", "require_effort": false, "route_card": ""}}
+{"section": "explicit-subagent-model", "defaults": {"guidance": "", "require_effort": false, "require_subagent_type": false, "route_card": ""}}

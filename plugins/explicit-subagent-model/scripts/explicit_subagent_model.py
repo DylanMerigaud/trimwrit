@@ -11,7 +11,9 @@ A crash or a timeout lets the call through and is reported loudly; no environmen
 no configuration key turns the gate off. The optional `guidance` key of the
 `explicit-subagent-model` section of trimwrit-gates.json is appended to the refusal reason
 (for instance which model fits which kind of work). The opt-in `require_effort` key makes a
-missing or blank `effort` a refusal too (a fork stays exempt: the harness ignores effort on one).
+missing or blank `effort` a refusal too (a fork stays exempt: the harness ignores effort on one). The opt-in
+`require_subagent_type` key does the same for a missing or blank `subagent_type` (a fork names its
+type by definition, so it never trips it).
 """
 import os
 import sys
@@ -30,10 +32,16 @@ EFFORT_REASON = ("This Agent call names no effort, so the subagent would run at 
                  "its model defaults to. Pass effort explicitly (low, medium, high, xhigh, max).")
 
 
-def verdict(payload, guidance="", require_effort=False):
+TYPE_REASON = ("This Agent call names no subagent_type, so it would run as general-purpose with "
+               "every CLAUDE.md loaded (about 50 to 60k tokens before its first word). Pass "
+               "subagent_type explicitly: lean when the brief carries what the agent needs, "
+               "general-purpose only when it must apply a repository's whole doctrine.")
+
+
+def verdict(payload, guidance="", require_effort=False, require_subagent_type=False):
     """None when the call may run, else the refusal text. A missing model gives REASON, a
-    missing effort (only when `require_effort`) gives EFFORT_REASON, both give both, model
-    first; `guidance` closes the text once."""
+    missing effort (only when `require_effort`) gives EFFORT_REASON, several give several, model,
+    effort, subagent_type in that order; `guidance` closes the text once."""
     if payload.get("tool_name") not in ("Agent", "Task"):
         return None
     ti = payload.get("tool_input") or {}
@@ -44,6 +52,8 @@ def verdict(payload, guidance="", require_effort=False):
         reasons.append(REASON)
     if require_effort and not str(ti.get("effort") or "").strip():
         reasons.append(EFFORT_REASON)
+    if require_subagent_type and not str(ti.get("subagent_type") or "").strip():
+        reasons.append(TYPE_REASON)
     if not reasons:
         return None
     if guidance:
@@ -54,7 +64,8 @@ def verdict(payload, guidance="", require_effort=False):
 def body():
     payload = trace.read_payload()
     settings = trace.plugin_settings(payload, root=PLUGIN_ROOT)
-    reason = verdict(payload, settings["guidance"], settings["require_effort"])
+    reason = verdict(payload, settings["guidance"], settings["require_effort"],
+                     settings["require_subagent_type"])
     if reason:
         sys.stderr.write(reason + "\n")
         return 2
