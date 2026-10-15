@@ -168,6 +168,48 @@ def test_denial_is_tied_to_its_call_and_effect_is_read_from_the_next_write():
     assert arms.denials_took_effect(info, lambda p: DASH in p) == [True]
 
 
+def exit2_resp(event, reason):
+    # the shape Claude Code 2.1.300 streams for a hook that refuses by exit code 2
+    return ev(type="system", subtype="hook_response", hook_event=event, hook_name=event,
+              output=reason, stdout="", stderr=reason, exit_code=2, outcome="error")
+
+
+def test_a_stop_refused_by_exit_code_2_is_a_block_and_its_effect_is_read():
+    reason = "1 occurrence(s) of a forbidden dash in the message you were about to send."
+    lines = [text_msg("All done " + DASH + " nothing else."), exit2_resp("Stop", reason),
+             ev(type="user", message={"content": "Stop hook feedback: " + reason}),
+             text_msg("All done, nothing else."), stop_resp(""),
+             ev(type="result", result="All done, nothing else.")]
+    info = arms.parse_stream(lines)
+    assert arms.blocks(info) == 1
+    hook = info["stops"][0]["hooks"][0]
+    assert hook["decision"] == "block" and hook["reason"] == reason
+    assert hook["exit_code"] == 2 and hook["outcome"] == "error"
+    assert arms.stop_blocks_took_effect(info, lambda t: DASH in t) == [True]
+
+
+def test_a_tool_call_refused_by_exit_code_2_is_a_denial_tied_to_its_call():
+    reason = "1 forbidden dash in the content you were about to write"
+    lines = [tool_msg("a", "Write", {"file_path": "/r/f.md", "content": "x" + DASH}),
+             exit2_resp("PreToolUse", reason), tool_res("a", reason, err=True),
+             tool_msg("b", "Write", {"file_path": "/r/f.md", "content": "x, y"}),
+             tool_res("b", "ok"), text_msg("done.")]
+    info = arms.parse_stream(lines)
+    assert arms.blocks(info) == 1 and info["tools"][0]["denied"]
+    assert arms.denials_took_effect(info, lambda p: DASH in p) == [True]
+
+
+def test_a_failing_hook_that_is_not_exit_code_2_refuses_nothing():
+    lines = [text_msg("fine."),
+             ev(type="system", subtype="hook_response", hook_event="Stop", hook_name="Stop",
+                output="Traceback", stdout="", stderr="Traceback", exit_code=1,
+                outcome="error"),
+             ev(type="result", result="fine.")]
+    info = arms.parse_stream(lines)
+    assert arms.blocks(info) == 0
+    assert info["stops"][0]["hooks"][0]["decision"] is None
+
+
 def test_denial_with_no_later_write_did_not_take_effect():
     lines = [tool_msg("a", "Write", {"file_path": "/r/f.md", "content": DASH}),
              ev(type="system", subtype="hook_response", hook_event="PreToolUse", output=DENY),

@@ -248,7 +248,8 @@ def _hook_decision(output):
     """(kind, reason) for one hook's stdout: kind is "block" for a Stop-style block, "deny" for
     a PreToolUse denial, else None. A block declared inside `hookSpecificOutput` is still a
     block the hook ISSUED; whether Claude Code honoured it is a separate question (took_effect),
-    which is the point of reading both shapes."""
+    which is the point of reading both shapes. A refusal by exit code 2 carries no JSON: the
+    caller reads it from the event's exit code."""
     text = (output or "").strip()
     if not text.startswith("{"):
         return None, None
@@ -318,6 +319,12 @@ def parse_stream(lines):
         elif kind == "system" and sub == "hook_response":
             event = ev.get("hook_event")
             decision, reason = _hook_decision(ev.get("output") or ev.get("stdout"))
+            if decision is None and ev.get("exit_code") == 2:
+                # Exit code 2 is Claude Code's other way to refuse: a Stop hook blocks the stop,
+                # a PreToolUse hook blocks the call, and stderr is the reason fed back.
+                decision = {"Stop": "block", "PreToolUse": "deny"}.get(event)
+                reason = (ev.get("stderr") or ev.get("output") or "").strip() if decision \
+                    else None
             if event == "Stop":
                 if open_stop is None:
                     open_stop = {"text": last_text, "hooks": []}

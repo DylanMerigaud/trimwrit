@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.2, 2026-10-15
+
+- **A hook that refuses by exit code 2 is now counted as a refusal.** `arms.parse_stream` read a
+  block or a denial only from a hook's JSON on stdout, so a Stop hook that blocked by exiting 2
+  (stderr fed back to the model, the turn going on) was recorded with no decision, and a
+  PreToolUse hook that denied the same way was not a denial at all. Measured on Claude Code
+  2.1.300 under `claude -p`: such a hook streams as `hook_response` with `exit_code` 2, `outcome`
+  "error" and the reason in `stderr`. A Stop event with exit code 2 is now a block, a PreToolUse
+  event a denial tied to its call through the reason in the tool result; any other failing exit
+  code still refuses nothing. Tests in `tests/test_arms.py`.
+
 ## 0.7.1, 2026-10-05
 
 - **The Stop gate cases now make the bare model commit the fault.** Three of the four 0.7.0 cases
