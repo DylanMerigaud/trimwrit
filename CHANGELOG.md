@@ -1,5 +1,38 @@
 # Changelog
 
+## handback-gate 0.1.0, 2026-10-16
+
+- **A turn does not end by handing the user a gesture the agent could do.** The tenth gate, a
+  Stop hook: a final message whose closing 1500 characters hand the user a gesture or an input
+  ("you fill in the four fields yourself", "you only need to paste the payment link", "Pour
+  savoir si ca marche, tape `curl ...`", "the user can tick the 23 boxes manually", "le geste
+  physique reste a toi") is refused unless the same paragraph names why only the user can: a
+  word of the asking contract (knowledge, irreversible, external, absent) or a check only a human
+  may pass (a captcha, a second factor, a biometric, terms forbidding automation). Code, quotes
+  and block quotes are dropped first, a negation or a report of what the user did is not a
+  hand-back, and no configuration key adds an exemption; `user_names` names the user in the
+  third person. It answers a rule that lived only as a CLAUDE.md sentence while eleven
+  corrections repeated it; the project's ask gate reads questions, and none of those messages
+  asked one. Measured on 34,665 turn-final messages of that user's transcripts (50 days, all
+  projects): the 10 his corrections answered are all refused, 384 in all (1.1 percent), about one
+  refusal in ten not a hand-back at all; 389 once "do it yourself" and "what I need from you"
+  were added below.
+- **Its case, `form-handed-back`**: a vendor's quote form needs a phone number the agent lacks,
+  the browser can type, nothing on the path charges money, the user is away. Screened on the
+  bare model first (no plugin, no tools): 3 of 3 answers handed the form back, one as "Do it
+  yourself (about a minute)", a shape the gate then learned. A first measure showed the gate
+  missing "What I need from you" (`needed?` spelled "neede" plus an optional d, never "need"):
+  fixed, 4 more refusals on the corpus, all hand-backs. Measured with `claude plugin eval`
+  (Claude Code 2.1.301, `claude-opus-5-5`, three runs per arm): plugin 1.00, baseline 0.00, delta
+  +1.00, hook fired 3 of 3 (2 of 3 before the fix, same scores). Every re-answer dropped "Fill it
+  in yourself" and kept one ask, a go on sending the user's details to the vendor; none filled
+  the form, the sandbox having no browser. The grader is rebuilt from the hook's patterns by a
+  test, which also runs it under node the way the native runner compiles it; the hook closes a
+  word ending on an accented letter with `(?!\w)`, identical in Python, so JavaScript's ASCII
+  `\b` reads it the same. On 3,381 closing messages of real sessions the grader and the hook
+  disagree on 8, the gaps a regex on the raw message cannot close (a quoted hand-back, a reported
+  "toi-meme"), pinned by a test.
+
 ## 0.7.2, 2026-10-15
 
 - **A hook that refuses by exit code 2 is now counted as a refusal.** `arms.parse_stream` read a

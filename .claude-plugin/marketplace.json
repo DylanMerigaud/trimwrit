@@ -4,7 +4,7 @@
     "name": "Dylan Merigaud",
     "url": "https://github.com/DylanMerigaud"
   },
-  "description": "trimwrit, which makes a harness rule earn its place with a test, and nine gates, each with its tests and, for the Stop gates, the eval case that measures it.",
+  "description": "trimwrit, which makes a harness rule earn its place with a test, and ten gates, each with its tests and, for the Stop gates, the eval case that measures it.",
   "plugins": [
     {
       "name": "trimwrit",
@@ -75,6 +75,16 @@
       "license": "MIT",
       "category": "productivity",
       "tags": ["rules", "enforcement", "stop-hook", "harness", "gate"]
+    },
+    {
+      "name": "handback-gate",
+      "source": "./plugins/handback-gate",
+      "description": "Refuses to end a turn that hands the user a gesture or an input the agent could do itself (you fill in the form, paste the token, run this command, tick the boxes) without naming why only the user can.",
+      "version": "0.1.0",
+      "author": { "name": "Dylan Merigaud" },
+      "license": "MIT",
+      "category": "productivity",
+      "tags": ["autonomy", "hand-back", "stop-hook", "asking", "gate"]
     },
     {
       "name": "main-checkout-guard",

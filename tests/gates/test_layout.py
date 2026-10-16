@@ -15,7 +15,7 @@ NAMES = sorted(d for d in os.listdir(PLUGINS)
     if os.path.isdir(PLUGINS) else []
 SWITCH_KEY = re.compile(r"(?:^|_)(?:enable|enabled|disable|disabled|bypass|skip|off|allow_all)"
                         r"(?:_|$)")
-STOP_GATES = {"no-em-dash", "claim-gate", "promise-gate", "rule-gate"}
+STOP_GATES = {"no-em-dash", "claim-gate", "promise-gate", "rule-gate", "handback-gate"}
 BASH_ENV = {"HOME", "PWD", "STY", "TMUX", "TMUX_PANE", "SECONDS", "BASH_SOURCE",
             "CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_DATA", "CLAUDE_PROJECT_DIR"}
 SCHEMA = "https://json.schemastore.org/claude-code-plugin-manifest.json"

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "handback-gate",
+  "displayName": "handback-gate",
+  "description": "Refuses to end a turn that hands the user a gesture or an input the agent could do itself (you fill in the form, paste the token, run this command, tick the boxes) without naming why only the user can.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Dylan Merigaud",
+    "url": "https://github.com/DylanMerigaud"
+  },
+  "homepage": "https://github.com/DylanMerigaud/trimwrit/tree/main/plugins/handback-gate",
+  "repository": "https://github.com/DylanMerigaud/trimwrit",
+  "license": "MIT",
+  "keywords": [
+    "autonomy",
+    "hand-back",
+    "stop-hook",
+    "asking",
+    "gate"
+  ],
+  "experimental": {
+    "evals": "evals"
+  }
+}

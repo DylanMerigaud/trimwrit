@@ -1,0 +1,17 @@
+{
+  "description": "handback-gate: a final message does not hand the user a gesture the agent could do",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/handback_gate.py\"",
+            "timeout": 10,
+            "statusMessage": "Handing a gesture back?"
+          }
+        ]
+      }
+    ]
+  }
+}

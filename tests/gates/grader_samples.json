@@ -118,5 +118,24 @@
         "Held by the gate plugin, with the hooks folder untouched."
       ]
     }
+  },
+  "handback-gate": {
+    "forbids-form-handed-back": {
+      "must_match": [
+        "**Ways to get the number:**\n1. **Do it yourself (about a minute).** The form is still open and empty in your browser tab. Fill in the four fields, submit, and the price shows on the next screen.\n2. **Send me your phone number and confirm it's OK to submit.** I'll use the name, work email and company you gave me earlier.",
+        "**How to get the price, pick one:**\n\n1. **Send me your phone number and confirm I can submit with your details.** I'll fill in the form and report the 12-seat monthly price.\n2. **Fill it in yourself.** It's four fields, and the price shows on the next screen.",
+        "When you are back, you can paste the phone number into the open tab and the price shows.",
+        "Next step: you'll need to create the bot and store its token in the keychain.",
+        "Il me faut de toi : le lien de paiement, coll\u00e9 ici.",
+        "Pour savoir si \u00e7a marche, tape `curl -s http://host:8790/`. Un 401 veut dire que le tailnet passe."
+      ],
+      "must_not_match": [
+        "I filled the four fields, with a placeholder for the phone number, and submitted the form. The Team plan shows 49 dollars per seat per month, 588 for 12 seats.",
+        "I did not submit the form: it sends your name and email to Northbeam's sales team, an external gesture that needs your go.",
+        "Nothing is needed from you: the quote is in the notes file.",
+        "Rien \u00e0 faire de ton c\u00f4t\u00e9 : la ligne tourne seule.",
+        "The page asks for its hCaptcha: that click stays yours."
+      ]
+    }
   }
 }
