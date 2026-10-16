@@ -323,3 +323,201 @@ def test_forbid_grader_hits_what_the_gate_refuses(text):
 def test_forbid_grader_spares_what_the_gate_allows(text):
     assert not gate.promise_in(text, CFG), text
     assert not forbid().search(text), text
+
+
+# ---- a job still running: every session, armed or not ------------------------------------------
+# The relapse of 2026-10-15 (growth-cockpit session 37a78564, correction 0334): the user had asked
+# for four fixes and set no target, the model put its test run in the background and ended the turn
+# on these two sentences; the notification came five minutes later, after the user had written
+# "tu m'as pas donné  le resultq... ca a compact mid response ou quoi".
+RELAPSE_FINAL = ("Les tests sont en cours. Le reste de la livraison (commit, push, synchro du hub) "
+                 "et le rapport complet attendent leur résultat.")
+RELAPSE_PROMPT = ("8 demandes de désinscription restées de 1 à 5 jours sans suppression => c'est "
+                  "parceque tu as mi la ligne optout pour les cold? on la met pas.")
+TESTS_USE, TESTS_JOB = "toolu_01FwirN3XKoVrHYgkvADweUz", "bnvsi08f6"
+TESTS_WHAT = "Run remaining affected suites in background"
+# The final message of correction 0308 (growth-cockpit session 736c2b09): a recommendation with
+# its options and nothing left running. Tagged on the same lesson, it is a question about the
+# answer, not a turn that stopped on its work.
+OPTIONS_FINAL = ("**Ce que je recommande :**\n- **Garder (recommandé).** Ça ne coûte plus rien, et "
+                 "le gain est petit mais réel. On l'enlève au premier cas où il casse une commande, "
+                 "ou si la perte de lisibilité dans les permissions te gêne.\n- **Retirer.** Une "
+                 "version 0.2.1 qui enlève le hook, quelques minutes de travail. On revient à environ "
+                 "40 refus par jour qui se règlent tout seuls en 9 secondes.")
+
+
+def user(text, **extra):
+    return dict({"type": "user", "isSidechain": False,
+                 "message": {"role": "user", "content": text}}, **extra)
+
+
+def said(text):
+    return {"type": "assistant", "isSidechain": False,
+            "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}
+
+
+def launch(use, job, what=None, name="Bash"):
+    """A background launch as Claude Code writes it: the tool_use, then its result row."""
+    args = {"command": "python3 -m pytest -q tests", "timeout": 600000}
+    if what is not None:
+        args.update(description=what, run_in_background=True)
+    result = {"Bash": {"stdout": "", "stderr": "", "interrupted": False,
+                       "backgroundTaskId": job},
+              "Agent": {"agentId": job, "status": "async_launched"},
+              "Monitor": {"taskId": job}}[name]
+    return [{"type": "assistant", "isSidechain": False,
+             "message": {"role": "assistant", "content": [
+                 {"type": "tool_use", "id": use, "name": name, "input": args}]}},
+            {"type": "user", "isSidechain": False, "toolUseResult": result,
+             "message": {"role": "user", "content": [
+                 {"type": "tool_result", "tool_use_id": use,
+                  "content": "Command running in background with ID: {}.".format(job)}]}}]
+
+
+def notified(use, job):
+    note = ("<task-notification>\n<task-id>{}</task-id>\n<tool-use-id>{}</tool-use-id>\n"
+            "<status>completed</status>\n<summary>Background command completed (exit code 0)"
+            "</summary>\n</task-notification>".format(job, use))
+    return {"type": "queue-operation", "operation": "enqueue", "content": note}
+
+
+def stopped(use, job):
+    return {"type": "assistant", "isSidechain": False, "message": {"role": "assistant", "content": [
+        {"type": "tool_use", "id": use + "x", "name": "TaskStop", "input": {"task_id": job}}]}}
+
+
+def relapse_rows(final=RELAPSE_FINAL):
+    return ([user(RELAPSE_PROMPT),
+             user("This session is being continued from a previous conversation that ran out of "
+                  "context. The summary below covers the earlier portion of the conversation.",
+                  isCompactSummary=True, isVisibleInTranscriptOnly=True),
+             user("<task-notification>\n<task-id>bolder000</task-id>\n<status>completed</status>"
+                  "\n</task-notification>")]
+            + launch(TESTS_USE, TESTS_JOB, TESTS_WHAT) + [said(final)])
+
+
+def write_rows(tmp_path, rows, name="t.jsonl"):
+    path = tmp_path / name
+    path.write_text("".join(json.dumps(r, ensure_ascii=False, separators=(",", ":")) + "\n"
+                            for r in rows), encoding="utf-8")
+    return str(path)
+
+
+def stop_on(tmp_path, rows, session="job", final=RELAPSE_FINAL, active=False):
+    return run_py(NAME, SCRIPT, stop(write_rows(tmp_path, rows), session, active=active,
+                                     message=final), tmp_path)
+
+
+def silent(r):
+    assert (r.returncode, r.stdout.strip()) == (0, ""), (r.stdout, r.stderr)
+
+
+DEFERRALS = [
+    RELAPSE_FINAL,
+    "Still running; waiting for its notification.",
+    "**Prochaine étape:** je te donne le résultat du test complet dès qu'il se termine.",
+    "je te donne le tableau final des bancs dès qu'ils ont fini et que la réponse est partie.",
+    "La chaîne nom, adresse, mx-scan tourne en fond.",
+    "It's on the fresh batch rerun of the 30 offices. I'll pick up the result once it finishes.",
+    "The full suite is still in progress, I am waiting on its result.",
+]
+NOT_DEFERRALS = [
+    OPTIONS_FINAL,
+    "Les tests passent: 412 passed in 61 s. Commit abc1234 poussé sur main, hub synchronisé.",
+    "Le serveur de dev tourne sur http://localhost:3000.",
+    "24/24 traités, 2 gardés, pool épuisé. Rien en vol.",
+    "The deploy finished and the page answers 200; nothing is running.",
+]
+
+
+@pytest.mark.parametrize("text", DEFERRALS)
+def test_a_deferral_to_running_work_is_read(text):
+    assert gate.deferral_in(text, CFG)
+
+
+@pytest.mark.parametrize("text", NOT_DEFERRALS)
+def test_a_given_result_is_no_deferral(text):
+    assert not gate.deferral_in(text, CFG)
+
+
+def test_the_deferral_words_never_reach_an_armed_promise_without_a_job():
+    # "en cours" alone often names the work of someone else: the armed set does not carry it.
+    assert gate.promise_in(RELAPSE_FINAL, CFG) is None
+
+
+def test_relapse_of_2026_10_15_is_blocked_in_an_unarmed_session(tmp_path):
+    reason = blocked(stop_on(tmp_path, relapse_rows()))
+    assert "sont en cours" in reason
+    assert TESTS_WHAT in reason and TESTS_JOB in reason
+    assert "foreground" in reason and reason.endswith("(promise-gate)")
+    refusals = rows(os.path.join(str(tmp_path), "door-refusals.jsonl"))
+    assert [(x["door"], x["reason_class"]) for x in refusals] == \
+        [("stop_promise_gate", "job_pending")]
+
+
+def test_the_job_scan_reads_the_relapse_transcript(tmp_path):
+    assert gate.pending_jobs(write_rows(tmp_path, relapse_rows())) == {TESTS_JOB: TESTS_WHAT}
+
+
+def test_once_the_job_exits_the_same_message_passes(tmp_path):
+    silent(stop_on(tmp_path, relapse_rows() + [notified(TESTS_USE, TESTS_JOB)]))
+
+
+def test_a_job_stopped_by_taskstop_is_no_longer_running(tmp_path):
+    silent(stop_on(tmp_path, relapse_rows() + [stopped(TESTS_USE, TESTS_JOB)]))
+
+
+def test_a_result_given_while_a_job_runs_passes(tmp_path):
+    for i, final in enumerate(NOT_DEFERRALS):
+        silent(stop_on(tmp_path, relapse_rows(final), session="r%d" % i, final=final))
+
+
+def test_a_new_prompt_of_the_user_starts_a_new_turn(tmp_path):
+    rows_ = relapse_rows()[:-1] + [user("et le mail de Sara?"), said(RELAPSE_FINAL)]
+    silent(stop_on(tmp_path, rows_))
+
+
+def test_a_job_backgrounded_on_the_way_counts_too(tmp_path):
+    rows_ = [user(RELAPSE_PROMPT)] + launch("toolu_auto", "b2eimejzl") + [said(RELAPSE_FINAL)]
+    reason = blocked(stop_on(tmp_path, rows_))
+    assert "job b2eimejzl has not finished" in reason
+
+
+@pytest.mark.parametrize("name", ["Agent", "Monitor"])
+def test_a_subagent_or_a_monitor_is_the_harness_own_wait(tmp_path, name):
+    final = "L'agent est en cours, je reviens avec le résultat dès qu'il a fini."
+    rows_ = [user(RELAPSE_PROMPT)] + launch("toolu_" + name, "a1b2c3", name=name) + [said(final)]
+    silent(stop_on(tmp_path, rows_, final=final))
+
+
+def test_a_job_and_a_promise_of_the_armed_set_block_unarmed_too(tmp_path):
+    final = "Running in background and will land results here."
+    rows_ = relapse_rows(final)
+    blocked(stop_on(tmp_path, rows_, final=final))
+
+
+def test_an_unarmed_promise_with_no_job_stays_silent(tmp_path):
+    silent(stop_on(tmp_path, [user(RELAPSE_PROMPT), said(RELAPSE_FINAL)]))
+
+
+def test_the_job_block_caps_like_the_promise_block(tmp_path):
+    rows_ = relapse_rows()
+    outs = [stop_on(tmp_path, rows_, session="cap", active=i > 0).stdout.strip()
+            for i in range(4)]
+    assert [json.loads(o).get("decision") for o in outs[:3]] == ["block"] * 3
+    assert "did not clear it" in json.loads(outs[3])["systemMessage"]
+    got = rows(os.path.join(str(tmp_path), "hook-health.jsonl"))
+    assert any(x["outcome"] == "cap" and x["detail"].startswith("job: ") for x in got)
+
+
+def test_an_armed_session_reads_the_job_when_no_armed_promise_is_there(tmp_path):
+    prompt(tmp_path, "armed-job", "fait tout")
+    reason = blocked(stop_on(tmp_path, relapse_rows(), session="armed-job"))
+    assert TESTS_JOB in reason
+
+
+def test_a_missing_transcript_reads_as_no_job(tmp_path):
+    assert gate.pending_jobs(str(tmp_path / "absent.jsonl")) == {}
+    r = run_py(NAME, SCRIPT, stop(str(tmp_path / "absent.jsonl"), "gone", message=RELAPSE_FINAL),
+               tmp_path)
+    silent(r)

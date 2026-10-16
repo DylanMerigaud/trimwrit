@@ -2,8 +2,8 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "promise-gate",
   "displayName": "promise-gate",
-  "description": "Once the user sets a target (never stop, until results, do the whole pool), refuses to end a turn on a promise to continue instead of doing the next batch.",
-  "version": "0.1.1",
+  "description": "Once the user sets a target (never stop, until results, do the whole pool), refuses to end a turn on a promise to continue instead of doing the next batch; in every session, refuses to end a turn that defers its result to its own background job still running.",
+  "version": "0.2.0",
   "author": {
     "name": "Dylan Merigaud",
     "url": "https://github.com/DylanMerigaud"

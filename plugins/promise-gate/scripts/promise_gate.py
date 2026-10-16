@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Stop hook: a turn does not end on a promise to continue once the user set a target.
+"""Stop hook: a turn does not end on a promise to continue once the user set a target, nor, in
+any session, on a deferral to its own background job still running.
 
 Why a hook and not a sentence in a CLAUDE.md: six turns in a row of one night ended on "je
 continue sur le lot suivant" and stopped, and the user had to write "ne t'arrete pas" three
@@ -11,13 +12,31 @@ hook.
 What arms it: only a message from the user that sets a target ("ne t'arrete pas", "never stop",
 "until results", "jusqu'a N candidats", "fait tout", "tout le pool d'un coup", "do not stop").
 The UserPromptSubmit entry (`--prompt`) reads the prompt and writes a per-session marker carrying
-an excerpt. An unarmed session never hears from this hook: a recap that says "next batch
-tomorrow" after the user said stop is legitimate, and a guard that fires there gets uninstalled.
+an excerpt. A recap that says "next batch tomorrow" after the user said stop is legitimate, and a
+guard that fires there gets uninstalled, so an unarmed session hears from it only in the case
+below.
 
 What it checks: the last TAIL_CHARS of the final message (`last_assistant_message` from the
 payload, the transcript only when it lacks one) against the promise patterns ("je continue", "je
 passe au lot suivant", "next batch", "I'll pick it up", "running in the background, will land").
 A match while armed blocks the stop, with a reason naming the target.
+
+A job still running, in EVERY session, armed or not (2026-10-16, after the relapse of 2026-10-15:
+the turn ended on "Les tests sont en cours. Le reste de la livraison (commit, push, synchro du
+hub) et le rapport complet attendent leur résultat.", and the user: "tu m'as pas donné le
+resultq... ca a compact mid response ou quoi"). That turn got past this gate two ways: the
+session was unarmed (the user had asked for four fixes and set no target), and no pattern read
+French for "still running". The model had put its own test run in the background and ended the
+turn to wait for the notification, which came five minutes later, after the user had already
+asked where the result was. So the gate also
+reads the transcript: a shell job of this session (a Bash call whose result carries a
+backgroundTaskId, explicit `run_in_background` or backgrounded on the way) launched since the last
+prompt of the user, with no task-notification and no TaskStop for it yet, is work in flight whose
+result the turn could still give. When one is pending and the final message ends on a promise or
+on a deferral to it (PENDING_SRC: "sont en cours", "attendent leur résultat", "dès que les tests
+passent", "still running", "once the tests finish"), the stop is blocked and told to wait for the
+job inside the turn. A background subagent or a Monitor is not such a job: the harness can only
+deliver those by ending the turn, and a turn that ends on them is the harness's own way to wait.
 
 The bounds: the re-answer of a stop chain is checked like the first answer; the gate lets go after
 CHAIN_CAP blocks in a row (a `cap` row in the ledger and a systemMessage). A crash or a timeout
@@ -92,8 +111,26 @@ PROMISE_SRC = r"""
   | la\s+suite\s+(?:arrive|suit|dans)
 """
 
+# A deferral of the turn's result to work still running. Judged only while a shell job of the
+# session is pending (see pending_jobs): alone, "en cours" or "still running" describes the
+# work of someone else as often as a promise.
+PENDING_SRC = r"""
+    \b(?:sont|est|reste(?:nt)?)\s+(?:encore\s+|toujours\s+)?en\s+cours\b      # "Les tests sont en cours"
+  | \btourne(?:nt)?\s+(?:encore\s+|toujours\s+)?en\s+(?:fond|arri[eè]re[\s-]plan)\b
+  | \b(?:attend(?:ent)?|en\s+attendant)\s+(?:leur|son|sa|le|la|les)\s+(?:r[ée]sultats?|fin|retour|verdict)\b
+  | \bd[eè]s\s+qu(?:e\s|')[^.\n]{0,60}?\b(?:fini[st]?|finissent|termin\w*|passe(?:nt)?\b|revien\w*)
+  | \bje\s+reviens\s+(?:vers\s+toi\s+)?(?:avec|quand|d[eè]s)\b
+  | \bstill\s+(?:running|in\s+progress)\b
+  | \b(?:waiting|wait)\s+(?:on|for)\s+(?:the|their|its)\s+(?:results?|outputs?|tests?|run|build|verdict)\b
+  | \bonce\s+(?:it|they|the\s+(?:tests?|suites?|build|run|checks?|job))\s+(?:finish(?:es)?|completes?|pass(?:es)?|lands?|comes?\s+back|exits?)\b
+"""
+
 FLAGS = re.I | re.X
 _COMPILED = {}
+JOB_SHOWN = 3
+TASK_ID = re.compile(r"<task-id>([^<\s]+)</task-id>")
+NOT_A_PROMPT = ("<task-notification>", "<local-command", "<system-reminder>",
+                "This session is being continued", "[Request interrupted")
 
 
 def _alternatives(where, value):
@@ -103,13 +140,16 @@ def _alternatives(where, value):
 
 
 def patterns(cfg):
-    """(target, promise) compiled with the configured extras appended as alternatives. An extra
-    that does not compile, or is not a list of strings, is a config.ConfigError."""
+    """(target, promise, pending) compiled with the configured extras appended as alternatives;
+    `pending` is the promise set plus PENDING_SRC. An extra that does not compile, or is not a
+    list of strings, is a config.ConfigError."""
     key = json.dumps([cfg.get("target_patterns_extra"), cfg.get("promise_patterns_extra")])
     if key not in _COMPILED:
         out = []
         for where, base in (("target_patterns_extra", TARGET_SRC),
-                            ("promise_patterns_extra", PROMISE_SRC)):
+                            ("promise_patterns_extra", PROMISE_SRC),
+                            ("promise_patterns_extra", PROMISE_SRC.rstrip() + "\n  |"
+                             + PENDING_SRC.lstrip("\n"))):
             extras = _alternatives(where, cfg.get(where) or [])
             src = base.rstrip() + "".join("\n  | (?:{}\n)".format(a) for a in extras)
             try:
@@ -163,12 +203,116 @@ def promise_in(text, cfg=None):
     return m.group(0) if m else None
 
 
+def deferral_in(text, cfg=None):
+    """A promise, or a deferral of the result to work still running (PENDING_SRC), ending `text`
+    (its last TAIL_CHARS), or None. Read only while a shell job of the session is pending."""
+    m = patterns(_settings(cfg))[2].search((text or "")[-TAIL_CHARS:])
+    return m.group(0) if m else None
+
+
+def _prompt_text(row):
+    """The text of a prompt the user typed, or None for any other row (a tool result, a
+    task-notification, a compaction summary, a meta or sidechain row)."""
+    if row.get("type") != "user" or row.get("isSidechain") or row.get("isMeta") \
+            or row.get("isCompactSummary"):
+        return None
+    content = (row.get("message") or {}).get("content")
+    if isinstance(content, list):
+        if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
+            return None
+        text = "\n".join(b.get("text", "") for b in content
+                         if isinstance(b, dict) and b.get("type") == "text")
+    elif isinstance(content, str):
+        text = content
+    else:
+        return None
+    text = text.strip()
+    return text if text and not text.startswith(NOT_A_PROMPT) else None
+
+
+class JobScan:
+    """The shell jobs this session launched in the background since the last prompt of the user
+    and that are still running, fed one transcript line at a time: a tool result carrying a
+    backgroundTaskId, with no <task-id> of a task-notification (Claude Code writes its queue row
+    the moment the job exits, delivered or not) and no TaskStop naming it since. A subagent
+    (agentId) or a Monitor (taskId) is never one. Only the lines that can matter are parsed, so a
+    transcript of tens of megabytes reads in a fraction of a second."""
+
+    def __init__(self):
+        self.jobs, self._described = {}, {}
+
+    def feed(self, line):
+        if "<task-id>" in line:
+            for tid in TASK_ID.findall(line):
+                self.jobs.pop(tid, None)
+        if not ("backgroundTaskId" in line or "run_in_background" in line
+                or "TaskStop" in line or "KillShell" in line
+                or (('"type":"user"' in line or '"type": "user"' in line)
+                    and '"tool_result"' not in line)):
+            return
+        try:
+            row = json.loads(line)
+        except ValueError:
+            return
+        if not isinstance(row, dict) or row.get("isSidechain"):
+            return
+        if _prompt_text(row) is not None:
+            self.jobs.clear()
+            return
+        content = (row.get("message") or {}).get("content")
+        blocks = [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
+        for b in blocks:
+            if b.get("type") != "tool_use":
+                continue
+            args = b.get("input") if isinstance(b.get("input"), dict) else {}
+            if b.get("name") == "Bash" and args.get("run_in_background"):
+                self._described[b.get("id")] = str(args.get("description") or "").strip()
+            elif b.get("name") in ("TaskStop", "KillShell"):
+                for k in ("task_id", "shell_id", "id"):
+                    self.jobs.pop(str(args.get(k)), None)
+        result = row.get("toolUseResult")
+        if isinstance(result, dict) and result.get("backgroundTaskId"):
+            tid = str(result["backgroundTaskId"])
+            use = next((b.get("tool_use_id") for b in blocks if b.get("type") == "tool_result"),
+                       None)
+            self.jobs[tid] = self._described.get(use, "")
+
+
+def pending_jobs(transcript_path):
+    """{task id: description} of the session's background shell jobs still running (JobScan)."""
+    scan = JobScan()
+    try:
+        fh = open(transcript_path or "", encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    with fh:
+        for line in fh:
+            scan.feed(line)
+    return scan.jobs
+
+
 def reason_text(promise, excerpt, cfg):
     text = ("The turn ends on a promise to continue (\"{}\") while the user set a target: \"{}\". "
             "Do the next batch now, in this turn, until the target is reached or the pool is "
             "exhausted; a batch report is a line inside the running turn, never a stop. If the "
             "context runs short, hand the remaining work to a subagent before ending. "
             "(promise-gate)".format(promise, excerpt))
+    suffix = cfg.get("reason_suffix")
+    return text + " " + suffix if suffix else text
+
+
+def job_reason_text(promise, jobs, cfg):
+    names = ", ".join("\"{}\" ({})".format(d, t) if d else t
+                      for t, d in list(jobs.items())[:JOB_SHOWN])
+    more = len(jobs) - JOB_SHOWN
+    text = ("The turn ends on work still running (\"{}\"): this session's background job {}{} "
+            "has not finished, so the final message carries no result, and the user reads it as "
+            "the end of the work. Wait for it inside this turn, with foreground Bash calls of a "
+            "few minutes each that return when it exits (its process gone, or its output file "
+            "showing its end), so a message from the user is read between them; never start a "
+            "job with effects a second time. Then finish what waited on it and give the result. "
+            "(promise-gate)".format(promise, names,
+                                    " and {} more".format(more) if more > 0 else ""))
     suffix = cfg.get("reason_suffix")
     return text + " " + suffix if suffix else text
 
@@ -189,18 +333,24 @@ def on_stop():
     cfg = trace.plugin_settings(payload, root=PLUGIN_ROOT)
     patterns(cfg)  # a bad extra is a loud crash even on an unarmed session
     excerpt = armed_excerpt(trace.session_key(payload))
-    if not excerpt:
-        return 0
-    promise = promise_in(transcript.final_text(payload), cfg)
+    text = transcript.final_text(payload)
+    promise = promise_in(text, cfg) if excerpt else None
+    jobs = {}
+    if not promise:
+        deferral = deferral_in(text, cfg)
+        jobs = pending_jobs(payload.get("transcript_path")) if deferral else {}
+        promise = deferral if jobs else None
     if not promise:
         trace.chain_clear(HOOK, payload)
         return 0
-    if not trace.chain_should_block(HOOK, payload, "promise: " + promise):
-        print(trace.cap_message(HOOK, "promise: " + promise))
+    detail = ("job: " if jobs else "promise: ") + promise
+    if not trace.chain_should_block(HOOK, payload, detail):
+        print(trace.cap_message(HOOK, detail))
         return 0
-    trace.witness("stop_promise_gate", "Stop", "promise_ending", payload)
-    print(json.dumps({"decision": "block", "reason": reason_text(promise, excerpt, cfg)},
-                     ensure_ascii=False))
+    trace.witness("stop_promise_gate", "Stop", "job_pending" if jobs else "promise_ending",
+                  payload)
+    reason = job_reason_text(promise, jobs, cfg) if jobs else reason_text(promise, excerpt, cfg)
+    print(json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False))
     return 0
 
 
