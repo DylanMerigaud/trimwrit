@@ -633,6 +633,7 @@ which succeeds with empty output before anything is staged. Both misses are in t
 | `trimwrit prune` | rules that no longer earn their place |
 | `trimwrit viz` | serialize the pipeline into a payload and open it as a canvas |
 | `trimwrit stats` | aggregate a runtime ledger and flag dead weight and friction, no deletion |
+| `trimwrit report` | the whole life of one harness from its own ledgers: counts, dates, doors and case deltas, never a correction's words |
 | `trimwrit audit` | one table for every harness on the machine, and which ones have no case |
 | `trimwrit adopt` | bring the rules written before trimwrit existed into its registry, with no case |
 

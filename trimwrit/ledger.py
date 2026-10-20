@@ -147,15 +147,21 @@ def _amend(cid, field, value, root=".", path=None):
     return row
 
 
-def folded(root=".", path=None):
-    """Corrections with their amendments applied, in id order. This is what every reader wants."""
+def fold(row_list):
+    """Corrections with their amendments applied, in id order, from rows already in hand. A
+    reader that has to survive a damaged file reads the lines itself and folds here."""
     by_id = {}
-    for r in rows(root, path):
+    for r in row_list:
         if r.get("kind") == KIND_CORRECTION:
             by_id[r["id"]] = dict(r)
         elif r.get("kind") == "amend" and r["id"] in by_id:
             by_id[r["id"]][r["field"]] = r["value"]
     return [by_id[k] for k in sorted(by_id)]
+
+
+def folded(root=".", path=None):
+    """Corrections with their amendments applied, in id order. This is what every reader wants."""
+    return fold(rows(root, path))
 
 
 def attach_case(cid, case_id, root=".", path=None):
