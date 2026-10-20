@@ -8,22 +8,24 @@
   `evals/results/history.jsonl` when that file exists), and prints counts and dates: corrections
   (total, first and last, tagged, distinct tags, with a case, promoted), refusals (total, first
   and last, how many took effect, the count per door) and, per case, the latest measured run
-  with and without the rule and its delta. `--json` prints the same document. A stranger runs it
-  on their own harness and gets numbers of the same shape, so a figure quoted from a harness is
-  reproducible.
+  with and without the rule and its delta. A case is shown by its number only (`0064`), because
+  a case's directory name carries a slug of the correction's own words. `--json` prints the same
+  document. A stranger runs it on their own harness and gets numbers of the same shape, so a
+  figure quoted from a harness is reproducible.
 - **It never emits free text.** A correction's `text`, `consequence` and `session`, and a
   refusal's `reason` and `session_id`, name real people and real incidents; the report builds
-  every value from a count, a date, a door name or a case id, and copies no field through. A test
+  every value from a count, a date, a door name or a case number, and copies no field through. A test
   plants a sentinel in each of those fields and fails if it appears in the text render or in the
   JSON.
 - **Dates are computed in UTC.** Real ledgers mix `-0500`, `+0200`, `Z` and `.753Z`; a string
   sort of them names the wrong first and last day. Every timestamp is parsed and converted
   before it is compared, and printed as `2026-08-24T22:50:46Z`.
-- **A damaged file does not stop it.** A blank line, a line that is not JSON and a row without
-  the key its kind needs are skipped and counted per input. A history run with `unmeasured` set,
+- **A damaged file does not stop it.** A blank line, a line that is not JSON or not valid UTF-8,
+  an offset no clock has (`+9999`, which just takes no part in the dates), and a row without
+  the key its kind needs are skipped and counted per input. A history run with a truthy `unmeasured`,
   a nonzero unmeasured tally or a null delta is counted apart and never enters the per-case
-  table. An explicit `--ledger`, `--refusals` or `--history` that cannot be read is refused with
-  exit 2, like `stats`; an omitted optional input is simply absent (`null`) from the report.
+  table. An explicit `--ledger`, `--refusals` or `--history` that cannot be read (an empty path
+  included) is refused with exit 2, like `stats`; an omitted optional input is simply absent (`null`) from the report.
 - `ledger.fold(rows)` is `folded` split in two, so a reader that tolerates damaged lines can
   fold the rows it kept.
 

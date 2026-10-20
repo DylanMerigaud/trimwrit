@@ -34,6 +34,7 @@ from . import ledger as ledger_mod
 _TS = re.compile(r"^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?"
                  r"(Z|[+-]\d{2}:?\d{2})?$")
 UNKNOWN_DOOR = "(unknown)"
+UNNAMED_CASE = "(unnamed)"
 
 
 def parse_ts(value):
@@ -45,13 +46,13 @@ def parse_ts(value):
         return None
     y, mo, d, h, mi, s, frac, off = m.groups()
     micro = int((frac or "0")[:6].ljust(6, "0"))
-    if off in (None, "Z"):
-        tz = timezone.utc
-    else:
-        sign = -1 if off[0] == "-" else 1
-        digits = off[1:].replace(":", "")
-        tz = timezone(sign * timedelta(hours=int(digits[:2]), minutes=int(digits[2:])))
     try:
+        if off in (None, "Z"):
+            tz = timezone.utc
+        else:
+            sign = -1 if off[0] == "-" else 1
+            digits = off[1:].replace(":", "")
+            tz = timezone(sign * timedelta(hours=int(digits[:2]), minutes=int(digits[2:])))
         return datetime(int(y), int(mo), int(d), int(h), int(mi), int(s), micro,
                         tzinfo=tz).astimezone(timezone.utc)
     except (ValueError, OverflowError):
@@ -66,14 +67,16 @@ def _read(path, required=()):
     """([objects], malformed count). Each object is a dict holding every key in `required`."""
     out = []
     malformed = 0
-    with open(path, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
+    # Binary, and decoded line by line: one invalid byte is one malformed line, not a crash
+    # (UnicodeDecodeError is a ValueError, and no OSError).
+    with open(path, "rb") as fh:
+        for raw in fh:
+            raw = raw.strip()
+            if not raw:
                 malformed += 1
                 continue
             try:
-                obj = json.loads(line)
+                obj = json.loads(raw.decode("utf-8"))
             except ValueError:
                 malformed += 1
                 continue
@@ -146,16 +149,22 @@ def _number(value):
 
 def _is_unmeasured(row):
     """A run is unmeasured when its delta is not a number, or when it says some of its runs
-    were: `unmeasured` true, a positive count, or the {"with": n, "without": m} tally the
-    runner writes with a nonzero side. None of these is averaged in."""
+    were: any truthy `unmeasured` (true, a positive count, a non-empty string), or the
+    {"with": n, "without": m} tally the runner writes with a nonzero side. None of these is
+    averaged in."""
     if _number(row.get("delta")) is None:
         return True
     flag = row.get("unmeasured")
     if isinstance(flag, dict):
         return any(_number(v) for v in flag.values())
-    if isinstance(flag, bool):
-        return flag
-    return bool(_number(flag))
+    return bool(flag)
+
+
+def _case_number(case_id):
+    """Only the numeric prefix of a case id leaves this module. A case directory is the id plus
+    a slug of the correction's own words, so the slug is free text."""
+    m = re.match(r"\d+", case_id)
+    return m.group(0) if m else UNNAMED_CASE
 
 
 def _cases(path):
@@ -175,7 +184,7 @@ def _cases(path):
     for case, (dt, r) in latest.items():
         runs = r.get("runs")
         entries.append({
-            "case": case,
+            "case": _case_number(case),
             "with": _number(r.get("with")),
             "without": _number(r.get("without")),
             "delta": _number(r.get("delta")),
@@ -196,8 +205,8 @@ def build(ledger_path, refusals_path=None, history_path=None):
     OSError (the CLI turns that into a refusal)."""
     return {
         "corrections": _corrections(ledger_path),
-        "refusals": _refusals(refusals_path) if refusals_path else None,
-        "cases": _cases(history_path) if history_path else None,
+        "refusals": _refusals(refusals_path) if refusals_path is not None else None,
+        "cases": _cases(history_path) if history_path is not None else None,
     }
 
 

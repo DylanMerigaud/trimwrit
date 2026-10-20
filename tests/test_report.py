@@ -66,7 +66,7 @@ def test_never_emits_free_text(tmp_path):
          "subject_hash": SENTINEL, "took_effect": True},
     ])
     his = _write(tmp_path / "h.jsonl", [
-        {"ts": "2026-09-02T01:25:55Z", "case": "0020-x", "with": 1.0, "without": 0.0,
+        {"ts": "2026-09-02T01:25:55Z", "case": "0099-" + SENTINEL + "-words", "with": 1.0, "without": 0.0,
          "delta": 1.0, "runs": 3, "unmeasured": {"with": 0, "without": 0},
          "target": [SENTINEL], "claude": SENTINEL},
     ])
@@ -74,6 +74,20 @@ def test_never_emits_free_text(tmp_path):
     assert SENTINEL not in report.render(doc)
     assert SENTINEL not in json.dumps(doc)
     assert doc["refusals"]["count"] == 1
+    assert [e["case"] for e in doc["cases"]["latest"]] == ["0099"]
+    assert "0099" in report.render(doc)
+
+
+def test_case_shown_by_number_only(tmp_path):
+    his = _write(tmp_path / "h.jsonl", [
+        {"ts": "2026-09-01T00:00:00Z", "case": "0064-il-y-a-rien-qui", "with": 1.0,
+         "without": 0.0, "delta": 1.0, "runs": 3},
+        {"ts": "2026-09-01T00:00:00Z", "case": "no-number-here", "with": 1.0,
+         "without": 0.5, "delta": 0.5, "runs": 3},
+    ])
+    doc = report.build(_write(tmp_path / "l.jsonl", []), history_path=his)
+    assert [e["case"] for e in doc["cases"]["latest"]] == ["0064", "(unnamed)"]
+    assert "il-y-a" not in report.render(doc) + json.dumps(doc)
 
 
 def test_malformed_lines_counted(tmp_path):
@@ -81,31 +95,36 @@ def test_malformed_lines_counted(tmp_path):
     ref = _write(tmp_path / "r.jsonl", [{"at": "2026-09-30T14:59:45Z", "door": "d"}],
                  raw=["", "garbage"])
     his = _write(tmp_path / "h.jsonl", [], raw=["", "nope"])
+    for path in (led, ref, his):
+        with open(path, "ab") as fh:
+            fh.write(b"\xff\xfe\n")
     doc = report.build(led, ref, his)
     assert doc["corrections"]["count"] == 1
-    assert doc["corrections"]["malformed"] == 3
+    assert doc["corrections"]["malformed"] == 4
     assert doc["refusals"]["count"] == 1
-    assert doc["refusals"]["malformed"] == 2
-    assert doc["cases"]["malformed"] == 2
+    assert doc["refusals"]["malformed"] == 3
+    assert doc["cases"]["malformed"] == 3
     assert report.render(doc)
 
 
 def test_unmeasured_history_rows_apart(tmp_path):
     his = _write(tmp_path / "h.jsonl", [
-        {"ts": "2026-09-01T00:00:00Z", "case": "a", "with": 1.0, "without": 0.0, "delta": 1.0,
+        {"ts": "2026-09-01T00:00:00Z", "case": "0001", "with": 1.0, "without": 0.0, "delta": 1.0,
          "runs": 3, "unmeasured": {"with": 0, "without": 0}},
-        {"ts": "2026-09-02T00:00:00Z", "case": "b", "with": None, "without": 0.0, "delta": None,
+        {"ts": "2026-09-02T00:00:00Z", "case": "0002", "with": None, "without": 0.0, "delta": None,
          "runs": 3, "unmeasured": {"with": 3, "without": 0}},
-        {"ts": "2026-09-03T00:00:00Z", "case": "c", "with": 1.0, "without": 0.0, "delta": 1.0,
+        {"ts": "2026-09-03T00:00:00Z", "case": "0003", "with": 1.0, "without": 0.0, "delta": 1.0,
          "runs": 3, "unmeasured": True},
-        {"ts": "2026-09-04T00:00:00Z", "case": "d", "with": 0.5, "without": 0.0, "delta": 0.5,
+        {"ts": "2026-09-04T00:00:00Z", "case": "0004", "with": 0.5, "without": 0.0, "delta": 0.5,
          "runs": 3},
+        {"ts": "2026-09-05T00:00:00Z", "case": "0005", "with": 1.0, "without": 0.0, "delta": 1.0,
+         "runs": 3, "unmeasured": "yes"},
     ])
     led = _write(tmp_path / "l.jsonl", [])
     cases = report.build(led, history_path=his)["cases"]
     assert cases["measured"] == 2
-    assert cases["unmeasured"] == 2
-    assert [r["case"] for r in cases["latest"]] == ["a", "d"]
+    assert cases["unmeasured"] == 3
+    assert [r["case"] for r in cases["latest"]] == ["0001", "0004"]
     assert [r["delta"] for r in cases["latest"]] == [1.0, 0.5]
 
 
@@ -141,14 +160,15 @@ def test_missing_explicit_path_exit_2(tmp_path, capsys):
     led = _write(tmp_path / "l.jsonl", [_corr("0001")])
     missing = str(tmp_path / "nope.jsonl")
     for flag in ("--refusals", "--history", "--ledger"):
-        args = ["report", "--ledger", led]
-        if flag == "--ledger":
-            args = ["report", "--ledger", missing]
-        else:
-            args += [flag, missing]
-        assert main(args) == 2
-        err = capsys.readouterr().err
-        assert "refused: cannot read" in err and missing in err
+        for bad in (missing, ""):
+            args = ["report", "--ledger", led]
+            if flag == "--ledger":
+                args = ["report", "--ledger", bad]
+            else:
+                args += [flag, bad]
+            assert main(args) == 2
+            err = capsys.readouterr().err
+            assert "refused: cannot read" in err and bad in err
 
 
 def test_omitted_inputs_are_null(tmp_path, monkeypatch, capsys):
@@ -194,4 +214,6 @@ def test_parse_ts_shapes():
     assert f("2026-08-24T22:00:00.753Z").isoformat() == "2026-08-24T22:00:00.753000+00:00"
     assert f("2026-08-24T22:00:00Z").isoformat() == "2026-08-24T22:00:00+00:00"
     assert f("2026-08-24T22:00:00").isoformat() == "2026-08-24T22:00:00+00:00"
+    assert f("2026-08-24T22:00:00+9999") is None
+    assert f("2026-08-24T22:00:00-2400") is None
     assert f("junk") is None and f(None) is None and f(5) is None

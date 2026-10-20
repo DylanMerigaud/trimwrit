@@ -697,15 +697,15 @@ DEFAULT_HISTORY = os.path.join("evals", "results", "history.jsonl")
 
 
 def cmd_report(args):
-    ledger_path = args.ledger or ledger_mod.path_for(".")
+    ledger_path = args.ledger if args.ledger is not None else ledger_mod.path_for(".")
     history = args.history
     if history is None and os.path.exists(DEFAULT_HISTORY):
         history = DEFAULT_HISTORY
     try:
         doc = report_mod.build(ledger_path, args.refusals, history)
     except OSError as exc:
-        print("refused: cannot read {}: {}".format(exc.filename or ledger_path, exc.strerror or exc),
-              file=sys.stderr)
+        shown = exc.filename if exc.filename is not None else ledger_path
+        print("refused: cannot read {}: {}".format(shown, exc.strerror or exc), file=sys.stderr)
         return 2
 
     if args.json:
