@@ -1,0 +1,17 @@
+{
+  "description": "bare-id-gate: a final message does not show an internal id standing alone",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/bare_id_gate.py\"",
+            "timeout": 10,
+            "statusMessage": "An id shown bare?"
+          }
+        ]
+      }
+    ]
+  }
+}

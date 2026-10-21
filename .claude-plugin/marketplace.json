@@ -4,7 +4,7 @@
     "name": "Dylan Merigaud",
     "url": "https://github.com/DylanMerigaud"
   },
-  "description": "trimwrit, which makes a harness rule earn its place with a test, and ten gates, each with its tests and, for the Stop gates, the eval case that measures it.",
+  "description": "trimwrit, which makes a harness rule earn its place with a test, and eleven gates, each with its tests and, for the Stop gates, the eval case that measures it.",
   "plugins": [
     {
       "name": "trimwrit",
@@ -85,6 +85,16 @@
       "license": "MIT",
       "category": "productivity",
       "tags": ["autonomy", "hand-back", "stop-hook", "asking", "gate"]
+    },
+    {
+      "name": "bare-id-gate",
+      "source": "./plugins/bare-id-gate",
+      "description": "Refuses to end a turn whose final message shows an internal id standing alone (a commit sha, a ticket key, a queue code) instead of naming the thing in the user's words, with the id after it in parentheses only when the user needs it.",
+      "version": "0.1.0",
+      "author": { "name": "Dylan Merigaud" },
+      "license": "MIT",
+      "category": "productivity",
+      "tags": ["readability", "identifiers", "stop-hook", "writing", "gate"]
     },
     {
       "name": "main-checkout-guard",

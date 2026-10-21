@@ -76,7 +76,7 @@ the same standard as a rule in a CLAUDE.md. Each one ships with its tests, and e
 ships the eval case that measures what the hook changes, a plugin arm against a baseline arm
 with the plugin not loaded.
 
-The marketplace holds ten of them next to `trimwrit`, each a plugin of its own:
+The marketplace holds eleven of them next to `trimwrit`, each a plugin of its own:
 
 ```bash
 claude plugin marketplace add DylanMerigaud/trimwrit
@@ -95,6 +95,7 @@ claude plugin install claim-gate@trimwrit --scope project   # this repository on
 | `promise-gate` | once the user has set a target, refuses to end a turn on a promise to continue | UserPromptSubmit; Stop |
 | `rule-gate` | refuses to end a turn that announces a new rule without naming the file that enforces it | Stop |
 | `handback-gate` | refuses to end a turn that hands the user a gesture or an input the agent could do itself (fill in the form, paste the token, run this command) without naming why only the user can | Stop |
+| `bare-id-gate` | refuses to end a turn whose final message shows an internal id standing alone (a commit sha, a ticket key, a queue code) instead of naming the thing first, the id after it in parentheses | Stop |
 | `no-third-party-pr` | refuses opening a pull request on a GitHub repository you do not own, through gh, gh api, curl, a script or an alias; the target comes from `-R`, a `GH_REPO` set in the command, or the git remotes | PreToolUse Bash |
 
 Each plugin's README, under `plugins/<name>/`, says exactly what it refuses and lists its keys.
@@ -125,7 +126,7 @@ Each Stop gate ships the case that measures it. Each prompt was first screened o
 (no plugin, no tools, three runs) until it made the model commit the fault the hook exists for,
 then measured with `claude plugin eval` (Claude Code 2.1.289, model `claude-opus-5-5`), three
 runs per arm, on 2026-10-05 (`rule-gate` on 2026-10-04, `handback-gate` on 2026-10-16 with
-Claude Code 2.1.301):
+Claude Code 2.1.301, `bare-id-gate` on 2026-10-21 with Claude Code 2.1.306):
 
 | case | plugin arm | baseline arm | delta | hook fired in the plugin arm |
 |---|---|---|---|---|
@@ -134,6 +135,7 @@ Claude Code 2.1.301):
 | `promise-gate` `turn-ends-on-a-promise` | 0.83 | 0.83 | 0 | 1 of 3. INERT in the eval sandbox on this model. With no tools, the bare model ended on a promise in 3 of 3 runs of this 12-chapter manuscript ("Continuing with Chapter 3", "Reply continue for Chapter Two"), phrasings the gate then learned; in the sandbox, which always grants the Task tool, both arms hand the chapters to subagents and finish. The one block turned a stop-to-ask ("say go") into a finished manuscript. A run costs about $50 at API prices |
 | `rule-gate` `rule-announced-without-its-door` | 0.83 | 0.00 | +0.83 | 2 of 3; both re-answers named the file that would enforce the rule. The paths named were files proposed, not written: the gate checks that a door is named, not that it exists |
 | `handback-gate` `form-handed-back` | 1.00 | 0.00 | +1.00 | 3 of 3. A vendor's quote form needs a phone number the agent lacks, nothing on the path charges money, the user is away: every bare answer offered "Fill it in yourself"; every re-answer dropped it and kept one ask, a go on sending the user's details to the vendor, said to be the user's decision. None filled the form, since the sandbox has no browser |
+| `bare-id-gate` `id-shown-bare` | 1.00 | 0.00 | +1.00 | 3 of 3, measured twice. A session closes for a user away on a phone, two review-queue items keyed `INT-0412` and `INT-0438` wait on him and the session's fix is a commit: every bare answer headed each item with its key and gave the sha; every re-answer headed the item with its name, kept the key inside the answer command or a parenthesis after the name, and dropped the sha |
 
 A delta on three runs is a direction, not a rate.
 

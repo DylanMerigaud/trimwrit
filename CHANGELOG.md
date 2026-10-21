@@ -1,5 +1,32 @@
 # Changelog
 
+## bare-id-gate 0.1.0, 2026-10-21
+
+- **A final message does not show an internal id standing alone.** The eleventh gate, a Stop
+  hook: a git sha, a UUID, a ticket-like key (`intake-068`, `PROJ-123`) or an id of a family the
+  configuration adds (`id_patterns_extra`: one user's review-queue codes `c37`, his plan tasks
+  `T11`, his rule ids `R0042`) is refused unless it sits in a parenthesis with a word of prose
+  between it and the previous id of its line: "the five dormant rows (c37)", "merged on main
+  (b6bef2fd)". A second id in one parenthesis is bare, since "five tests (intake-004,
+  intake-195)" names no test. Fences, command code spans, URLs, paths, quotes and block quotes
+  are dropped first; a label the message numbers from 1 at the head of its items, a standard
+  (SHA-256), a dated word (pre-2025) and a commit range's far end are not ids; no configuration
+  key adds an exemption. It answers a rule that lived only as a CLAUDE.md sentence from
+  2026-09-01 ("intake-068 never show me things like that") while closing blocks kept ending on
+  "c37 and c43 whenever you like". Measured on 38,071 turn-final messages of that user's
+  transcripts (50 days, all projects): the block his "what are c37 and c43" answered is refused,
+  788 in all (2.1 percent) with the default families, 1,187 (3.1 percent) with his three; a
+  hand-labelled sample of 40 refusals held 40 ids the user would have had to look up.
+- **Its case, `id-shown-bare`**: a session closes for a user away on a phone, two review-queue
+  items keyed `INT-0412` and `INT-0438` wait on him and the fix of the session is commit
+  `4f2a9c1e`. Measured twice with `claude plugin eval` (Claude Code 2.1.306, `claude-opus-5-5`,
+  three runs per arm): plugin 1.00, baseline 0.00, delta +1.00, hook fired 3 of 3 both times.
+  Every baseline answer headed each item with its key and gave the sha; every re-answer named
+  the item first, kept the key in the answer command or in a parenthesis, and dropped the sha.
+  The grader is rebuilt from the hook's families by a test, which also runs it under node; the
+  gaps a regex on the raw message cannot close (a fence, a quote, a JSON result, a parenthesis
+  with no word before it, a list of ids in one parenthesis) are pinned by a test.
+
 ## 0.8.2, 2026-10-21
 
 - **`trimwrit prune`'s `inert-fail` wording fits every case it covers.** The finding covers

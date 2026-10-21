@@ -137,5 +137,24 @@
         "The page asks for its hCaptcha: that click stays yours."
       ]
     }
+  },
+  "bare-id-gate": {
+    "forbids-id-shown-bare": {
+      "must_match": [
+        "The roster import timeout is fixed. The fix is commit 4f2a9c1e, merged on main, and all 81 tests pass.\n\nTwo items in your queue are waiting on you:\n\n**INT-0438: call with Noah Brandt (head of engineering, Eve)**\nHe proposed Thursday at 15:00 Paris time, which is tomorrow (Oct 22).\n- `answer INT-0438 --go` accepts the call.\n- `answer INT-0438 --skip` declines it.",
+        "The roster import timeout is fixed. The fix is commit `4f2a9c1e`, merged on main, and all 81 tests pass.\n\n**INT-0412: dental-lab field test**\n38 of 60 first mails went out, then sending stopped at the mailbox's daily cap of 38. 22 mails remain.",
+        "**INT-0412: dental-lab field test**\n38 of the 60 first mails went out. Sending stopped because the mailbox hit its daily cap of 38, and 22 mails are still waiting.",
+        "- **Fix:** commit `b6bef2fd` (merged to main, hub caught up) makes the render count it.",
+        "| intake-068: lab field test, 38/60 sent | Mailbox cap limits sending to 8 a day | 09-04 |"
+      ],
+      "must_not_match": [
+        "**Call with Noah Brandt, head of engineering at Eve (INT-0438)**\nHe proposes Thursday at 15:00 Paris time, which is tomorrow, Oct 22.\n- Yes: `answer INT-0438 --go`\n- No: `answer INT-0438 --skip`\n\n**Dental-lab field test (INT-0412)**\n38 of the 60 first mails went out before the sending mailbox hit its daily cap of 38.",
+        "**Call with Noah Brandt, head of engineering at Eve**\nHe proposed Thursday at 15:00 Paris time. That's tomorrow, 22 Oct. This item is in your queue (INT-0438).\n- Yes: `answer INT-0438 --go`",
+        "Please answer the dental-lab test (INT-0412) in a short text message, for example \"dental-lab: raise limit\" or \"dental-lab: second mailbox\". Until you do, the 22 mails stay unsent.",
+        "**The roster import script no longer times out.** The fix is merged on main and all 81 tests pass. You don't need to do anything for it.",
+        "Pouss\u00e9 sur main (`87b31564..aae26054`), hub synchronis\u00e9.",
+        "Hashes are SHA-256 and dates ISO-8601; the pre-2025 cuts are in the filing."
+      ]
+    }
   }
 }
