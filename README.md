@@ -274,28 +274,32 @@ kind         rule     why
 ------------------------------------------------------------------------
 orphan       R0031    CLAUDE.md:88 names case 0031, which is not in evals/. Nothing can show this rule still earns its place.
 inert        R0014    case 0014-json-only: 18/18 with, 18/18 without, P(helps) 0.499. The model behaves without it, decided. Delete the rule and keep the case.
-inert-fail   R0022    case 0022-cite-the-source: 1/30 with, 0/30 without, P(helps) 0.753. The two arms are equivalent, but the case is not reliably passed without the rule. Rewrite the rule or its case before deleting anything.
+inert-fail   R0022    case 0022-cite-the-source: 1/24 with, 0/24 without, P(helps) 0.754. The two arms are equivalent, but the case is not reliably passed without the rule. Rewrite the rule or its case before deleting anything.
 harmful      R0040    case 0040-one-question-at-a-time: 0/6 with, 6/6 without, P(helps) 0.000. Decided, the rule makes its case worse: rewrite it.
 ```
 
 `prune` reads the verdicts `run --decide` wrote to `evals/results/latest.json`. `--apply`
-deletes an orphan rule and a rule whose case is decided `inert`, and writes each removal into
-the same ledger as the promotion, with the reason. It keeps an `inert-fail` rule: the case is
+deletes an orphan rule and a rule whose case is decided `inert`, nothing else, and writes each
+removal into the same ledger as the promotion, with the reason. It keeps an `inert-fail` rule: the case is
 not reliably passed even with the rule, so the numbers cannot say the rule is unneeded, and the
 fix is a rewrite of the rule or of its case. It keeps a `harmful` rule: the case passes less
 often with it than without it, and that also calls for a rewrite, not a silent deletion. A rule
 that cites several cases stays until every one of them is decided `inert`.
 
-A verdict is about the file as it was measured, so `--apply` refuses to delete a rule whose file
-changed since: when the file no longer hashes to what the `with` arm was seeded with, the rule
+A verdict is about the rule as it was measured, so `--apply` refuses to delete a rule that
+changed since: when a rule block citing the case no longer hashes to what was measured, the rule
 stays and the line says "the rule file changed since it was measured; run `trimwrit run
---decide` again".
+--decide` again". An edit elsewhere in the same file, another rule deleted from it included, is
+not a change to that measurement. Under `--ablate file` the whole file was under test, so any
+edit to it is.
 
 A results file written by a plain `trimwrit run` carries no verdict. `prune` then reads the two
 means as it always has (a flat delta is `inert` when the case passes without the rule, at the
 pass line `--threshold`, default 1.0, and `inert-fail` below it) and adds one line: "measured
-with a fixed run count; `trimwrit run --decide` decides with enough runs". Whatever the
-finding, the case stays: it is what will notice if the behaviour comes back after a model
+with a fixed run count; `trimwrit run --decide` decides with enough runs". `--apply` deletes
+nothing on such a result: three runs per arm cannot tell an inert rule from noise, so the rule
+stays with "kept R...: measured with a fixed run count; run `trimwrit run --decide`". Whatever
+the finding, the case stays: it is what will notice if the behaviour comes back after a model
 update.
 
 ## How many runs
@@ -311,14 +315,18 @@ trimwrit prune --target CLAUDE.md --results --apply
 ```
 
 A case runs 3 times per arm, with the rule and without it. A run passes when its score reaches
-the pass line (`--threshold`, default 1.0). A run with no final text counts as attempted, never
-as a pass or a fail. After each batch the pass counts are compared, and a case still undecided
+the pass line (`--threshold`, default 1.0). A run with nothing to grade (no final text, an
+error, an API refusal) counts as attempted, never as measured, so it is neither a pass nor a
+fail. After each batch the pass counts are compared, and a case still undecided
 runs 3 more per arm, until the numbers decide or it has 30 runs per arm.
 
-The counts add up across invocations, under a key: the sha256 of the case directory, both arms'
-files, the two model ids, the pass line, the ablation mode and the sandbox note. Change any of
-them, one word of the rule included, and the count starts over, so no old run leaks into a new
-rule's verdict. A case already decided under its key is not run again. One that reached 30 runs
+The counts add up across invocations, under a key: the sha256 of the case directory, of the
+rule blocks citing the case (with `--ablate rule`; with `--ablate file`, of both arms' whole
+files), of the two model ids, the pass line, the ablation mode and the sandbox note. Change any
+of them, one word of the rule included, and the count starts over, so no old run leaks into a
+new rule's verdict. An edit elsewhere in the file keeps the count under `--ablate rule`: the
+global CLAUDE.md changes almost daily, and a deletion by prune must not reset every other rule
+of its file. A case already decided under its key is not run again. One that reached 30 runs
 per arm stays undecided until something in its key changes. A plain `run` writes its counts
 under the same key, so its runs count too.
 
@@ -348,7 +356,7 @@ repetitions, seed 7, batches of 3, at most 30 runs per arm, margin 0.2). This is
 | 0.9 / 0.9 | `inert` 39 percent, undecided about 60 percent, `keep` or `harmful` about 2 percent |
 
 So a rule is proven useless only when the model is reliable without it, and a small effect
-stays undecided rather than deleted. The cost is on the other side of the margin: a rule whose
+usually stays undecided rather than deleted. The cost is on the other side of the margin: a rule whose
 true effect is exactly 0.2 is called `inert` 7 percent of the time.
 
 **`--ablate rule` takes out only the rule.** The default, `--ablate file`, runs the without arm
@@ -447,7 +455,8 @@ trimwrit report --refusals refusals.jsonl
   unless the `trace` section of `trimwrit-gates.json` sends it elsewhere; one file per gate, so
   concatenate them.
 - `--history` (default `evals/results/history.jsonl` when it exists), the line `run` appends per
-  case: the latest measured run of each case, with the rule and without it, and the delta.
+  case: the latest measured run of each case, with the rule and without it, and the delta, and
+  one line counting the verdicts of `run --decide`, the latest per case.
 
 It never prints a correction's words. Every value is a count, a date in UTC, a door name or a
 case number, and a case is shown by its number only, because a case directory's name is a slug
@@ -647,8 +656,9 @@ delta looked like across every run anyone has done. One JSON line is appended pe
 invocation, with `target_sha256`, the sha256 of each ablated rule file as it was actually seeded
 into the `with` arm, so a later reader can tell a real regression from a rule that was simply
 rewritten between two runs. Each line also carries the evidence key, the ablation mode and the
-pass, measured and attempted counts per arm, which `run --decide` sums back, and a `--decide`
-line carries the verdict.
+pass, measured and attempted counts per arm, which `run --decide` sums back, `rules_sha256` (the
+hash of each rule block citing the case, under `--ablate rule`), and a `--decide` line carries
+the verdict.
 
 ## Running the suite faster: --jobs
 

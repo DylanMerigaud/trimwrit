@@ -45,10 +45,10 @@ trimwrit prune --target CLAUDE.md --results
 
 `--decide` runs each case 3 times per arm at a time until the pass counts decide (`keep`,
 `harmful`, `inert`, `inert-fail`) or it reaches 30 runs per arm (`undecided`). The counts add
-up across invocations until the case, the rule file or the model changes. `--ablate rule` takes
-out only the rule blocks that cite the case, so the verdict is about that rule and not about the
-whole file. Add `--budget N` to cap the sessions one invocation starts; the next one picks up
-where it stopped.
+up across invocations until the case, the rule blocks citing it or the model changes; an edit
+elsewhere in the same file keeps them. `--ablate rule` takes out only the rule blocks that cite
+the case, so the verdict is about that rule and not about the whole file. Add `--budget N` to
+cap the sessions one invocation starts; the next one picks up where it stopped.
 
 A finding is a measurement and it carries its counts. Never report one without them: `delete
 this, it does nothing` is an opinion, and `case 0002: 18/18 with, 18/18 without, P(helps)
@@ -62,9 +62,11 @@ prune still reads it and says it was measured with a fixed run count, which is a
 trimwrit prune --target CLAUDE.md --results --apply
 ```
 
-`--apply` deletes orphans and rules whose case is decided `inert`, nothing else. It refuses to
-delete a rule whose file changed since it was measured ("the rule file changed since it was
-measured; run `trimwrit run --decide` again"), and it keeps a rule that cites another case not
+`--apply` deletes orphans and rules whose case is decided `inert`, nothing else. A flat delta
+from a plain `trimwrit run` is printed and kept ("measured with a fixed run count; run `trimwrit
+run --decide`"). It refuses to delete a rule whose citing block was edited since it was measured
+("the rule file changed since it was measured; run `trimwrit run --decide` again"); an edit to
+another rule of the same file does not count. It keeps a rule that cites another case not
 decided `inert`.
 
 Every removal is written into the same ledger as the promotion that put the rule there, with

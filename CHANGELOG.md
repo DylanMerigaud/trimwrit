@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.9.1, 2026-10-21
+
+- **In rule mode the evidence key hashes the rule blocks citing the case, not the whole
+  files.** `--ablate rule` measures those blocks, and the global CLAUDE.md changes almost daily:
+  hashed whole, every edit reset every rule's count, and one deletion by prune made every other
+  rule of its file look changed. A new `rules_sha256` field (the sha256 of each citing block,
+  exactly as `strip_rules` removes it) goes on every summary and history line, and the key uses
+  it in place of both arms' files. `files_sha256` stays, for information. Evidence gathered by
+  0.9.0 under `--ablate rule` was keyed on the files, so it starts over. `--ablate file` still
+  hashes the whole files.
+- **prune's stale guard follows the key.** In rule mode `--apply` recomputes the citing blocks
+  of the finding's case and keeps the rule only when one of them changed; an edit to another
+  rule of the same file, or a deletion from it, no longer blocks a decided deletion.
+- **prune no longer deletes on a fixed run count.** A flat delta from a plain `trimwrit run`
+  is printed and kept under `--apply` ("kept R...: measured with a fixed run count; run
+  `trimwrit run --decide`"). Only a decided `inert` verdict, or an orphan, is deleted.
+- **A case cited both by number and by name has every rule judged.** With one rule citing
+  `0027` and another `0027-decision-taken-reopened`, prune saw only the first, while the without
+  arm had taken out both. It now takes the union, so `--apply` deletes exactly the rules the
+  verdict measured.
+- **A verdict no rule claims is no finding**, as for a plain result: it is already the
+  `unused-case` row.
+- **README.** The `--history` bullet of the report section mentions the verdicts line; "How
+  many runs" says a small effect usually stays undecided, and what the key covers in each mode.
+
 ## 0.9.0, 2026-10-21
 
 - **`trimwrit run --decide` chooses how many runs a case needs.** Three runs per arm cannot
@@ -9,7 +34,8 @@
   least 0.99, `harmful` when it is at most 0.01, `inert` or `inert-fail` when P(the two pass
   rates are within 0.2) is at least 0.975 (`inert` only when the case passes at least 80
   percent of the time without the rule), `undecided` otherwise. It stops at a verdict or at 30
-  runs per arm. A run with no final text counts as attempted, never as measured.
+  runs per arm. A run with nothing to grade (no final text, an error, an API refusal) counts
+  as attempted, never as measured.
   `verdict.simulate` measures what the strict lines cost (300 repetitions, seed 7): with no
   true effect, `keep` 5 percent and `harmful` 4 percent; two perfect arms `inert` every time
   after 18 runs per arm; a true gap of exactly the margin called `inert` 7 percent of the time.

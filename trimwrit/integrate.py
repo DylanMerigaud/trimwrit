@@ -18,6 +18,7 @@ character needs one case that replays it in prose and another that replays it in
 message, and a marker that holds a single id forces you to either drop a good case or leave it
 showing up forever as unused.
 """
+import hashlib
 import os
 import re
 
@@ -178,6 +179,46 @@ def citing_rules(target, case_base, root="."):
     wanted = {case_base.split("-", 1)[0], case_base}
     return [rule_id for rule_id, info in read_rules(target, root).items()
             if wanted & set(case_list(info["case"]))]
+
+
+def rule_block(text, rule_id):
+    """The text of one rule block, marker line down to the first blank line, or None.
+
+    The same bounds `_cut` (so `strip_rules` and `drop_rule`) removes, without the blank lines
+    after it: the block is what the rule level ablation takes out, so it is what a verdict is
+    about, and what `rules_sha256` hashes.
+    """
+    found = find_rule(text, rule_id)
+    if not found:
+        return None
+    start, end = found
+    return "\n".join(text.split("\n")[start:end])
+
+
+def rules_sha256(targets, case_base, root="."):
+    """{rule_id: sha256 of its block} for every rule citing `case_base`, across `targets`.
+
+    The union `runner.rule_arm_files` strips from the without arm. In rule mode the evidence
+    key and prune's stale guard hash these blocks, not the whole files: the global CLAUDE.md
+    changes almost daily, and hashing it whole would reset every rule's count on any edit and
+    let one deletion make every other rule of the file stale.
+    """
+    out = {}
+    for target in targets:
+        target = os.path.expanduser(target)
+        path = os.path.join(root, target)
+        if not os.path.exists(path):
+            continue
+        ids = citing_rules(target, case_base, root)
+        if not ids:
+            continue
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        for rule_id in ids:
+            block = rule_block(text, rule_id)
+            if block is not None:
+                out[rule_id] = hashlib.sha256(block.encode("utf-8")).hexdigest()
+    return out
 
 
 def read_rules(target, root="."):

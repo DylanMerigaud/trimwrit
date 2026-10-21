@@ -32,7 +32,8 @@ left. A summary written by `trimwrit run --decide` carries a `verdict` from pass
 counts (verdict.py), and when it does the verdict alone decides: `inert` is INERT, `inert-fail`
 INERT_FAILING, `harmful` HARMFUL, `keep` and `undecided` no finding at all. The details then show
 `k/n` passes per arm and P(helps), not means. A summary with no verdict keeps the delta logic
-above, and the CLI says it was measured with a fixed run count.
+above, and the CLI says it was measured with a fixed run count. Since 0.9.1 such a finding is
+printed and never deleted: `--apply` deletes on a decided `inert` verdict only.
 """
 import hashlib
 import os
@@ -53,6 +54,7 @@ UNUSED_CASE = "unused-case"
 
 FIXED_COUNT_LINE = ("measured with a fixed run count; `trimwrit run --decide` decides with "
                     "enough runs")
+FIXED_COUNT_KEPT = "measured with a fixed run count; run `trimwrit run --decide`"
 STALE_LINE = "the rule file changed since it was measured; run `trimwrit run --decide` again"
 
 # The verdict strings of verdict.py, mapped to the finding each one is. `keep` and `undecided`
@@ -154,7 +156,7 @@ def inert(summaries, targets, evals_dir="evals", root=".", pass_line=PASS_LINE):
     out = []
     for base, summary in sorted(summaries.items()):
         cid = base.split("-", 1)[0]
-        holders = by_case.get(cid) or by_case.get(base) or []
+        holders = _holders(by_case, cid, base)
         if "verdict" in summary:
             out.extend(_from_verdict(base, summary, holders, summaries, known))
             continue
@@ -188,6 +190,19 @@ def inert(summaries, targets, evals_dir="evals", root=".", pass_line=PASS_LINE):
                 detail="case {} scores {:.2f} with {} and {:.2f} without it (delta {:+.2f}). "
                        "{}".format(base, summary.get("with", 0), rule_id,
                                    summary.get("without", 0), delta, verdict)))
+    return out
+
+
+def _holders(by_case, cid, base):
+    """Every rule citing the case, by its number (`0027`) or by its full directory name
+    (`0027-decision-taken-reopened`), each once. The same union `--ablate rule` takes out of the
+    without arm (integrate.citing_rules), so a verdict deletes exactly the rules it measured;
+    `by_case.get(cid) or by_case.get(base)` found only the first kind when both were present."""
+    seen, out = set(), []
+    for holder in (by_case.get(cid) or []) + (by_case.get(base) or []):
+        if (holder[0], holder[1]) not in seen:
+            seen.add((holder[0], holder[1]))
+            out.append(holder)
     return out
 
 
@@ -234,9 +249,8 @@ def _from_verdict(base, summary, holders, summaries, known):
                "measured": summary.get("measured"), "p_helps": summary.get("p_helps"),
                "p_equivalent": summary.get("p_equivalent"), "held_by": []}
     counts = _counts(summary)
-    if not holders:
-        return [Finding(kind, case=base, numbers=numbers,
-                        detail="case {}: {}, and no rule claims it.".format(base, counts))]
+    # A case no rule claims is already the unused-case finding; a second row would say nothing
+    # new. `--ablate rule` does not even run one (it is `unclaimed`).
     out = []
     for rule_id, target, meta in holders:
         held = _held_by(meta, base, summaries, known)
@@ -257,16 +271,26 @@ def read_target(target, root="."):
         return None
 
 
-def changed_since_measured(finding, summary, root=".", text=None):
-    """True when the finding's target no longer hashes to what the `with` arm seeded.
+def changed_since_measured(finding, summary, root=".", text=None, targets=None):
+    """True when what the verdict measured is no longer what the target holds.
 
-    A verdict is about the file as it was measured. Delete a rule out of a file that has been
-    edited since, and the deletion rests on a measurement of some other text. A summary that
-    never recorded the file cannot vouch for it either, so that is True too. `text` is the
-    target as the caller read it (the CLI reads every target before its first deletion); by
-    default it is read from disk now.
+    A verdict is about the rule as it was measured. Delete a rule that has been edited since,
+    and the deletion rests on a measurement of some other text. In rule mode (`ablate` "rule")
+    the measured thing is the blocks citing the case, so their hashes (`rules_sha256`) are
+    recomputed across `targets` (default: the finding's own target) and compared: an edit
+    elsewhere in the file, or a rule deleted from it, is not a change to this experiment. In
+    file mode the whole file was under test, so the target's text is compared with what the
+    `with` arm seeded; `text` is the target as the caller read it, by default read now. A
+    summary that never recorded what it measured cannot vouch for it, so that is True too.
     """
-    seeded = ((summary or {}).get("files_sha256") or {}).get("with") or {}
+    summary = summary or {}
+    if summary.get("ablate") == "rule":
+        want = summary.get("rules_sha256")
+        if not want:
+            return True
+        return integrate_mod.rules_sha256(targets or [finding.target], finding.case,
+                                          root) != want
+    seeded = (summary.get("files_sha256") or {}).get("with") or {}
     want = seeded.get(os.path.basename(finding.target or ""))
     if text is None:
         text = read_target(finding.target, root) if finding.target else None

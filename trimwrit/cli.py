@@ -470,17 +470,19 @@ def _decide_words(state):
         max(state["counts"]["attempted"].values()))
 
 
-def _decide_summary(state, ablate):
+def _decide_summary(state, ablate, rules_sha256=None):
     """What latest.json holds for a case decided by `run --decide`, cumulative over every
     invocation under its key. `with`, `without` and `delta` are pass rates, so a reader of the
-    old fields (viz, prune before it reads `verdict`) sees numbers on the same 0 to 1 scale."""
+    old fields (viz, prune before it reads `verdict`) sees numbers on the same 0 to 1 scale.
+    `rules_sha256` (rule mode) is what prune's stale guard compares against the file now."""
     v, counts = state["verdict"], state["counts"]
     with_rate, without_rate = v["with_rate"], v["without_rate"]
     return {
         "verdict": v["verdict"], "p_helps": v["p_helps"], "p_equivalent": v["p_equivalent"],
         "passes": counts["passes"], "measured": counts["measured"],
         "attempted": counts["attempted"], "key": state["key"], "ablate": ablate,
-        "files_sha256": state["files_sha256"], "with": with_rate, "without": without_rate,
+        "files_sha256": state["files_sha256"], "rules_sha256": rules_sha256,
+        "with": with_rate, "without": without_rate,
         "delta": (with_rate - without_rate
                   if with_rate is not None and without_rate is not None else None),
         "status": state["status"], "spent": state["spent"],
@@ -488,7 +490,7 @@ def _decide_summary(state, ablate):
 
 
 def _run_decide(args, runnable, blocked, skipped, files_by_case, keys, rule_files, judge,
-                progress, evals_dir, history_path, ts, unproven_total):
+                progress, evals_dir, history_path, ts, unproven_total, rules_by_case=None):
     """`run --decide`: the loop is decide.run_until_decided; this writes what it found.
 
     Evidence files and a history row only for a case that ran in this invocation (a case
@@ -516,7 +518,7 @@ def _run_decide(args, runnable, blocked, skipped, files_by_case, keys, rule_file
     for case in sorted(runnable, key=lambda c: os.path.basename(c.path)):
         base = os.path.basename(case.path)
         state = states[case.path]
-        summary = _decide_summary(state, ablate)
+        summary = _decide_summary(state, ablate, (rules_by_case or {}).get(case.path))
         summaries[base] = summary
         payload["cases"].append({"name": base, "summary": summary,
                                  "arms": _arms_payload(state["results"])})
@@ -530,6 +532,7 @@ def _run_decide(args, runnable, blocked, skipped, files_by_case, keys, rule_file
                     wrote_evidence = True
         evidence = {"key": state["key"], "ablate": ablate,
                     "files_sha256": state["files_sha256"],
+                    "rules_sha256": summary["rules_sha256"],
                     "verdict": summary["verdict"], "p_helps": summary["p_helps"],
                     "p_equivalent": summary["p_equivalent"]}
         evidence.update(decide_mod.count(state["results"], args.threshold))
@@ -641,13 +644,19 @@ def cmd_run(args):
     history_path = os.path.join(evals_dir, "results", "history.jsonl")
     ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     runs_dir = os.path.join(evals_dir, "results", "runs")
+    # Rule mode: the experiment is the citing blocks, so the key hashes them and not the whole
+    # files (decide.py, WHY A KEY). None in file mode, where the whole file is under test.
+    rules_by_case = {c.path: (integrate_mod.rules_sha256(
+        _targets(args), os.path.basename(c.path), args.root) if ablate == "rule" else None)
+        for c in found}
     keys = {c.path: decide_mod.evidence_key(
         c, files_by_case[c.path][0], files_by_case[c.path][1], args.model, args.judge_model,
-        args.threshold, ablate) for c in found}
+        args.threshold, ablate, rules_sha256=rules_by_case[c.path]) for c in found}
 
     if args.decide:
         return _run_decide(args, runnable, blocked, skipped, files_by_case, keys, rule_files,
-                           judge, progress, evals_dir, history_path, ts, unproven_total)
+                           judge, progress, evals_dir, history_path, ts, unproven_total,
+                           rules_by_case=rules_by_case)
 
     results_by_case = runner_mod.run_many(
         runnable, rule_files, arms=arms, runs=args.runs, claude=args.claude, judge=judge,
@@ -685,7 +694,8 @@ def cmd_run(args):
 
         per_arm = results_by_case.get(case.path) or {}
         evidence = {"key": keys[case.path], "ablate": ablate,
-                    "files_sha256": decide_mod.files_sha256(*files_by_case[case.path])}
+                    "files_sha256": decide_mod.files_sha256(*files_by_case[case.path]),
+                    "rules_sha256": rules_by_case[case.path]}
         evidence.update(decide_mod.count(per_arm, args.threshold))
         _append_history(history_path, ts, case, summary, files_by_case[case.path][0],
                         _targets(args), args.claude, model=args.model,
@@ -827,24 +837,29 @@ def cmd_prune(args):
         print("\n" + prune_mod.FIXED_COUNT_LINE + ".")
 
     if args.apply:
-        # Hashed before the first deletion: two inert rules measured in the same file are both
-        # checked against the file the run seeded, not against what the first deletion left.
-        before = {f.target: prune_mod.read_target(f.target, args.root)
-                  for f in findings if f.target}
+        # Every guard is decided before the first deletion: deleting one rule must not make the
+        # next one look changed (file mode hashes the whole file).
+        stale = {id(f): prune_mod.changed_since_measured(f, summaries.get(f.case), args.root,
+                                                         targets=_targets(args))
+                 for f in findings if f.kind == prune_mod.INERT and "verdict" in f.numbers}
         removed = 0
         for f in findings:
-            # Only an orphan or an inert rule is deleted. An inert-fail rule is a rewrite order
-            # (its case is not reliably passed), a harmful one too (its case is worse with it),
-            # and an unused case names no rule.
+            # Only an orphan or a decided inert rule is deleted. An inert-fail rule is a rewrite
+            # order (its case is not reliably passed), a harmful one too (its case is worse with
+            # it), and an unused case names no rule.
             if f.kind not in (prune_mod.ORPHAN, prune_mod.INERT) or not f.rule or not f.target:
+                continue
+            if f.kind == prune_mod.INERT and "verdict" not in f.numbers:
+                # A mean over a fixed run count is a signal, not a decision: three runs per arm
+                # cannot tell inert from noise (verdict.py), so it is printed and kept.
+                print("kept {}: {}".format(f.rule, prune_mod.FIXED_COUNT_KEPT))
                 continue
             if "verdict" in f.numbers:
                 if f.numbers.get("held_by"):
                     print("kept {}: it also cites {}, not decided inert.".format(
                         f.rule, ", ".join(f.numbers["held_by"])))
                     continue
-                if prune_mod.changed_since_measured(f, summaries.get(f.case), args.root,
-                                                    text=before[f.target]):
+                if stale[id(f)]:
                     print("kept {}: {}".format(f.rule, prune_mod.STALE_LINE))
                     continue
             if integrate_mod.drop_rule(f.target, f.rule, root=args.root):
@@ -1146,9 +1161,10 @@ def main(argv=None):
                     help="results json from `trimwrit run` (default evals/results/latest.json), "
                          "needed for the inert finding; `run --decide` writes the verdicts")
     pr.add_argument("--apply", action="store_true",
-                    help="actually delete, and record it. An inert-fail or harmful rule is "
-                         "never deleted, nor a decided inert rule whose file changed since it "
-                         "was measured")
+                    help="actually delete, and record it: orphans and rules decided inert by "
+                         "`run --decide`. An inert-fail or harmful rule is never deleted, nor "
+                         "an inert one from a fixed run count, nor one edited since it was "
+                         "measured")
     pr.add_argument("--threshold", type=float, default=prune_mod.PASS_LINE,
                     help="the pass line the run used (default {}): a flat case at or above it "
                          "without the rule is inert, below it inert-fail".format(

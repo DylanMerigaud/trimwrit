@@ -15,11 +15,14 @@ WHY A KEY
 A weekly job cannot buy 18 runs per arm for every rule in one sitting, so the counts must add up
 across invocations, and they must only add up while they still describe the same experiment.
 `evidence_key` hashes everything that makes two runs comparable: the case directory's bytes,
-both arms' seeded files, the two model ids, the pass line, the ablation mode and the sandbox
-note. Edit one word
-of the rule and the key moves, so none of the old counts leak into the new rule's verdict.
-`cli._append_history` writes the key and the counts on every row, plain run or not, and
-`prior_counts` sums them back.
+what the rule is, the two model ids, the pass line, the ablation mode and the sandbox note. With
+`--ablate rule`, what the rule is means the blocks citing the case (`rules_sha256`, from
+integrate.rules_sha256): edit one word of one of them and the key moves, so none of the old
+counts leak into the new rule's verdict, while an edit elsewhere in the same file (the global
+CLAUDE.md changes almost daily, and a prune deletes from it) keeps the evidence. With `--ablate
+file` the whole file is the thing under test, so both arms' files are hashed whole.
+`files_sha256` is kept on every row for information either way. `cli._append_history` writes
+the key and the counts on every row, plain run or not, and `prior_counts` sums them back.
 
 `run_batch` is injected (the CLI passes a closure over `runner.run_many`) so the loop is tested
 with synthetic results and no subprocess.
@@ -65,13 +68,21 @@ def _case_tree(path):
     return out
 
 
-def evidence_key(case, with_files, without_files, model, judge_model, threshold, ablate):
+def evidence_key(case, with_files, without_files, model, judge_model, threshold, ablate,
+                 rules_sha256=None):
+    """The sha256 that names one experiment. `rules_sha256` (rule mode) stands in for both
+    arms' files: the rule blocks are what differs between the arms, the rest of the file is
+    context that may change without changing the experiment's subject."""
     # `sandbox_note` from the case's meta, where `run --sandbox-note` also sets it: a run told
     # it sits in a scratch directory is a different experiment, and the flag is not in the
     # case's bytes.
-    doc = {"case": _case_tree(case.path), "files": files_sha256(with_files, without_files),
-           "model": model, "judge_model": judge_model, "threshold": float(threshold),
-           "ablate": ablate, "sandbox_note": bool(case.meta.get("sandbox_note"))}
+    doc = {"case": _case_tree(case.path), "model": model, "judge_model": judge_model,
+           "threshold": float(threshold), "ablate": ablate,
+           "sandbox_note": bool(case.meta.get("sandbox_note"))}
+    if rules_sha256 is not None:
+        doc["rules"] = dict(rules_sha256)
+    else:
+        doc["files"] = files_sha256(with_files, without_files)
     return hashlib.sha256(json.dumps(doc, sort_keys=True).encode("utf-8")).hexdigest()
 
 

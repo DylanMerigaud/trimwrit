@@ -205,10 +205,12 @@ def test_prune_apply_keeps_a_rule_whose_case_fails_in_both_arms(tmp_path, capsys
     assert _run(tmp_path, "prune", "--results", "--apply") == 0
     out = capsys.readouterr().out
     assert "inert-fail" in out and "R0001" in out
-    assert "removed 1 rule(s)" in out
+    # Since 0.9.1 a fixed run count deletes nothing: the passing inert rule is kept too.
+    assert "kept R0002: measured with a fixed run count; run `trimwrit run --decide`" in out
+    assert "removed 0 rule(s)" in out
     kept = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
     assert "rule one" in kept
-    assert "rule two" not in kept
+    assert "rule two" in kept
 
 
 def test_a_rule_can_cite_several_cases(tmp_path, capsys):
@@ -880,25 +882,33 @@ VERDICT_CLAUDE = "".join(
         n=n) for n in range(1, 7))
 
 
-def _verdict_summary(verdict, files_sha256, passes=(18, 18), measured=(18, 18), p_helps=0.5):
+def _verdict_summary(verdict, files_sha256, rules_sha256, passes=(18, 18), measured=(18, 18),
+                     p_helps=0.5):
     return {"verdict": verdict, "p_helps": p_helps, "p_equivalent": 0.98,
             "passes": {"with": passes[0], "without": passes[1]},
             "measured": {"with": measured[0], "without": measured[1]},
             "attempted": {"with": measured[0], "without": measured[1]},
             "key": "k" * 64, "ablate": "rule", "files_sha256": files_sha256,
+            "rules_sha256": rules_sha256,
             "with": passes[0] / float(measured[0]), "without": passes[1] / float(measured[1]),
             "delta": (passes[0] - passes[1]) / float(measured[0])}
+
+
+def _write_latest(tmp_path, latest):
+    import json
+
+    results = tmp_path / "evals" / "results"
+    results.mkdir(parents=True, exist_ok=True)
+    (results / "latest.json").write_text(json.dumps(latest), encoding="utf-8")
 
 
 def _verdict_setup(tmp_path):
     """Six rules, one case each, a verdict for five of them as `run --decide --ablate rule`
     writes it: 0001 inert, 0002 inert-fail, 0003 harmful, 0004 keep, 0005 undecided, 0006
-    inert too (two deletions from one file, so the second is checked against the file the
-    run measured, not the one the first deletion left)."""
+    inert too (two deletions from one file: the first must not make the second stale)."""
     import hashlib
-    import json
 
-    from trimwrit import cases
+    from trimwrit import cases, integrate
 
     evals = tmp_path / "evals"
     for n in range(1, 7):
@@ -907,18 +917,22 @@ def _verdict_setup(tmp_path):
     (tmp_path / "CLAUDE.md").write_text(VERDICT_CLAUDE, encoding="utf-8")
     sha = {"with": {"CLAUDE.md": hashlib.sha256(VERDICT_CLAUDE.encode("utf-8")).hexdigest()},
            "without": {"CLAUDE.md": "0" * 64}}
+
+    def rules(n):
+        return integrate.rules_sha256(["CLAUDE.md"], "000{}-case".format(n), str(tmp_path))
+
     latest = {
-        "0001-case": _verdict_summary("inert", sha),
-        "0002-case": _verdict_summary("inert-fail", sha, passes=(6, 6)),
-        "0003-case": _verdict_summary("harmful", sha, passes=(0, 9), measured=(9, 9),
+        "0001-case": _verdict_summary("inert", sha, rules(1)),
+        "0002-case": _verdict_summary("inert-fail", sha, rules(2), passes=(6, 6)),
+        "0003-case": _verdict_summary("harmful", sha, rules(3), passes=(0, 9), measured=(9, 9),
                                       p_helps=0.0004),
-        "0004-case": _verdict_summary("keep", sha, passes=(9, 0), measured=(9, 9),
+        "0004-case": _verdict_summary("keep", sha, rules(4), passes=(9, 0), measured=(9, 9),
                                       p_helps=0.9996),
-        "0005-case": _verdict_summary("undecided", sha, passes=(20, 15), measured=(30, 30)),
-        "0006-case": _verdict_summary("inert", sha),
+        "0005-case": _verdict_summary("undecided", sha, rules(5), passes=(20, 15),
+                                      measured=(30, 30)),
+        "0006-case": _verdict_summary("inert", sha, rules(6)),
     }
-    (evals / "results").mkdir(parents=True, exist_ok=True)
-    (evals / "results" / "latest.json").write_text(json.dumps(latest), encoding="utf-8")
+    _write_latest(tmp_path, latest)
     return latest
 
 
@@ -945,15 +959,76 @@ def test_prune_apply_deletes_only_a_decided_inert_verdict(tmp_path, capsys):
 
 def test_prune_apply_keeps_an_inert_rule_whose_file_changed_since_it_was_measured(tmp_path,
                                                                                   capsys):
+    # Review focus 5: the MEASURED rule's own block was edited, so its verdict is about other
+    # text. R0006, also inert and untouched, is still deleted.
     _verdict_setup(tmp_path)
-    edited = VERDICT_CLAUDE.replace("rule 4 text", "rule 4 text, reworded")
+    edited = VERDICT_CLAUDE.replace("rule 1 text", "rule 1 text, reworded")
     (tmp_path / "CLAUDE.md").write_text(edited, encoding="utf-8")
     assert _run(tmp_path, "prune", "--results", "--apply") == 0
     out = capsys.readouterr().out
-    assert ("the rule file changed since it was measured; run `trimwrit run --decide` again"
-            in out)
+    assert ("kept R0001: the rule file changed since it was measured; run `trimwrit run "
+            "--decide` again" in out)
+    assert "removed 1 rule(s)" in out
+    kept = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "rule 1 text, reworded" in kept and "rule 6 text" not in kept
+
+
+def test_prune_apply_an_edit_to_another_rule_of_the_file_is_not_stale(tmp_path, capsys):
+    # Ruling A: in rule mode the guard hashes the citing blocks, not the whole file, so the
+    # global CLAUDE.md changing elsewhere does not block a decided deletion.
+    _verdict_setup(tmp_path)
+    edited = VERDICT_CLAUDE.replace("rule 4 text", "rule 4 text, reworded") + "a new line\n"
+    (tmp_path / "CLAUDE.md").write_text(edited, encoding="utf-8")
+    assert _run(tmp_path, "prune", "--results", "--apply") == 0
+    out = capsys.readouterr().out
+    assert "changed since it was measured" not in out
+    assert "removed 2 rule(s)" in out
+    kept = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "rule 1 text" not in kept and "rule 4 text, reworded" in kept
+
+
+def test_prune_apply_keeps_a_rule_that_also_cites_a_case_not_decided_inert(tmp_path, capsys):
+    from trimwrit import cases, integrate
+
+    evals = tmp_path / "evals"
+    for cid in ("0001", "0002"):
+        cases.write_case(cid, "twin", "p", [cases.forbid_grader("x", name="g")],
+                         evals_dir=str(evals))
+    (tmp_path / "CLAUDE.md").write_text(
+        "<!-- trimwrit: R0001 case 0001+0002, 2026-10-21: an incident -->\nthe twin rule\n",
+        encoding="utf-8")
+    rules = integrate.rules_sha256(["CLAUDE.md"], "0001-twin", str(tmp_path))
+    _write_latest(tmp_path, {
+        "0001-twin": _verdict_summary("inert", {}, rules),
+        "0002-twin": _verdict_summary("keep", {}, rules, passes=(9, 0), measured=(9, 9),
+                                      p_helps=0.9996)})
+    assert _run(tmp_path, "prune", "--results", "--apply") == 0
+    out = capsys.readouterr().out
+    assert "kept R0001: it also cites 0002-twin, not decided inert." in out
     assert "removed 0 rule(s)" in out
-    assert (tmp_path / "CLAUDE.md").read_text(encoding="utf-8") == edited
+    assert "the twin rule" in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+
+
+def test_prune_apply_deletes_every_rule_citing_the_case_by_number_or_by_name(tmp_path, capsys):
+    # One rule cites the case by its number, another by its full directory name: the without
+    # arm took both out, so an inert verdict is about both, and --apply deletes both.
+    from trimwrit import cases, integrate
+
+    cases.write_case("0027", "decision taken reopened", "p",
+                     [cases.forbid_grader("x", name="g")], evals_dir=str(tmp_path / "evals"))
+    base = "0027-decision-taken-reopened"
+    (tmp_path / "CLAUDE.md").write_text(
+        "<!-- trimwrit: R0027 case 0027 -->\nthe first rule\n\n"
+        "<!-- trimwrit: R0332 case " + base + " -->\nthe second rule\n", encoding="utf-8")
+    rules = integrate.rules_sha256(["CLAUDE.md"], base, str(tmp_path))
+    assert sorted(rules) == ["R0027", "R0332"]
+    _write_latest(tmp_path, {base: _verdict_summary("inert", {}, rules)})
+    assert _run(tmp_path, "prune", "--results", "--apply") == 0
+    out = capsys.readouterr().out
+    assert "R0027" in out and "R0332" in out
+    assert "removed 2 rule(s)" in out
+    text = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "the first rule" not in text and "the second rule" not in text
 
 
 def test_prune_on_a_legacy_summary_says_it_was_a_fixed_run_count(tmp_path, capsys):
@@ -973,6 +1048,38 @@ def test_prune_on_a_legacy_summary_says_it_was_a_fixed_run_count(tmp_path, capsy
         encoding="utf-8")
     assert _run(tmp_path, "prune", "--results", "--apply") == 0
     out = capsys.readouterr().out
-    assert "1.00 with R0001" in out and "removed 1 rule(s)" in out
+    assert "1.00 with R0001" in out and "removed 0 rule(s)" in out
     assert ("measured with a fixed run count; `trimwrit run --decide` decides with enough runs"
             in out)
+    assert "kept R0001: measured with a fixed run count; run `trimwrit run --decide`" in out
+    assert "the rule" in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+
+
+def test_run_decide_by_rule_an_edit_elsewhere_in_the_file_keeps_the_key(tmp_path, capsys):
+    # Ruling A: in rule mode the key covers the citing blocks, not the whole file. An edit to
+    # another line of the same CLAUDE.md adds to the same evidence; an edit of the citing block
+    # starts a fresh count.
+    claude = _decide_setup(tmp_path)
+    args = ("run", "--decide", "--ablate", "rule", "--target", "CLAUDE.md", "--claude", claude)
+    assert _run(tmp_path, *(args + ("--budget", "6"))) == 0
+    capsys.readouterr()
+    (tmp_path / "CLAUDE.md").write_text(RULED_CLAUDE.replace("intro line", "intro line, edited")
+                                        + "\nan unrelated paragraph\n", encoding="utf-8")
+    assert _run(tmp_path, *args) == 0
+    assert "sessions started: 6" in capsys.readouterr().out
+    first, second = _history_rows(tmp_path)
+    assert first["key"] == second["key"]
+    assert first["rules_sha256"] == second["rules_sha256"]
+    assert list(first["rules_sha256"]) == ["R0001"]
+    assert first["files_sha256"] != second["files_sha256"]
+    latest = _latest(tmp_path)["0001-bad-word-case"]
+    assert latest["attempted"] == {"with": 6, "without": 6}
+    assert latest["rules_sha256"] == first["rules_sha256"]
+
+    (tmp_path / "CLAUDE.md").write_text(
+        RULED_CLAUDE.replace(RULE_TEXT, RULE_TEXT + " Say it once."), encoding="utf-8")
+    assert _run(tmp_path, *args) == 0
+    assert "sessions started: 12" in capsys.readouterr().out
+    third = _history_rows(tmp_path)[2]
+    assert third["key"] != first["key"]
+    assert _latest(tmp_path)["0001-bad-word-case"]["attempted"] == {"with": 6, "without": 6}

@@ -210,3 +210,17 @@ def test_the_evidence_key_moves_with_the_sandbox_note(tmp_path):
     base = _key(case)
     case.meta["sandbox_note"] = True
     assert _key(case) != base
+
+
+def test_in_rule_mode_the_key_hashes_the_citing_blocks_not_the_files(tmp_path):
+    case = _case(tmp_path, "0001-a")
+
+    def key(files, rules):
+        return decide.evidence_key(case, {"CLAUDE.md": files}, {"CLAUDE.md": "x"},
+                                   "claude-opus-5-5", "claude-sonnet-5-5", 1.0, "rule",
+                                   rules_sha256=rules)
+    base = key("intro\nthe rule", {"R1": "a" * 64})
+    assert key("intro, edited\nthe rule", {"R1": "a" * 64}) == base
+    assert key("intro\nthe rule", {"R1": "b" * 64}) != base
+    # Without block hashes (file mode), the files are what the key covers.
+    assert key("intro\nthe rule", None) != key("intro, edited\nthe rule", None)

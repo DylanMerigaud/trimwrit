@@ -137,3 +137,22 @@ def test_citing_rules_matches_the_leading_number_and_the_full_name(tmp_path):
 
 def test_citing_rules_of_a_missing_target_is_empty(tmp_path):
     assert I.citing_rules("nope.md", "0001-x", root=str(tmp_path)) == []
+
+
+def test_rules_sha256_hashes_each_citing_block_across_targets(tmp_path):
+    import hashlib
+    import os
+
+    root = str(tmp_path)
+    os.makedirs(os.path.join(root, "sub"))
+    I.write_rule("CLAUDE.md", "R1", "0001", "2026-10-21", "i", "one", root=root)
+    I.write_rule("CLAUDE.md", "R2", "0002", "2026-10-21", "i", "two", root=root)
+    I.write_rule("sub/CLAUDE.md", "R3", "0001-a+0003", "2026-10-21", "i", "three", root=root)
+    got = I.rules_sha256(["CLAUDE.md", "sub/CLAUDE.md", "missing.md"], "0001-a", root)
+    assert sorted(got) == ["R1", "R3"]
+    text = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+    start, end = I.find_rule(text, "R1")
+    block = "\n".join(text.split("\n")[start:end])
+    assert got["R1"] == hashlib.sha256(block.encode("utf-8")).hexdigest()
+    # The block is exactly what strip_rules takes out, give or take the blank lines after it.
+    assert block in text and block not in I.strip_rules(text, ["R1"])[0]

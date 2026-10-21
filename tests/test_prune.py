@@ -189,15 +189,58 @@ def test_a_legacy_summary_is_marked_as_a_fixed_run_count(tmp_path):
                                       "decides with enough runs")
 
 
-def test_stale_compares_the_target_with_what_the_with_arm_seeded(tmp_path):
+def test_in_file_mode_stale_compares_the_target_with_what_the_with_arm_seeded(tmp_path):
+    # `--ablate file` put the whole file under test, so any edit to it is a change.
     import hashlib
     root, evals = _setup(tmp_path)
     text = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
     sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
     summary = _decided("inert", files_sha256={"with": {"CLAUDE.md": sha}, "without": {}})
+    summary["ablate"] = "file"
     f = prune.inert({"0001-kept-case": summary}, ["CLAUDE.md"], evals, root)[0]
     assert prune.changed_since_measured(f, summary, root) is False
     (tmp_path / "CLAUDE.md").write_text(text + "\none more line\n", encoding="utf-8")
     assert prune.changed_since_measured(f, summary, root) is True
     # A summary that never recorded the file cannot vouch for it.
-    assert prune.changed_since_measured(f, _decided("inert"), root) is True
+    assert prune.changed_since_measured(f, dict(_decided("inert"), ablate="file"), root) is True
+
+
+def test_a_verdict_no_rule_claims_is_no_finding(tmp_path):
+    # Like the legacy path's unclaimed case, it is already the unused-case row: no duplicate.
+    root, evals = _setup(tmp_path)
+    cases.write_case("0002", "lonely", "p", [cases.forbid_grader("y", name="g")],
+                     evals_dir=evals)
+    assert prune.inert({"0002-lonely": _decided("inert")}, ["CLAUDE.md"], evals, root) == []
+
+
+def test_rules_citing_by_number_and_by_name_are_both_holders(tmp_path):
+    root = str(tmp_path)
+    evals = os.path.join(root, "evals")
+    base = "0027-decision-taken-reopened"
+    cases.write_case("0027", "decision taken reopened", "p",
+                     [cases.forbid_grader("x", name="g")], evals_dir=evals)
+    integrate.write_rule("CLAUDE.md", "R0027", "0027", "2026-10-21", "i", "first", root=root)
+    integrate.write_rule("CLAUDE.md", "R0332", base, "2026-10-21", "i", "second", root=root)
+    for summary in (_decided("inert"), {"with": 1.0, "without": 1.0, "delta": 0.0}):
+        found = prune.inert({base: summary}, ["CLAUDE.md"], evals, root)
+        assert sorted(f.rule for f in found) == ["R0027", "R0332"]
+
+
+def test_in_rule_mode_only_the_citing_blocks_make_a_verdict_stale(tmp_path):
+    root, evals = _setup(tmp_path)
+    rules = integrate.rules_sha256(["CLAUDE.md"], "0001-kept-case", root)
+    summary = _decided("inert")
+    summary["rules_sha256"] = rules
+    f = prune.inert({"0001-kept-case": summary}, ["CLAUDE.md"], evals, root)[0]
+    assert prune.changed_since_measured(f, summary, root, targets=["CLAUDE.md"]) is False
+    path = tmp_path / "CLAUDE.md"
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text.replace("orphan rule", "orphan rule, edited") + "\nmore\n",
+                    encoding="utf-8")
+    assert prune.changed_since_measured(f, summary, root, targets=["CLAUDE.md"]) is False
+    path.write_text(text.replace("rule one", "rule one, edited"), encoding="utf-8")
+    assert prune.changed_since_measured(f, summary, root, targets=["CLAUDE.md"]) is True
+    # A rule-mode summary that never recorded its blocks cannot vouch for them.
+    del summary["rules_sha256"]
+    path.write_text(text, encoding="utf-8")
+    assert prune.changed_since_measured(f, summary, root, targets=["CLAUDE.md"]) is True
