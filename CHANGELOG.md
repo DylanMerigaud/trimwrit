@@ -28,6 +28,18 @@
   included) is refused with exit 2, like `stats`; an omitted optional input is simply absent (`null`) from the report.
 - `ledger.fold(rows)` is `folded` split in two, so a reader that tolerates damaged lines can
   fold the rows it kept.
+- **The README opens on one production harness.** "In production", right after Install, gives
+  what `trimwrit report` read on the author's own machine on 2026-10-21: 341 corrections, 2,823
+  door refusals and 21 cases measured with and without their rule, 8 of them moving by 0 or
+  less. The whole document is `docs/production/2026-10-21.json`, and the section gives the
+  command that prints the same shape on another harness. A section on `report` sits next to
+  `stats`, and Dogfood points at the production numbers.
+- **`tools/no-private-data.py`** fails the suite on an email address or a phone number in any
+  tracked file outside a two-entry allowlist (a test repository's git identity, the SSH user of
+  GitHub remotes), and on a `text`, `consequence`, `session`, `session_id` or `reason` key in
+  any file under `docs/production/`. Like `no-bad-dashes.py`, an empty `git ls-files` falls
+  through to a walk, and a scan that read zero files exits 2 instead of passing. Tests in
+  `tests/test_no_private_data.py`.
 
 ## handback-gate 0.1.0, 2026-10-16
 
