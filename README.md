@@ -346,12 +346,24 @@ counts toward the 30. A round where no session was measured, across every case, 
 invocation: the history keeps what ran, the JSON says `"stopped": "unmeasured"`, one line on
 stderr says why, and `run` exits 4, so a scheduler can tell "claude did not answer, try later"
 from a failure. A case whose unmeasured runs reach 30 in one arm is `unmeasurable` and is not
-started again until something in its key changes: one broken case cannot spend the budget
-every week. Only the unmeasured runs of a round that measured something elsewhere count toward
-that 30: the round that stops an invocation is an outage, not the case's fault, so its history
-lines carry `"stopped": "unmeasured"` and are left out of the count. A scheduler retrying the
-run every hour through a day-long outage leaves every case open. The JSON counts this invocation's unmeasured runs per arm, per case (`unmeasured`
-next to `summary`) and in total (`unmeasured` next to `sessions`).
+started again until something in its key changes. Only the unmeasured runs of a round that
+measured something elsewhere count toward that 30: the round that stops an invocation is an
+outage, not the case's fault, so its history lines carry `"stopped": "unmeasured"` and are left
+out of the count. A scheduler retrying the run every hour through a day-long outage leaves
+every case open.
+
+So a case with no measured run in a round stops the invocation with exit 4 whenever no other
+case in that round measured one (a single stuck case left open is enough), and that round never
+counts toward its 30. From inside `run`, an outage and a stuck case look the same: the caller
+decides between them. One cheap call to claude that answers means the open cases are stuck
+(fix the case or its rule, and `prune` the verdicts already reached); one that does not means
+an outage (run again later). A stuck case that is never told apart this way stops every
+invocation that reaches it.
+
+The JSON counts this invocation's unmeasured runs per arm, per case (`unmeasured` next to
+`summary`) and in total (`unmeasured` next to `sessions`), and gives each case's `status`
+(`stopped`, `unmeasurable`, ...) in its `summary` and the error of each unmeasured run in its
+`arms`.
 
 Exit codes of `run`: 0 done (an undecided case is a result), 1 a case below `--threshold` (plain
 run), 2 refused, 4 `--decide` stopped on a round that measured nothing.

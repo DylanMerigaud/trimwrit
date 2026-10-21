@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.4, 2026-10-21
+
+- **`trimwrit report` keeps a keyed case with an unmeasured arm.** A case whose current key had
+  no measured run in an arm was dropped from the table, so a stuck case, the one a reader most
+  needs to see, vanished. It is now kept: the unmeasured arm's rate and the delta are null
+  (`-` in the text), the measured arm's rate is shown, and the case sorts after every case with
+  a delta. Its counts and its verdict, decided on the sum, are unchanged.
+- **The README no longer promises that one broken case cannot spend the budget every week.** A
+  round with no measured run (a single stuck case left open is enough) stops the invocation with
+  exit 4 and never counts toward the unmeasurable cap, so a stuck case stops every invocation
+  that reaches it. The README now says so, and that the caller decides between an outage and a
+  stuck case (one cheap call to claude that answers means the case is stuck).
+
 ## 0.9.3, 2026-10-21
 
 - **An outage never makes a case unmeasurable.** The round that stops `run --decide` with exit

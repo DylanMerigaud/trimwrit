@@ -338,11 +338,44 @@ def test_the_verdict_is_decided_on_the_sum_not_copied_from_the_last_row(tmp_path
     assert doc["cases"]["latest"][0]["verdict"] == "undecided"
 
 
-def test_a_key_with_an_arm_never_measured_has_no_figures_but_keeps_its_verdict(tmp_path):
+def test_a_key_with_no_arm_measured_is_kept_with_null_figures(tmp_path):
+    # 0.9.4: a stuck case is exactly the one a reader needs to see. Dropping it left the table
+    # silent about a case that spent its sessions on nothing.
     his = _write(tmp_path / "h.jsonl", [
         _keyed("2026-10-21T00:00:00Z", "k", (0, 0), (0, 0), attempted=(3, 3),
                verdict="undecided", stopped="unmeasured")])
     doc = report.build(_write(tmp_path / "l.jsonl", []), history_path=his)
-    assert doc["cases"]["latest"] == []
+    entry, = doc["cases"]["latest"]
+    assert entry["case"] == "0007"
+    assert (entry["with"], entry["without"], entry["delta"]) == (None, None, None)
+    assert entry["measured"] == {"with": 0, "without": 0}
+    assert entry["attempted"] == {"with": 3, "without": 3}
+    assert entry["runs"] == 3
+    assert entry["verdict"] == "undecided"
     assert doc["cases"]["verdicts"] == {"undecided": 1}
-    assert report.render(doc)
+    line = next(ln for ln in report.render(doc).splitlines() if ln.startswith("0007"))
+    assert line.split() == ["0007", "-", "-", "-", "3"]
+
+
+def test_a_key_with_one_arm_unmeasured_shows_the_other_and_nulls_the_delta(tmp_path):
+    # Two cases: one measured on both arms, one whose `without` arm never measured. The second
+    # is kept, its `with` rate shown, its `without` and delta null, and sorted after the first.
+    his = _write(tmp_path / "h.jsonl", [
+        _keyed("2026-10-21T00:00:00Z", "k", (2, 0), (3, 0), attempted=(3, 3),
+               verdict="undecided"),
+        dict(_keyed("2026-10-21T00:00:00Z", "j", (3, 3), (3, 3), verdict="undecided"),
+             case="0008-other-case"),
+    ])
+    doc = report.build(_write(tmp_path / "l.jsonl", []), history_path=his)
+    measured, half = doc["cases"]["latest"]
+    assert measured["case"] == "0008" and measured["delta"] == pytest.approx(0.0)
+    assert half["case"] == "0007"
+    assert half["with"] == pytest.approx(2 / 3.0)
+    assert half["without"] is None and half["delta"] is None
+    assert half["measured"] == {"with": 3, "without": 0}
+    assert half["verdict"] == "undecided"
+    assert doc["cases"]["verdicts"] == {"undecided": 2}
+    text = report.render(doc)
+    line = next(ln for ln in text.splitlines() if ln.startswith("0007"))
+    assert line.split() == ["0007", "0.67", "-", "-", "3"]
+    assert json.loads(json.dumps(doc)) == doc

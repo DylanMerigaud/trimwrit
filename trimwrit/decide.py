@@ -18,12 +18,14 @@ closed for good. Now an unmeasured run (runner.Result.unmeasured) is spent again
 since it started a session, but `MAX_RUNS` caps measured runs only. A round where no started
 session was measured, across every case, stops the invocation (`stopped` "unmeasured", exit 4
 in the CLI): the next round would fail the same way. A key whose unmeasured runs reach
-`MAX_RUNS` in one arm is `unmeasurable` and not started again until its key changes, so one
-broken case cannot spend the budget every week. Only unmeasured runs of a round that measured
+`MAX_RUNS` in one arm is `unmeasurable` and not started again until its key changes. Only
+unmeasured runs of a round that measured
 something elsewhere count toward that cap (0.9.3): the round that stops an invocation is an
 outage, not the case's fault, and a scheduler retrying a deferred job every 75 minutes would
 otherwise close every case in a day. Its history rows carry `"stopped": "unmeasured"` and are
-left out of the count, while their attempted runs still move the run indexes.
+left out of the count, while their attempted runs still move the run indexes. So a stuck case
+left alone in a round stops every invocation that reaches it with exit 4, and only the caller
+can tell it from an outage (README, "the caller decides").
 
 WHY A ROUND AT A TIME
 

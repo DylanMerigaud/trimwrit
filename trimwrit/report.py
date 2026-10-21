@@ -25,7 +25,9 @@ its latest row that carries one; decide.py, WHY A KEY): `run --decide` writes on
 round since 0.9.2, so the last row alone is one round of 3 runs. The pass rates, the run count
 and the verdict come from that sum, the verdict decided on it by verdict.py, never copied from a
 row. A case whose rows carry no key (written before 0.9.0) shows its latest measured row and
-the latest verdict a row carries, as before. VERDICTS are counted over every case, one line.
+the latest verdict a row carries, as before. An arm of a keyed case with no measured run shows
+a null rate and a null delta, and the case stays in the table (0.9.4): a stuck case is the one a
+reader needs to see. VERDICTS are counted over every case, one line.
 
 A MALFORMED LINE is skipped and counted, never raised: blank, not JSON, or JSON that is not an
 object (or lacks the key a row of its kind cannot do without). A damaged line must not throw
@@ -207,14 +209,14 @@ def _keyed(rows, floor):
 
 
 def _summed_entry(case, dt, total):
-    """The figures of one keyed case, from its summed counts, or None when an arm has no
-    measured run (no rate to show). The verdict is decided on the sum."""
+    """The figures of one keyed case, from its summed counts. An arm with no measured run has a
+    null rate, and the delta is null unless both arms have one: the case is kept, never dropped
+    (a stuck case is the one a reader needs to see). The verdict is decided on the sum."""
     passes, measured = total["passes"], total["measured"]
-    if not measured["with"] or not measured["without"]:
-        return None
-    w = passes["with"] / float(measured["with"])
-    wo = passes["without"] / float(measured["without"])
-    return {"case": _case_number(case), "with": w, "without": wo, "delta": w - wo,
+    w = passes["with"] / float(measured["with"]) if measured["with"] else None
+    wo = passes["without"] / float(measured["without"]) if measured["without"] else None
+    delta = w - wo if w is not None and wo is not None else None
+    return {"case": _case_number(case), "with": w, "without": wo, "delta": delta,
             "runs": total["attempted"]["with"], "ts": _iso(dt),
             "passes": dict(passes), "measured": dict(measured),
             "attempted": dict(total["attempted"]), "verdict": decide_mod.judge(total)["verdict"]}
@@ -230,9 +232,7 @@ def _cases(path):
     keyed = _keyed(rows, floor)
     entries = []
     for case, (dt, total) in keyed.items():
-        entry = _summed_entry(case, dt, total)
-        if entry is not None:
-            entries.append(entry)
+        entries.append(_summed_entry(case, dt, total))
     legacy = _latest_by_case([r for r in measured if r["case"] not in keyed], floor)
     for case, (dt, r) in legacy.items():
         runs = r.get("runs")
@@ -246,7 +246,8 @@ def _cases(path):
             "passes": None, "measured": None, "attempted": None,
             "verdict": r.get("verdict") if r.get("verdict") in VERDICTS else None,
         })
-    entries.sort(key=lambda e: (-e["delta"], e["case"]))
+    # Largest delta first; a case with no delta (an arm never measured) after every other.
+    entries.sort(key=lambda e: (e["delta"] is None, -(e["delta"] or 0.0), e["case"]))
     return {
         "measured": len(measured),
         "unmeasured": len(rows) - len(measured),
@@ -329,8 +330,9 @@ def render(doc, bar="-" * 72):
             parts.append("\n{:<44} {:>6} {:>8} {:>7} {:>5}".format(
                 "case (summed under its key)", "with", "without", "delta", "runs"))
             for e in k["latest"]:
-                parts.append("{:<44} {:>6} {:>8} {:>+7.2f} {:>5}".format(
-                    e["case"][:44], _fmt(e["with"]), _fmt(e["without"]), e["delta"],
+                delta = "-" if e["delta"] is None else "{:+.2f}".format(e["delta"])
+                parts.append("{:<44} {:>6} {:>8} {:>7} {:>5}".format(
+                    e["case"][:44], _fmt(e["with"]), _fmt(e["without"]), delta,
                     e["runs"] if e["runs"] is not None else "-"))
     return "\n".join(parts)
 
