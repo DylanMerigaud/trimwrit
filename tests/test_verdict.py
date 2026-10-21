@@ -83,3 +83,24 @@ def test_a_perfect_inert_rule_is_proven_after_eighteen_runs():
 def test_an_effect_of_exactly_the_margin_is_rarely_called_equivalent():
     shares = verdict.simulate(1.0, 0.8)["shares"]
     assert shares.get(verdict.INERT, 0) + shares.get(verdict.INERT_FAILING, 0) <= 0.12
+
+
+def test_the_grid_is_pinned_numerically():
+    assert abs(verdict.posterior(3, 3, 0, 3)["p_helps"] - 0.98571) < 1e-4
+    assert abs(verdict.posterior(18, 18, 18, 18)["p_equivalent"] - 0.98684) < 1e-4
+    assert abs(verdict.posterior(2, 3, 1, 3)["p_helps"] - 0.75714) < 1e-4
+
+
+def test_counts_that_are_not_counts_are_refused():
+    for args in [(5, 3, 0, 3), (0, 3, 5, 3), (-1, 3, 0, 3), (0, 3, 0, -1), (0, -2, 0, 3)]:
+        for fn in (verdict.decide, verdict.posterior):
+            try:
+                fn(*args)
+            except ValueError:
+                continue
+            raise AssertionError("%s%r did not raise" % (fn.__name__, args))
+
+
+def test_the_last_partial_batch_runs():
+    out = verdict.simulate(0.5, 0.5, reps=5, batch=4, max_runs=30)
+    assert out["mean_runs"] == 30

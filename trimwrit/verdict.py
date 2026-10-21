@@ -16,15 +16,14 @@ needs 0.975 that the two pass rates sit within the margin of each other.
 WHAT THE STRICT LINES COST, MEASURED
 
 `simulate` replays the rule: batches of 3 runs per arm, a look after each, at most 30 runs per
-arm, 300 repetitions, seed 7, margin 0.2. With no true effect (0.5 against 0.5) it said `keep`
-5 percent of the time, `harmful` 4 percent, and stayed undecided 91 percent. Two perfect arms
-(1.0 against 1.0) were `inert` every time, after 18 runs per arm. A large effect (1.0 against
-0.33) was `keep` every time, after 8.5 runs per arm on average; 0.9 against 0.6 was `keep` 70
-percent of the time. A true gap of exactly the margin (1.0 against 0.8) was called equivalent
-7 percent of the time. 0.9 against 0.9 reached `inert` 39 percent of the time and stayed
-undecided otherwise: a rule is proven useless only when the model is reliable without it.
-The plan's own earlier run, with another draw order, gave 3 and 2 percent for the first case
-and 5 percent for the gap of the margin: the same picture, to within sampling noise.
+arm, 300 repetitions, seed 7, margin 0.2. With no true effect (0.5 against 0.5) it says `keep`
+5 percent of the time, `harmful` 4 percent, and stays undecided 91 percent. Two perfect arms
+(1.0 against 1.0) are `inert` every time, after 18 runs per arm. A large effect (1.0 against
+0.33) is `keep` every time, after 8.5 runs per arm on average; 0.9 against 0.6 is `keep` 70
+percent of the time. A true gap of exactly the margin (1.0 against 0.8) says `keep` about 55
+percent of the time and is called equivalent 7 percent of the time. 0.9 against 0.9 reaches
+`inert` 39 percent of the time, stays undecided about 60 percent, and wrongly decides `keep` or
+`harmful` about 2 percent: a rule is proven useless only when the model is reliable without it.
 """
 import math
 import random
@@ -72,8 +71,15 @@ def _arm(passes, runs, grid):
     return _ARM[key]
 
 
+def _check(passes, runs):
+    if runs < 0 or passes < 0 or passes > runs:
+        raise ValueError("%d passes out of %d runs is not a count" % (passes, runs))
+
+
 def posterior(passes_with, n_with, passes_without, n_without, margin=MARGIN, grid=GRID):
     """P(with beats without) and P(the two pass rates differ by less than `margin`)."""
+    _check(passes_with, n_with)
+    _check(passes_without, n_without)
     weights, _ = _arm(passes_with, n_with, grid)
     other, cumulative = _arm(passes_without, n_without, grid)
     m = int(round(margin * grid))
@@ -128,11 +134,12 @@ def simulate(p_with, p_without, reps=300, seed=7, batch=BATCH, max_runs=MAX_RUNS
     for _ in range(reps):
         k_with = k_without = n = 0
         while True:
-            k_with += sum(1 for _ in range(batch) if rng.random() < p_with)
-            k_without += sum(1 for _ in range(batch) if rng.random() < p_without)
-            n += batch
+            step = min(batch, max_runs - n)
+            k_with += sum(1 for _ in range(step) if rng.random() < p_with)
+            k_without += sum(1 for _ in range(step) if rng.random() < p_without)
+            n += step
             out = decide(k_with, n, k_without, n, **lines)
-            if out["verdict"] != UNDECIDED or n + batch > max_runs:
+            if out["verdict"] != UNDECIDED or n >= max_runs:
                 break
         counts[out["verdict"]] = counts.get(out["verdict"], 0) + 1
         runs_total += n
