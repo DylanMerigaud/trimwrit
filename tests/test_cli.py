@@ -1374,3 +1374,22 @@ def test_run_decide_writes_history_after_every_round(tmp_path, capsys, monkeypat
     assert latest["verdict"] == "keep"
     assert latest["attempted"] == {"with": 6, "without": 6}
     assert sum(r["attempted"]["with"] for r in _history_rows(tmp_path)) == 6
+
+
+def test_ten_outage_runs_in_a_row_leave_the_case_open(tmp_path, capsys):
+    # 0.9.3: the round that stops an invocation (exit 4) is flagged on its history rows and
+    # never counts toward the unmeasurable cap, so a day of retries during an outage cannot
+    # close a case for good.
+    _decide_setup(tmp_path)
+    erroring = _write_erroring_claude(tmp_path)
+    args = ("run", "--decide", "--ablate", "rule", "--target", "CLAUDE.md", "--claude")
+    for _ in range(10):
+        assert _run(tmp_path, *(args + (erroring,))) == 4
+    capsys.readouterr()
+    rows = _history_rows(tmp_path)
+    assert len(rows) == 10 and all(r["stopped"] == "unmeasured" for r in rows)
+    assert _latest(tmp_path)["0001-bad-word-case"]["status"] == "stopped"
+    claude = _write_rule_aware_claude(tmp_path)
+    assert _run(tmp_path, *(args + (claude,))) == 0
+    out = capsys.readouterr().out
+    assert "sessions started: 12" in out and "earns its place" in out

@@ -361,3 +361,66 @@ def test_the_case_hash_skips_dotfiles(tmp_path):
     assert _key(case) == base
     (d / "graders" / "g.md").write_text("a grader", encoding="utf-8")
     assert _key(case) != base
+
+
+# ---------------------------------------------------------------- 0.9.3, an outage is not the case's fault
+
+
+def _history_writer(history):
+    """The rows the CLI writes after a round: that round's counts, flagged when it stopped the
+    invocation (states.stopped is set before on_round on that round)."""
+    def on_round(ran, states):
+        with open(history, "a", encoding="utf-8") as fh:
+            for path, per_arm in ran.items():
+                row = {"key": states[path]["key"]}
+                row.update(decide.count(per_arm, 1.0))
+                if states.stopped:
+                    row["stopped"] = states.stopped
+                fh.write(json.dumps(row) + "\n")
+    return on_round
+
+
+def test_ten_outage_invocations_in_a_row_leave_every_case_open(tmp_path):
+    # The scheduler retries a deferred cycle every 75 minutes: a day-long quota outage is about
+    # 19 invocations, each stopped by a round that measured nothing. None of those rounds is
+    # the case's fault, so none counts toward the unmeasurable cap.
+    cs = [_case(tmp_path, n) for n in ("0001-a", "0002-b")]
+    history = str(tmp_path / "history.jsonl")
+    files = {c.path: ({"CLAUDE.md": "rule"}, {"CLAUDE.md": ""}) for c in cs}
+    keys = {c.path: "key-" + c.path for c in cs}
+    for _ in range(10):
+        states = decide.run_until_decided(cs, files, keys, history,
+                                          _batcher(_always(NOTHING), []), 1.0,
+                                          on_round=_history_writer(history))
+        assert states.stopped == decide.STOPPED_UNMEASURED
+        for c in cs:
+            assert states[c.path]["status"] == decide.STOPPED
+    for c in cs:
+        assert decide.prior_counts(history, keys[c.path])["attempted"] == {"with": 30,
+                                                                          "without": 30}
+    calls = []
+    states = decide.run_until_decided(cs, files, keys, history, _batcher(_helps, calls), 1.0,
+                                      on_round=_history_writer(history))
+    assert calls, "an outage closed the cases for good"
+    assert all(states[c.path]["verdict"]["verdict"] == verdict.KEEP for c in cs)
+
+
+def test_the_stopping_round_never_makes_a_case_unmeasurable_within_the_invocation(tmp_path):
+    # 27 unmeasured runs per arm already counted (in rounds that measured something elsewhere);
+    # a dead round brings the attempted unmeasured to 30, yet the case stays open.
+    case = _case(tmp_path, "0001-a")
+    _history(tmp_path, _row("k", (0, 0), (0, 0), (27, 27)))
+    state = _run(tmp_path, [case], _always(NOTHING), [], keys={case.path: "k"})
+    assert state.stopped == decide.STOPPED_UNMEASURED
+    assert state[case.path]["status"] == decide.STOPPED
+
+
+def test_rows_of_a_stopping_round_do_not_count_toward_unmeasurable(tmp_path):
+    case = _case(tmp_path, "0001-a")
+    flagged = dict(_row("k", (0, 0), (0, 0), (30, 30)), stopped="unmeasured")
+    _history(tmp_path, flagged)
+    calls = []
+    state = _run(tmp_path, [case], _helps, calls, keys={case.path: "k"})[case.path]
+    assert calls and state["verdict"]["verdict"] == verdict.KEEP
+    # attempted keeps every run, so the evidence files of the next round do not overwrite them
+    assert calls[0][2] == {case.path: 30}

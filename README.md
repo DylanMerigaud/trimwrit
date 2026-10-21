@@ -347,7 +347,10 @@ invocation: the history keeps what ran, the JSON says `"stopped": "unmeasured"`,
 stderr says why, and `run` exits 4, so a scheduler can tell "claude did not answer, try later"
 from a failure. A case whose unmeasured runs reach 30 in one arm is `unmeasurable` and is not
 started again until something in its key changes: one broken case cannot spend the budget
-every week. The JSON counts this invocation's unmeasured runs per arm, per case (`unmeasured`
+every week. Only the unmeasured runs of a round that measured something elsewhere count toward
+that 30: the round that stops an invocation is an outage, not the case's fault, so its history
+lines carry `"stopped": "unmeasured"` and are left out of the count. A scheduler retrying the
+run every hour through a day-long outage leaves every case open. The JSON counts this invocation's unmeasured runs per arm, per case (`unmeasured`
 next to `summary`) and in total (`unmeasured` next to `sessions`).
 
 Exit codes of `run`: 0 done (an undecided case is a result), 1 a case below `--threshold` (plain
@@ -498,8 +501,10 @@ trimwrit report --refusals refusals.jsonl
   unless the `trace` section of `trimwrit-gates.json` sends it elsewhere; one file per gate, so
   concatenate them.
 - `--history` (default `evals/results/history.jsonl` when it exists), the line `run` appends per
-  case: the latest measured run of each case, with the rule and without it, and the delta, and
-  one line counting the verdicts of `run --decide`, the latest per case.
+  case: for each case, the sum of its lines under its current evidence key (pass rates with the
+  rule and without it, the delta, the runs, the pass, measured and attempted counts, and the
+  verdict decided on that sum), and one line counting those verdicts. A case whose lines carry
+  no key (written before 0.9.0) shows its latest measured line instead.
 
 It never prints a correction's words. Every value is a count, a date in UTC, a door name or a
 case number, and a case is shown by its number only, because a case directory's name is a slug

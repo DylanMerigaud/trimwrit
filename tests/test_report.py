@@ -281,3 +281,68 @@ def test_a_snapshot_with_verdicts_passes_the_privacy_scanner(tmp_path):
     spec.loader.exec_module(mod)
     assert doc["cases"]["verdicts"] == {"inert": 1}
     assert mod.scan(str(repo)) == []
+
+
+def _keyed(ts, key, passes, measured, attempted=None, **kw):
+    attempted = attempted or measured
+    row = {"ts": ts, "case": "0007-some-case", "key": key,
+           "with": passes[0] / float(measured[0]) if measured[0] else None,
+           "without": passes[1] / float(measured[1]) if measured[1] else None,
+           "runs": attempted[0],
+           "passes": {"with": passes[0], "without": passes[1]},
+           "measured": {"with": measured[0], "without": measured[1]},
+           "attempted": {"with": attempted[0], "without": attempted[1]},
+           "unmeasured": {"with": attempted[0] - measured[0],
+                          "without": attempted[1] - measured[1]}}
+    row["delta"] = (row["with"] - row["without"]
+                    if row["with"] is not None and row["without"] is not None else None)
+    row.update(kw)
+    return row
+
+
+def test_a_case_s_figures_are_the_sum_of_its_current_key(tmp_path):
+    # Three rounds of `run --decide` under one key, after an older row under another key (the
+    # rule before an edit). The figures are the sum of the three, the verdict the one decided on
+    # that sum, never the last round alone.
+    his = _write(tmp_path / "h.jsonl", [
+        _keyed("2026-10-01T00:00:00Z", "old", (0, 3), (3, 3)),
+        _keyed("2026-10-14T00:00:00Z", "new", (3, 0), (3, 3), verdict="undecided"),
+        _keyed("2026-10-14T00:01:00Z", "new", (3, 0), (3, 3), verdict="keep"),
+        _keyed("2026-10-21T00:00:00Z", "new", (2, 1), (3, 3), verdict="keep"),
+    ])
+    doc = report.build(_write(tmp_path / "l.jsonl", []), history_path=his)
+    entry, = doc["cases"]["latest"]
+    assert entry["case"] == "0007"
+    assert entry["passes"] == {"with": 8, "without": 1}
+    assert entry["measured"] == {"with": 9, "without": 9}
+    assert entry["attempted"] == {"with": 9, "without": 9}
+    assert entry["runs"] == 9
+    assert entry["with"] == pytest.approx(8 / 9.0) and entry["without"] == pytest.approx(1 / 9.0)
+    assert entry["delta"] == pytest.approx(7 / 9.0)
+    assert entry["verdict"] == "keep"
+    assert entry["ts"] == "2026-10-21T00:00:00Z"
+    assert doc["cases"]["verdicts"] == {"keep": 1}
+    text = report.render(doc)
+    assert "0007" in text and "0.89" in text and "0.11" in text
+    assert "verdicts (latest per case): keep 1" in text
+
+
+def test_the_verdict_is_decided_on_the_sum_not_copied_from_the_last_row(tmp_path):
+    # The last row says keep, but the sum (3/3 with, 3/3 without) is not a keep.
+    his = _write(tmp_path / "h.jsonl", [
+        _keyed("2026-10-14T00:00:00Z", "k", (2, 3), (2, 3), verdict="undecided"),
+        _keyed("2026-10-21T00:00:00Z", "k", (1, 0), (1, 0), verdict="keep"),
+    ])
+    doc = report.build(_write(tmp_path / "l.jsonl", []), history_path=his)
+    assert doc["cases"]["verdicts"] == {"undecided": 1}
+    assert doc["cases"]["latest"][0]["verdict"] == "undecided"
+
+
+def test_a_key_with_an_arm_never_measured_has_no_figures_but_keeps_its_verdict(tmp_path):
+    his = _write(tmp_path / "h.jsonl", [
+        _keyed("2026-10-21T00:00:00Z", "k", (0, 0), (0, 0), attempted=(3, 3),
+               verdict="undecided", stopped="unmeasured")])
+    doc = report.build(_write(tmp_path / "l.jsonl", []), history_path=his)
+    assert doc["cases"]["latest"] == []
+    assert doc["cases"]["verdicts"] == {"undecided": 1}
+    assert report.render(doc)

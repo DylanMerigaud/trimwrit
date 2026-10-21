@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.9.3, 2026-10-21
+
+- **An outage never makes a case unmeasurable.** The round that stops `run --decide` with exit
+  4 (no measured run across all cases) is an outage, not the case's fault: its history lines
+  carry `"stopped": "unmeasured"` and its unmeasured runs never count toward the unmeasurable
+  cap, in this invocation or a later one. Only the unmeasured runs of a round that measured
+  something elsewhere count. A scheduler that retries a deferred run every 75 minutes would
+  otherwise have closed every case within a day of a quota outage. Their attempted runs still
+  move the run indexes, so no evidence file is overwritten.
+- **`trimwrit report` sums a case under its current key.** Since 0.9.2 `--decide` writes one
+  history line per round, so the latest line was one round of 3 runs. A case's figures (text
+  and `--json`) are now the sum of its lines under the key of its latest keyed line: pass
+  rates, delta, runs, and new `passes`, `measured`, `attempted` and `verdict` fields, the
+  verdict decided on that sum, never copied from a line; the verdicts line counts those. A
+  case with no keyed line shows its latest measured line, as before (the new fields null).
+
 ## 0.9.2, 2026-10-21
 
 - **A marker another ledger promoted is foreign, and left alone.** A marker names its case by

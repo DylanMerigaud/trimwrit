@@ -20,8 +20,12 @@ Timestamps in these files mix offsets (`-0500`, `+0200`, `Z`, `.753Z`), and a st
 them gives the wrong first and last date. Every timestamp is parsed, converted to UTC, and only
 then compared. One that does not parse still counts as a row and takes no part in a date.
 
-VERDICTS are counted from the latest row per case that carries one (`run --decide` writes the
-case's cumulative verdict on every row), as one line of counts.
+A CASE'S FIGURES are the sum of the history rows under its current evidence key (the key of
+its latest row that carries one; decide.py, WHY A KEY): `run --decide` writes one row per
+round since 0.9.2, so the last row alone is one round of 3 runs. The pass rates, the run count
+and the verdict come from that sum, the verdict decided on it by verdict.py, never copied from a
+row. A case whose rows carry no key (written before 0.9.0) shows its latest measured row and
+the latest verdict a row carries, as before. VERDICTS are counted over every case, one line.
 
 A MALFORMED LINE is skipped and counted, never raised: blank, not JSON, or JSON that is not an
 object (or lacks the key a row of its kind cannot do without). A damaged line must not throw
@@ -32,6 +36,7 @@ import math
 import re
 from datetime import datetime, timedelta, timezone
 
+from . import decide as decide_mod
 from . import ledger as ledger_mod
 from . import verdict as verdict_mod
 
@@ -174,21 +179,62 @@ def _case_number(case_id):
     return m.group(0) if m else UNNAMED_CASE
 
 
+def _latest_by_case(rows, floor, keep=lambda r: True):
+    latest = {}
+    for r in rows:
+        if not keep(r):
+            continue
+        dt = parse_ts(r.get("ts"))
+        prev = latest.get(r["case"])
+        if prev is None or (dt or floor) >= (prev[0] or floor):
+            latest[r["case"]] = (dt, r)
+    return latest
+
+
+def _keyed(rows, floor):
+    """{case: (dt of its latest keyed row, summed counts)} for every case with a keyed row that
+    carries counts: the sum of its rows under the key of its latest such row."""
+    with_counts = [r for r in rows if isinstance(r.get("key"), str)
+                   and decide_mod.row_counts(r) is not None]
+    out = {}
+    for case, (dt, last) in _latest_by_case(with_counts, floor).items():
+        total = decide_mod.zero_counts()
+        for r in with_counts:
+            if r["case"] == case and r["key"] == last["key"]:
+                total = decide_mod.add_counts(total, decide_mod.row_counts(r))
+        out[case] = (dt, total)
+    return out
+
+
+def _summed_entry(case, dt, total):
+    """The figures of one keyed case, from its summed counts, or None when an arm has no
+    measured run (no rate to show). The verdict is decided on the sum."""
+    passes, measured = total["passes"], total["measured"]
+    if not measured["with"] or not measured["without"]:
+        return None
+    w = passes["with"] / float(measured["with"])
+    wo = passes["without"] / float(measured["without"])
+    return {"case": _case_number(case), "with": w, "without": wo, "delta": w - wo,
+            "runs": total["attempted"]["with"], "ts": _iso(dt),
+            "passes": dict(passes), "measured": dict(measured),
+            "attempted": dict(total["attempted"]), "verdict": decide_mod.judge(total)["verdict"]}
+
+
 def _cases(path):
     rows, malformed = _read(path, required=("case",))
     named = [r for r in rows if isinstance(r["case"], str) and r["case"]]
     malformed += len(rows) - len(named)
     rows = named
     measured = [r for r in rows if not _is_unmeasured(r)]
-    latest = {}
     floor = datetime.min.replace(tzinfo=timezone.utc)
-    for r in measured:
-        dt = parse_ts(r.get("ts"))
-        prev = latest.get(r["case"])
-        if prev is None or (dt or floor) >= (prev[0] or floor):
-            latest[r["case"]] = (dt, r)
+    keyed = _keyed(rows, floor)
     entries = []
-    for case, (dt, r) in latest.items():
+    for case, (dt, total) in keyed.items():
+        entry = _summed_entry(case, dt, total)
+        if entry is not None:
+            entries.append(entry)
+    legacy = _latest_by_case([r for r in measured if r["case"] not in keyed], floor)
+    for case, (dt, r) in legacy.items():
         runs = r.get("runs")
         entries.append({
             "case": _case_number(case),
@@ -197,37 +243,37 @@ def _cases(path):
             "delta": _number(r.get("delta")),
             "runs": runs if isinstance(runs, int) and not isinstance(runs, bool) else None,
             "ts": _iso(dt),
+            "passes": None, "measured": None, "attempted": None,
+            "verdict": r.get("verdict") if r.get("verdict") in VERDICTS else None,
         })
     entries.sort(key=lambda e: (-e["delta"], e["case"]))
     return {
         "measured": len(measured),
         "unmeasured": len(rows) - len(measured),
         "latest": entries,
-        "verdicts": _verdicts(rows, floor),
+        "verdicts": _verdicts(rows, floor, keyed),
         "malformed": malformed,
     }
 
 
-def _verdicts(rows, floor):
-    """{verdict: count} over the latest row per case that carries a verdict.
+def _verdicts(rows, floor, keyed=None):
+    """{verdict: count}, one per case.
 
-    A `run --decide` row carries the case's cumulative verdict, so only the latest one counts:
-    an `undecided` row followed by a `keep` row is one rule kept, not one of each. A plain row
-    after it carries no verdict and leaves it standing. Rows with no measured run count too (a
-    decide batch can come back unmeasured and still carry the verdict so far). Only the five
-    words of verdict.py leave this module, so a damaged row cannot carry text out.
+    A keyed case counts the verdict decided on the sum of its current key (`keyed`, from
+    _keyed). Any other case counts the latest row that carries a verdict: an `undecided` row
+    followed by a `keep` row is one rule kept, not one of each, and a plain row after it
+    carries no verdict and leaves it standing. Only the five words of verdict.py leave this
+    module, so a damaged row cannot carry text out.
     """
-    latest = {}
-    for r in rows:
-        if r.get("verdict") not in VERDICTS:
-            continue
-        dt = parse_ts(r.get("ts"))
-        prev = latest.get(r["case"])
-        if prev is None or (dt or floor) >= (prev[0] or floor):
-            latest[r["case"]] = (dt, r["verdict"])
+    keyed = keyed or {}
     out = {}
-    for _, v in latest.values():
+    for _, total in keyed.values():
+        v = decide_mod.judge(total)["verdict"]
         out[v] = out.get(v, 0) + 1
+    latest = _latest_by_case(rows, floor,
+                             lambda r: r["case"] not in keyed and r.get("verdict") in VERDICTS)
+    for _, r in latest.values():
+        out[r["verdict"]] = out.get(r["verdict"], 0) + 1
     return out
 
 
@@ -281,7 +327,7 @@ def render(doc, bar="-" * 72):
         parts.append(_verdicts_line(k.get("verdicts") or {}))
         if k["latest"]:
             parts.append("\n{:<44} {:>6} {:>8} {:>7} {:>5}".format(
-                "case (latest measured run)", "with", "without", "delta", "runs"))
+                "case (summed under its key)", "with", "without", "delta", "runs"))
             for e in k["latest"]:
                 parts.append("{:<44} {:>6} {:>8} {:>+7.2f} {:>5}".format(
                     e["case"][:44], _fmt(e["with"]), _fmt(e["without"]), e["delta"],

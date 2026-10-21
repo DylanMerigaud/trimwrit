@@ -488,7 +488,7 @@ def _decide_words(state):
         return "undecided, stopped: the last round measured no run"
     if state["status"] == decide_mod.UNMEASURABLE:
         return "UNMEASURABLE, {} runs in an arm never measured: fix the case, then its key " \
-               "moves".format(max(decide_mod.unmeasured(state["counts"]).values()))
+               "moves".format(max(state["counted_unmeasured"].values()))
     return "undecided after {} measured runs per arm".format(
         max(state["counts"]["measured"].values()))
 
@@ -550,6 +550,9 @@ def _run_decide(args, runnable, blocked, skipped, files_by_case, keys, rule_file
                         "verdict": v["verdict"], "p_helps": v["p_helps"],
                         "p_equivalent": v["p_equivalent"]}
             evidence.update(decide_mod.count(per_arm, args.threshold))
+            if states.stopped:
+                # The round that stopped the invocation: never counted toward unmeasurable.
+                evidence["stopped"] = states.stopped
             _append_history(history_path, ts, case, runner_mod.summarise(per_arm),
                             files_by_case[path][0], _targets(args), args.claude,
                             model=args.model, judge_model=args.judge_model,
