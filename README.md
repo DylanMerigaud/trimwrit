@@ -27,35 +27,52 @@ only.
 
 trimwrit runs on the author's own machine: a solo developer's harness running dozens of
 scheduled agent jobs (outreach, research, sites). On 2026-10-21, `trimwrit report` read its
-ledgers: corrections from 2026-08-24 to 2026-10-17, refusals from 2026-09-30 to 2026-10-21, and
-39 eval runs, 34 of them measured. A door is a hook or a check that refuses an action and logs
-one line when it does; the names are the harness's own.
+ledgers: corrections from 2026-08-24 to 2026-10-21 and refusals from 2026-09-30 to 2026-10-21.
+A door is a hook or a check that refuses an action and logs one line when it does; the names are
+the harness's own.
 
 | | |
 |---|---:|
-| corrections logged | 341 |
-| tagged with the kind of mistake | 295 |
-| distinct tags | 112 |
+| corrections logged | 351 |
+| tagged with the kind of mistake | 304 |
+| distinct tags | 115 |
 | turned into an eval case | 28 |
 | promoted into a rule | 42 |
-| refusals logged by 20 doors, the top five below | 2,823 |
-| `cockpit.reject_emdash` | 1,221 |
+| refusals logged by 21 doors, the top five below | 2,956 |
+| `cockpit.reject_emdash` | 1,222 |
 | `cockpit.channel.human_facing` | 548 |
-| `presence_gate` | 294 |
-| `no-em-dash-write` | 207 |
-| `registry-preflight` | 184 |
-| cases measured with and without the file that holds their rule, three runs per arm | 21 |
-| scoring higher with the rule | 13 |
-| scoring the same or lower | 8 |
+| `presence_gate` | 296 |
+| `no-em-dash-write` | 236 |
+| `registry-preflight` | 217 |
 
-The file that holds the rule refusing a pull request on someone else's repository moves its
-case from 0.17 without it to 1.00 with it. The credit goes to the file, not to the one rule:
-`trimwrit run` takes out the whole rule file for its without arm, and here that file is the
-global `~/.claude/CLAUDE.md`. 12 more cases score higher with their rule file. The other 8 move by
-0 or less, which is the list `trimwrit prune` exists to produce: the rule that holds an email
-until the author says go scores 1.00 either way, so the rule adds nothing measurable, and two of
-them score 0.00 even with their rule in place: the rule as written does not produce the
-behaviour, so it is a candidate for a rewrite or for removal.
+The same day, the weekly job that measures and prunes this harness (`trimwrit run --decide
+--ablate rule`, then `trimwrit prune --results --apply --inert-only`) made its first pass,
+started by hand with a budget of 420 sessions. It covered the 15 cases whose rule this
+harness promoted. Each case ran with its rule and with only that rule's block taken out of the
+file, three runs per arm at a time, until its verdict was decided or the budget ran out. All
+420 sessions ran on claude-opus-5-5. 64 of them are unmeasured (58 timed out at 300 s, 6 got no
+answer from the judge) and are counted apart, never as failures.
+
+| verdict | cases | rule |
+|---|---:|---|
+| keep | 4 | the rule helps, with probability 0.99 or more |
+| harmful | 0 | the rule hurts, with probability 0.99 or more |
+| inert | 0 | both arms within 0.2 of each other, with probability 0.975 or more, and the case passes 80 percent of the time without the rule |
+| inert-fail | 0 | both arms within 0.2, and the case fails without the rule too |
+| undecided | 11 | not enough runs yet |
+
+The four kept:
+- case 0044: 6 of 6 runs with its rule against 1 of 6 without, decided after six runs per arm;
+- 0014: 5 of 9 against 0 of 9;
+- 0066: 9 of 9 against 2 of 9;
+- 0065: 10 of 15 against 2 of 13.
+
+Among the undecided, four cases scored the same in both arms on every measured run: 0036, 0042
+and 0178 at 12 of 12 each way, 0052 at 15 of 15 against 14 of 14. Equivalence needs 18 measured
+runs per arm, so the next weekly pass decides them, and prune deletes their rules if the
+equivalence holds. Two cases fail in both arms: 0027 at 0 of 12 each way, 0043 at 0 of 12
+against 1 of 11. Their rule as written does not produce the behaviour, which calls for a
+rewrite, not a deletion. No rule has been removed yet.
 
 The same report on your own harness:
 
@@ -64,7 +81,7 @@ trimwrit report --refusals refusals.jsonl          # text
 trimwrit report --refusals refusals.jsonl --json   # the shape of the snapshot below
 ```
 
-The snapshot, with every door and the per-case table, is
+The snapshot, with every door and the per-case counts, is
 [docs/production/2026-10-21.json](docs/production/2026-10-21.json). It holds counts, dates, door
 names and case numbers, nothing else.
 
@@ -507,7 +524,7 @@ trimwrit report --refusals refusals.jsonl
 - `--refusals`: one JSON object per line with a `door` and an `at`, counted per door, plus how
   many carry `took_effect: true`. A write door leaves that field empty, since it blocks by
   construction; a Stop gate records whether the next turn changed. So the 185 true and 29 false
-  of the 2,823 refusals in [In production](#in-production) come from the Stop gates alone and are
+  of the 2,956 refusals in [In production](#in-production) come from the Stop gates alone and are
   not a rate over all refusals. Each gate
   in this marketplace writes such a file, `door-refusals.jsonl`, in its plugin's data directory
   unless the `trace` section of `trimwrit-gates.json` sends it elsewhere; one file per gate, so
@@ -858,8 +875,8 @@ a rule without evidence, or to keep one after the evidence is gone.
 
 `evals/` holds this repo's own cases, generated by the tool from real corrections, and
 `examples/CLAUDE.md` holds the rules they justify. `trimwrit run --target examples/CLAUDE.md`
-reproduces the table above. That is 3 cases; the same loop on a real harness, 341 corrections
-and 21 measured cases, is [In production](#in-production).
+reproduces the table above. That is 3 cases; the same loop on a real harness, 351 corrections
+and 15 cases measured rule by rule, is [In production](#in-production).
 
 `tools/no-bad-dashes.py` enforces the repo's headline rule on the repo itself, and it exists
 because the obvious shell check does not work: a `grep -rn` written over the two characters

@@ -1,23 +1,23 @@
 {
   "corrections": {
-    "count": 341,
+    "count": 351,
     "first_at": "2026-08-24T22:50:46Z",
-    "last_at": "2026-10-17T06:01:38Z",
-    "tagged": 295,
-    "distinct_tags": 112,
+    "last_at": "2026-10-21T06:01:49Z",
+    "tagged": 304,
+    "distinct_tags": 115,
     "cased": 28,
     "promoted": 42,
     "malformed": 0
   },
   "refusals": {
-    "count": 2823,
+    "count": 2956,
     "first_at": "2026-09-30T14:59:45Z",
-    "last_at": "2026-10-21T00:01:45Z",
+    "last_at": "2026-10-21T11:41:10Z",
     "took_effect": 185,
     "by_door": [
       [
         "cockpit.reject_emdash",
-        1221
+        1222
       ],
       [
         "cockpit.channel.human_facing",
@@ -25,130 +25,170 @@
       ],
       [
         "presence_gate",
-        294
+        296
       ],
       [
         "no-em-dash-write",
-        207
+        236
       ],
       [
         "registry-preflight",
-        184
+        217
       ],
       [
         "stop_claim_gate",
-        62
+        74
       ],
       [
         "stop_pause_gate",
-        54
-      ],
-      [
-        "stop_rule_gate",
-        49
+        61
       ],
       [
         "stop_promise_gate",
-        41
+        52
+      ],
+      [
+        "stop_rule_gate",
+        52
       ],
       [
         "stop_ask_gate",
-        37
-      ],
-      [
-        "git-hub-guard",
-        28
+        40
       ],
       [
         "cockpit.channel.line_contract",
-        24
+        32
       ],
       [
-        "fleet_gate",
-        16
-      ],
-      [
-        "crm.reject_emdash",
-        15
+        "git-hub-guard",
+        29
       ],
       [
         "handback_gate",
-        13
+        20
+      ],
+      [
+        "fleet_gate",
+        18
+      ],
+      [
+        "crm.reject_emdash",
+        16
       ],
       [
         "sched.precond.human_facing",
         13
       ],
       [
+        "bare_id_gate",
+        9
+      ],
+      [
         "no-em-dash",
-        7
+        8
       ],
       [
         "third-party-pr",
         5
       ],
       [
-        "stop_ignored_gate",
+        "drainer-deploy-door",
         4
       ],
       [
-        "drainer-deploy-door",
-        1
+        "stop_ignored_gate",
+        4
       ]
     ],
     "malformed": 0
   },
   "cases": {
-    "measured": 34,
-    "unmeasured": 5,
+    "measured": 91,
+    "unmeasured": 18,
     "latest": [
       {
-        "case": "0014",
+        "case": "0044",
         "with": 1.0,
         "without": 0.16666666666666666,
         "delta": 0.8333333333333334,
-        "runs": 3,
-        "ts": "2026-09-02T02:40:26Z"
-      },
-      {
-        "case": "0065",
-        "with": 1.0,
-        "without": 0.3333333333333333,
-        "delta": 0.6666666666666667,
-        "runs": 3,
-        "ts": "2026-09-30T14:57:16Z"
-      },
-      {
-        "case": "0042",
-        "with": 1.0,
-        "without": 0.5,
-        "delta": 0.5,
-        "runs": 3,
-        "ts": "2026-09-02T02:35:06Z"
-      },
-      {
-        "case": "0051",
-        "with": 0.8888888888888888,
-        "without": 0.4444444444444444,
-        "delta": 0.4444444444444444,
-        "runs": 3,
-        "ts": "2026-09-02T02:53:33Z"
-      },
-      {
-        "case": "0052",
-        "with": 1.0,
-        "without": 0.6666666666666666,
-        "delta": 0.33333333333333337,
-        "runs": 3,
-        "ts": "2026-09-02T02:44:55Z"
+        "runs": 6,
+        "ts": "2026-10-21T10:18:13Z",
+        "passes": {
+          "with": 6,
+          "without": 1
+        },
+        "measured": {
+          "with": 6,
+          "without": 6
+        },
+        "attempted": {
+          "with": 6,
+          "without": 6
+        },
+        "verdict": "keep"
       },
       {
         "case": "0066",
         "with": 1.0,
-        "without": 0.6666666666666666,
-        "delta": 0.33333333333333337,
-        "runs": 3,
-        "ts": "2026-09-30T15:01:40Z"
+        "without": 0.2222222222222222,
+        "delta": 0.7777777777777778,
+        "runs": 12,
+        "ts": "2026-10-21T10:18:13Z",
+        "passes": {
+          "with": 9,
+          "without": 2
+        },
+        "measured": {
+          "with": 9,
+          "without": 9
+        },
+        "attempted": {
+          "with": 12,
+          "without": 12
+        },
+        "verdict": "keep"
+      },
+      {
+        "case": "0014",
+        "with": 0.5555555555555556,
+        "without": 0.0,
+        "delta": 0.5555555555555556,
+        "runs": 9,
+        "ts": "2026-10-21T10:18:13Z",
+        "passes": {
+          "with": 5,
+          "without": 0
+        },
+        "measured": {
+          "with": 9,
+          "without": 9
+        },
+        "attempted": {
+          "with": 9,
+          "without": 9
+        },
+        "verdict": "keep"
+      },
+      {
+        "case": "0065",
+        "with": 0.6666666666666666,
+        "without": 0.15384615384615385,
+        "delta": 0.5128205128205128,
+        "runs": 15,
+        "ts": "2026-10-21T10:18:13Z",
+        "passes": {
+          "with": 10,
+          "without": 2
+        },
+        "measured": {
+          "with": 15,
+          "without": 13
+        },
+        "attempted": {
+          "with": 15,
+          "without": 15
+        },
+        "verdict": "keep"
       },
       {
         "case": "0181",
@@ -156,15 +196,74 @@
         "without": 0.6666666666666666,
         "delta": 0.33333333333333337,
         "runs": 3,
-        "ts": "2026-10-06T10:36:17Z"
+        "ts": "2026-10-06T10:36:17Z",
+        "passes": null,
+        "measured": null,
+        "attempted": null,
+        "verdict": null
       },
       {
-        "case": "0044",
-        "with": 0.75,
+        "case": "0051",
+        "with": 0.5333333333333333,
+        "without": 0.2,
+        "delta": 0.3333333333333333,
+        "runs": 15,
+        "ts": "2026-10-21T10:18:13Z",
+        "passes": {
+          "with": 8,
+          "without": 3
+        },
+        "measured": {
+          "with": 15,
+          "without": 15
+        },
+        "attempted": {
+          "with": 15,
+          "without": 15
+        },
+        "verdict": "undecided"
+      },
+      {
+        "case": "0020",
+        "with": 0.9166666666666666,
         "without": 0.5833333333333334,
+        "delta": 0.33333333333333326,
+        "runs": 15,
+        "ts": "2026-10-21T10:18:13Z",
+        "passes": {
+          "with": 11,
+          "without": 7
+        },
+        "measured": {
+          "with": 12,
+          "without": 12
+        },
+        "attempted": {
+          "with": 15,
+          "without": 15
+        },
+        "verdict": "undecided"
+      },
+      {
+        "case": "0039",
+        "with": 0.9166666666666666,
+        "without": 0.75,
         "delta": 0.16666666666666663,
-        "runs": 3,
-        "ts": "2026-09-02T02:37:05Z"
+        "runs": 15,
+        "ts": "2026-10-21T10:18:13Z",
+        "passes": {
+          "with": 11,
+          "without": 9
+        },
+        "measured": {
+          "with": 12,
+          "without": 12
+        },
+        "attempted": {
+          "with": 15,
+          "without": 15
+        },
+        "verdict": "undecided"
       },
       {
         "case": "0060",
@@ -172,31 +271,11 @@
         "without": 0.5,
         "delta": 0.16666666666666663,
         "runs": 3,
-        "ts": "2026-09-21T09:35:22Z"
-      },
-      {
-        "case": "0039",
-        "with": 0.6666666666666666,
-        "without": 0.5555555555555555,
-        "delta": 0.11111111111111116,
-        "runs": 3,
-        "ts": "2026-09-02T02:51:05Z"
-      },
-      {
-        "case": "0043",
-        "with": 1.0,
-        "without": 0.8888888888888888,
-        "delta": 0.11111111111111116,
-        "runs": 3,
-        "ts": "2026-09-02T02:46:32Z"
-      },
-      {
-        "case": "0027",
-        "with": 0.4444444444444444,
-        "without": 0.3333333333333333,
-        "delta": 0.1111111111111111,
-        "runs": 3,
-        "ts": "2026-09-02T02:33:41Z"
+        "ts": "2026-09-21T09:35:22Z",
+        "passes": null,
+        "measured": null,
+        "attempted": null,
+        "verdict": null
       },
       {
         "case": "0064",
@@ -204,39 +283,95 @@
         "without": 0.4444444444444444,
         "delta": 0.11111111111111105,
         "runs": 3,
-        "ts": "2026-09-22T12:36:37Z"
+        "ts": "2026-09-22T12:36:37Z",
+        "passes": null,
+        "measured": null,
+        "attempted": null,
+        "verdict": null
       },
       {
-        "case": "0017",
-        "with": 0.8888888888888888,
-        "without": 0.8888888888888888,
+        "case": "0027",
+        "with": 0.0,
+        "without": 0.0,
         "delta": 0.0,
-        "runs": 3,
-        "ts": "2026-09-02T02:45:21Z"
-      },
-      {
-        "case": "0020",
-        "with": 0.8333333333333334,
-        "without": 0.8333333333333334,
-        "delta": 0.0,
-        "runs": 3,
-        "ts": "2026-09-02T02:27:01Z"
+        "runs": 15,
+        "ts": "2026-10-21T10:18:13Z",
+        "passes": {
+          "with": 0,
+          "without": 0
+        },
+        "measured": {
+          "with": 12,
+          "without": 12
+        },
+        "attempted": {
+          "with": 15,
+          "without": 15
+        },
+        "verdict": "undecided"
       },
       {
         "case": "0036",
-        "with": 0.6666666666666666,
-        "without": 0.6666666666666666,
-        "delta": 0.0,
-        "runs": 3,
-        "ts": "2026-09-02T02:48:34Z"
-      },
-      {
-        "case": "0049",
         "with": 1.0,
         "without": 1.0,
         "delta": 0.0,
-        "runs": 3,
-        "ts": "2026-09-02T03:01:22Z"
+        "runs": 15,
+        "ts": "2026-10-21T10:18:13Z",
+        "passes": {
+          "with": 12,
+          "without": 12
+        },
+        "measured": {
+          "with": 12,
+          "without": 12
+        },
+        "attempted": {
+          "with": 15,
+          "without": 15
+        },
+        "verdict": "undecided"
+      },
+      {
+        "case": "0042",
+        "with": 1.0,
+        "without": 1.0,
+        "delta": 0.0,
+        "runs": 15,
+        "ts": "2026-10-21T10:18:13Z",
+        "passes": {
+          "with": 12,
+          "without": 12
+        },
+        "measured": {
+          "with": 12,
+          "without": 12
+        },
+        "attempted": {
+          "with": 15,
+          "without": 15
+        },
+        "verdict": "undecided"
+      },
+      {
+        "case": "0052",
+        "with": 1.0,
+        "without": 1.0,
+        "delta": 0.0,
+        "runs": 15,
+        "ts": "2026-10-21T10:18:13Z",
+        "passes": {
+          "with": 15,
+          "without": 14
+        },
+        "measured": {
+          "with": 15,
+          "without": 14
+        },
+        "attempted": {
+          "with": 15,
+          "without": 15
+        },
+        "verdict": "undecided"
       },
       {
         "case": "0058",
@@ -244,7 +379,32 @@
         "without": 0.5,
         "delta": 0.0,
         "runs": 3,
-        "ts": "2026-09-21T09:07:14Z"
+        "ts": "2026-09-21T09:07:14Z",
+        "passes": null,
+        "measured": null,
+        "attempted": null,
+        "verdict": null
+      },
+      {
+        "case": "0178",
+        "with": 1.0,
+        "without": 1.0,
+        "delta": 0.0,
+        "runs": 15,
+        "ts": "2026-10-21T10:18:13Z",
+        "passes": {
+          "with": 12,
+          "without": 12
+        },
+        "measured": {
+          "with": 12,
+          "without": 12
+        },
+        "attempted": {
+          "with": 15,
+          "without": 15
+        },
+        "verdict": "undecided"
       },
       {
         "case": "0182",
@@ -252,7 +412,74 @@
         "without": 0.0,
         "delta": 0.0,
         "runs": 3,
-        "ts": "2026-10-07T09:42:19Z"
+        "ts": "2026-10-07T09:42:19Z",
+        "passes": null,
+        "measured": null,
+        "attempted": null,
+        "verdict": null
+      },
+      {
+        "case": "0017",
+        "with": 0.9333333333333333,
+        "without": 1.0,
+        "delta": -0.06666666666666665,
+        "runs": 18,
+        "ts": "2026-10-21T10:18:13Z",
+        "passes": {
+          "with": 14,
+          "without": 15
+        },
+        "measured": {
+          "with": 15,
+          "without": 15
+        },
+        "attempted": {
+          "with": 18,
+          "without": 18
+        },
+        "verdict": "undecided"
+      },
+      {
+        "case": "0043",
+        "with": 0.0,
+        "without": 0.09090909090909091,
+        "delta": -0.09090909090909091,
+        "runs": 15,
+        "ts": "2026-10-21T10:18:13Z",
+        "passes": {
+          "with": 0,
+          "without": 1
+        },
+        "measured": {
+          "with": 12,
+          "without": 11
+        },
+        "attempted": {
+          "with": 15,
+          "without": 15
+        },
+        "verdict": "undecided"
+      },
+      {
+        "case": "0049",
+        "with": 0.8333333333333334,
+        "without": 1.0,
+        "delta": -0.16666666666666663,
+        "runs": 15,
+        "ts": "2026-10-21T10:18:13Z",
+        "passes": {
+          "with": 10,
+          "without": 12
+        },
+        "measured": {
+          "with": 12,
+          "without": 12
+        },
+        "attempted": {
+          "with": 15,
+          "without": 15
+        },
+        "verdict": "undecided"
       },
       {
         "case": "0063",
@@ -260,7 +487,11 @@
         "without": 0.16666666666666666,
         "delta": -0.16666666666666666,
         "runs": 3,
-        "ts": "2026-09-22T12:23:29Z"
+        "ts": "2026-09-22T12:23:29Z",
+        "passes": null,
+        "measured": null,
+        "attempted": null,
+        "verdict": null
       },
       {
         "case": "0243",
@@ -268,9 +499,17 @@
         "without": 0.8333333333333334,
         "delta": -0.16666666666666674,
         "runs": 3,
-        "ts": "2026-10-14T18:38:22Z"
+        "ts": "2026-10-14T18:38:22Z",
+        "passes": null,
+        "measured": null,
+        "attempted": null,
+        "verdict": null
       }
     ],
+    "verdicts": {
+      "keep": 4,
+      "undecided": 11
+    },
     "malformed": 0
   }
 }
