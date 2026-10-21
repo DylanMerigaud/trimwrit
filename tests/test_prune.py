@@ -81,15 +81,16 @@ def test_a_flat_case_that_passes_without_the_rule_is_a_deletion_candidate(tmp_pa
 
 
 def test_a_flat_case_that_fails_in_both_arms_is_a_rewrite_not_a_deletion(tmp_path):
-    # Inert and failing: 0.00 in both arms is not "the model already behaves", the rule as
-    # written does not produce the behaviour.
+    # Inert and failing: 0.00 in both arms is not "the model already behaves", the case is not
+    # reliably passed even with the rule.
     root, evals = _setup(tmp_path)
     summaries = {"0001-kept-case": {"with": 0.0, "without": 0.0, "delta": 0.0}}
     found = prune.inert(summaries, ["CLAUDE.md"], evals, root)
     assert [f.kind for f in found] == [prune.INERT_FAILING]
     assert "already behaves" not in found[0].detail
-    assert "fails in both arms" in found[0].detail
-    assert "does not produce the behaviour" in found[0].detail
+    assert "below the pass line (1.00) in both arms" in found[0].detail
+    assert "not reliably passed even with the rule" in found[0].detail
+    assert "Rewrite the rule or its case" in found[0].detail
 
 
 def test_the_pass_line_decides_which_kind_a_flat_case_is(tmp_path):

@@ -25,10 +25,11 @@ passes without the rule. The rule is not wrong. It is unnecessary, because the m
 behaves. This is the finding a growing CLAUDE.md never gets told, and it is the only honest
 reason to delete an instruction everybody still agrees with.
 
-**inert-fail**: the same flat delta, but the case fails in both arms (below the pass line
-`trimwrit run` uses, `--threshold`, default 1.0). The model does not behave with the rule
-either: the rule as written does not produce the behaviour. Rewrite it and re-run the case.
-`--apply` never deletes one.
+**inert-fail**: the same flat delta, but the case stays below the pass line `trimwrit run`
+uses (`--threshold`, default 1.0) in both arms, whether that is 0.00/0.00 or 0.89/0.89. The case
+is not reliably passed even with the rule, so the number cannot say the rule is unneeded.
+Rewrite the rule or its case and re-run it before deleting anything. `--apply` never deletes
+one.
 
 **unused-case**: a case no rule points at. Usually not a deletion order, usually an integrate
 step that never ran. Write the rule, or delete the case.

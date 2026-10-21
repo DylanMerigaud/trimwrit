@@ -80,14 +80,14 @@ def test_never_emits_free_text(tmp_path):
 
 def test_case_shown_by_number_only(tmp_path):
     his = _write(tmp_path / "h.jsonl", [
-        {"ts": "2026-09-01T00:00:00Z", "case": "0064-il-y-a-rien-qui", "with": 1.0,
+        {"ts": "2026-09-01T00:00:00Z", "case": "0064-some-words-of-the-correction", "with": 1.0,
          "without": 0.0, "delta": 1.0, "runs": 3},
         {"ts": "2026-09-01T00:00:00Z", "case": "no-number-here", "with": 1.0,
          "without": 0.5, "delta": 0.5, "runs": 3},
     ])
     doc = report.build(_write(tmp_path / "l.jsonl", []), history_path=his)
     assert [e["case"] for e in doc["cases"]["latest"]] == ["0064", "(unnamed)"]
-    assert "il-y-a" not in report.render(doc) + json.dumps(doc)
+    assert "some-words" not in report.render(doc) + json.dumps(doc)
 
 
 def test_malformed_lines_counted(tmp_path):

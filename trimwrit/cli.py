@@ -586,8 +586,8 @@ def cmd_prune(args):
     if args.apply:
         removed = 0
         for f in findings:
-            # An inert-fail rule is a rewrite order, not a deletion order: the case fails in
-            # both arms, so the number says the rule does not work, not that it is unneeded.
+            # An inert-fail rule is a rewrite order, not a deletion order: the case is below
+            # the pass line in both arms, so the number cannot say the rule is unneeded.
             if f.kind in (prune_mod.UNUSED_CASE, prune_mod.INERT_FAILING) \
                     or not f.rule or not f.target:
                 continue
@@ -599,8 +599,8 @@ def cmd_prune(args):
         print("\nnothing was changed. Re-run with --apply to delete these rules and record the\n"
               "removal in the ledger.")
     if any(f.kind == prune_mod.INERT_FAILING for f in findings):
-        print("an inert-fail rule is kept even with --apply: its case fails in both arms, so it\n"
-              "needs a rewrite, not a deletion.")
+        print("an inert-fail rule is kept even with --apply: its case is not reliably passed\n"
+              "even with the rule, so rewrite the rule or its case before deleting it.")
     print("viz: run 'trimwrit viz --target {}' to see this as a canvas".format(_targets(args)[0]))
     return 0
 

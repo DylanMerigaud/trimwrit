@@ -44,12 +44,14 @@ one line when it does; the names are the harness's own.
 | `presence_gate` | 294 |
 | `no-em-dash-write` | 207 |
 | `registry-preflight` | 184 |
-| cases measured with and without their rule, three runs per arm | 21 |
+| cases measured with and without the file that holds their rule, three runs per arm | 21 |
 | scoring higher with the rule | 13 |
 | scoring the same or lower | 8 |
 
-The rule that refuses a pull request on someone else's repository moves its case from 0.17
-without it to 1.00 with it, and 12 more cases score higher with their rule. The other 8 move by
+The file that holds the rule refusing a pull request on someone else's repository moves its
+case from 0.17 without it to 1.00 with it. The credit goes to the file, not to the one rule:
+`trimwrit run` takes out the whole rule file for its without arm, and here that file is the
+global `~/.claude/CLAUDE.md`. 12 more cases score higher with their rule file. The other 8 move by
 0 or less, which is the list `trimwrit prune` exists to produce: the rule that holds an email
 until the author says go scores 1.00 either way, so the rule adds nothing measurable, and two of
 them score 0.00 even with their rule in place: the rule as written does not produce the
@@ -263,12 +265,13 @@ kind         rule     why
 ------------------------------------------------------------------------
 orphan       R0031    CLAUDE.md:88 names case 0031, which is not in evals/. Nothing can show this rule still earns its place.
 inert        R0014    case 0014-json-only scores 1.00 with R0014 and 1.00 without it (delta +0.00). The model already behaves. Delete the rule and keep the case.
-inert-fail   R0022    case 0022-hold-the-mail scores 0.00 with R0022 and 0.00 without it (delta +0.00). The case fails in both arms (pass line 1.00): the rule as written does not produce the behaviour. Rewrite the rule and re-run the case; do not delete it on this number.
+inert-fail   R0022    case 0022-cite-the-source scores 0.00 with R0022 and 0.00 without it (delta +0.00). The case is below the pass line (1.00) in both arms, so it is not reliably passed even with the rule. Rewrite the rule or its case and re-run it before deleting the rule.
 ```
 
 `--apply` deletes the orphan and the inert rule and writes each removal into the same ledger as
-the promotion, with the reason. It keeps an `inert-fail` rule: a case that fails in both arms
-says the rule does not work, not that it is unneeded, so the fix is a rewrite. The pass line is
+the promotion, with the reason. It keeps an `inert-fail` rule: a case below the pass line in
+both arms is not reliably passed even with the rule, so the number cannot say the rule is
+unneeded, and the fix is a rewrite of the rule or of its case. The pass line is
 the one `trimwrit run` uses, `--threshold`, default 1.0. The case stays: it is what will notice if the behaviour comes back after a model update.
 
 ## Why the deletion half is the point
@@ -285,8 +288,9 @@ not documentation, it is the thing that makes the rule deletable by someone who 
 
 And it is why `prune` reports numbers rather than an opinion. An **inert** rule is not wrong. It
 is unnecessary, because the model already behaves, and that is the only honest reason to delete
-an instruction everybody still agrees with. A flat delta on a case that fails in both arms is
-the other finding, `inert-fail`: there the rule does not produce the behaviour at all.
+an instruction everybody still agrees with. A flat delta on a case below the pass line in both
+arms is the other finding, `inert-fail`: the case is not reliably passed even with the rule, so
+the rule or the case needs a rewrite before anyone deletes it.
 
 ## The runtime half: what a rule did in production
 
@@ -342,7 +346,11 @@ trimwrit report --refusals refusals.jsonl
 
 - `--ledger` (default `.trimwrit/ledger.jsonl`): corrections, first and last date, how many are
   tagged and under how many tags, how many have a case, how many are promoted.
-- `--refusals`: one JSON object per line with a `door` and an `at`, counted per door. Each gate
+- `--refusals`: one JSON object per line with a `door` and an `at`, counted per door, plus how
+  many carry `took_effect: true`. A write door leaves that field empty, since it blocks by
+  construction; a Stop gate records whether the next turn changed. So the 185 true and 29 false
+  of the 2,823 refusals in [In production](#in-production) come from the Stop gates alone and are
+  not a rate over all refusals. Each gate
   in this marketplace writes such a file, `door-refusals.jsonl`, in its plugin's data directory
   unless the `trace` section of `trimwrit-gates.json` sends it elsewhere; one file per gate, so
   concatenate them.
@@ -693,10 +701,16 @@ which succeeds with empty output before anything is staged. Both misses are in t
 
 `tools/no-private-data.py` guards the production snapshot the same way. It fails the suite on
 an email address or a phone number in any tracked file, outside an allowlist of two addresses
-that name nobody (a test repository's git identity, the SSH user of GitHub remotes), and on a
-`text`, `consequence`, `session`, `session_id` or `reason` key in any file under
-`docs/production/`, the fields of the ledgers that hold what a person said. It reads files the
-way the dash scanner does, and a scan that read zero files exits 2 instead of passing.
+that name nobody (a test repository's git identity, the SSH user of GitHub remotes). The phone
+shapes are the international ones (a plus prefix, with even or mixed grouping), the French ten
+digits in pairs or unbroken, and the North American form with parentheses, hyphens or dots.
+Under `docs/production/` it also fails on a `text`, `consequence`, `session`, `session_id`,
+`reason`, `rule`, `value`, `source` or `target` key, the fields of the ledgers that hold what a
+person said, a rule's words or a path that names one, and on a `case` value that is not a bare
+number (`0064`) or `(unnamed)`, since a case directory's name is a slug of the correction it
+came from. It reads files the way the dash scanner does, a file that is not valid UTF-8 is read
+with its bad bytes replaced rather than skipped, and a scan that read zero files exits 2
+instead of passing.
 
 ## Commands
 

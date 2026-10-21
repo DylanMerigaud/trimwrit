@@ -11,11 +11,11 @@ INERT    the case exists, it runs, it scores no better with the rule than withou
          does this. That is the finding that a growing CLAUDE.md never gets told, and it is the
          only honest reason to delete an instruction that everybody still agrees with.
 
-INERT_FAILING  the same flat delta, but the case FAILS in both arms. The model does not behave
-         without the rule and does not behave with it either: the rule as written does not
-         produce the behaviour. That is not a deletion order, it is a rewrite order, and
-         `--apply` leaves the rule in place. The pass line is the one `trimwrit run` uses
-         (`--threshold`, default 1.0).
+INERT_FAILING  the same flat delta, but the case stays below the pass line in both arms,
+         from 0.00/0.00 up to 0.89/0.89. The case is not reliably passed even with the rule,
+         so the number cannot say the rule is unneeded: rewrite the rule or its case and
+         re-run before deleting anything. `--apply` leaves the rule in place. The pass line is
+         the one `trimwrit run` uses (`--threshold`, default 1.0).
 
 An inert verdict is a measurement, so it carries its numbers. A finding that says "delete this"
 without showing the two scores is an opinion with a command-line flag.
@@ -108,8 +108,8 @@ def inert(summaries, targets, evals_dir="evals", root=".", pass_line=PASS_LINE):
 
     `summaries` is {case_dir_basename: runner.summarise(...) dict}. A flat delta is two
     different findings depending on the `without` arm against `pass_line`: at or above it the
-    case passes without the rule (INERT, delete the rule); below it the case fails in both arms
-    (INERT_FAILING, the rule does not produce the behaviour and needs a rewrite). With a delta
+    case passes without the rule (INERT, delete the rule); below it the case is not reliably
+    passed even with the rule (INERT_FAILING, rewrite the rule or its case first). With a delta
     of zero or less, `without` below the line means `with` is below it too.
     """
     by_case = {}
@@ -143,9 +143,9 @@ def inert(summaries, targets, evals_dir="evals", root=".", pass_line=PASS_LINE):
         if passes_without:
             verdict = ("The model already behaves. Delete the rule and keep the case.")
         else:
-            verdict = ("The case fails in both arms (pass line {:.2f}): the rule as written does "
-                       "not produce the behaviour. Rewrite the rule and re-run the case; do not "
-                       "delete it on this number.".format(pass_line))
+            verdict = ("The case is below the pass line ({:.2f}) in both arms, so it is not "
+                       "reliably passed even with the rule. Rewrite the rule or its case and "
+                       "re-run it before deleting the rule.".format(pass_line))
         for rule_id, target, meta in holders:
             out.append(Finding(
                 kind, rule=rule_id, case=base, target=target, numbers=numbers,

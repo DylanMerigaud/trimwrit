@@ -162,8 +162,8 @@ def test_a_comma_in_a_must_match_sample_survives_write_case_and_load_case(tmp_pa
 # first. A case that declared two graders shipped one, with no error anywhere.
 
 def test_write_case_avoids_a_slug_collision_between_two_grader_names(tmp_path):
-    name1 = "requires-cross-bet-change-applied-to-a-subset-1"
-    name2 = "requires-cross-bet-change-applied-to-a-subset-2"
+    name1 = "requires-one-change-applied-to-every-item-1"
+    name2 = "requires-one-change-applied-to-every-item-2"
     d = cases.write_case(
         "0001", "t", "p",
         [cases.require_grader("x", name=name1), cases.require_grader("y", name=name2)],

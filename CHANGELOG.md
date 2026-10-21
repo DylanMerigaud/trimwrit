@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.8.2, 2026-10-21
+
+- **`trimwrit prune`'s `inert-fail` wording fits every case it covers.** The finding covers
+  every flat case below the pass line, 0.89 in both arms as well as 0.00, so it no longer says
+  the rule "does not produce the behaviour". It says the case is not reliably passed even with
+  the rule, and to rewrite the rule or its case and re-run it before deleting the rule. The
+  `--apply` note, the prune skill and the README say the same.
+- **README, "In production".** The without arm of `trimwrit run` takes out the whole file that
+  holds a rule, so the table row reads "with and without the file that holds their rule" and
+  the 0.17 to 1.00 case is credited to its rule file (the global `~/.claude/CLAUDE.md` there).
+- **README, report.** `took_effect` is explained: write doors leave it empty, since they block
+  by construction, and Stop gates record whether the next turn changed, so the 185 true and 29
+  false of 2,823 refusals are not a rate over all refusals.
+- **README, prune example and Dogfood.** The `inert-fail` example uses an invented case, so the
+  page never gives two verdicts on one subject, and the Dogfood paragraph lists the privacy
+  scanner's checks as 0.8.1 ships them.
+- **Tests carry no real case name.** Two fixtures built from a production case's slug now use
+  invented names.
+
 ## 0.8.1, 2026-10-21
 
 - **`trimwrit prune` tells a rule that is unneeded from a rule that does not work.** A case with
