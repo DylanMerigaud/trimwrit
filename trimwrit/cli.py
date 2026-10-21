@@ -49,7 +49,9 @@ def _today():
 
 def _targets(args):
     if args.target:
-        return [t for t in args.target.split(",") if t]
+        # `~/.claude/CLAUDE.md` is how the user writes a global rule file; joined under the root
+        # as it stands it would be looked up in a directory literally named `~`.
+        return [os.path.expanduser(t) for t in args.target.split(",") if t]
     return list(DEFAULT_TARGETS)
 
 

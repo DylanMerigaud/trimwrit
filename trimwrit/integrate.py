@@ -119,13 +119,12 @@ def write_rule(target, rule_id, case_id, date, incident, rule_text, root="."):
     return {"target": target, "rule": rule_id, "case": case_id, "action": action}
 
 
-def drop_rule(target, rule_id, root="."):
-    """Remove one rule block. Returns the text that was removed, or None."""
-    path = os.path.join(root, target)
-    if not os.path.exists(path):
-        return None
-    with open(path, encoding="utf-8") as fh:
-        text = fh.read()
+def _cut(text, rule_id):
+    """(text without the block, the block) for one rule, or None when `text` has no such rule.
+
+    The block is the marker line down to the first blank line; the blank lines after it go with
+    it, so the neighbours do not end up separated by a double gap.
+    """
     found = find_rule(text, rule_id)
     if not found:
         return None
@@ -135,8 +134,50 @@ def drop_rule(target, rule_id, root="."):
     while end < len(lines) and not lines[end].strip():
         end += 1
     del lines[start:end]
-    write_text(path, "\n".join(lines), "the rule target {}".format(target))
-    return removed
+    return "\n".join(lines), removed
+
+
+def strip_rules(text, rule_ids):
+    """(new text, ids actually removed): `text` with each named rule block taken out.
+
+    Pure, so the rule level ablation (`--ablate rule`) can build the `without` arm's file with no
+    disk write: the measurement must be about the rule, and the same CLAUDE.md minus exactly the
+    citing blocks is the only difference between the two arms. An id the text does not hold is
+    skipped, not an error. Everything outside the removed blocks stays byte for byte.
+    """
+    removed_ids = []
+    for rule_id in rule_ids:
+        cut = _cut(text, rule_id)
+        if cut:
+            text = cut[0]
+            removed_ids.append(rule_id)
+    return text, removed_ids
+
+
+def drop_rule(target, rule_id, root="."):
+    """Remove one rule block. Returns the text that was removed, or None."""
+    path = os.path.join(root, target)
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    cut = _cut(text, rule_id)
+    if not cut:
+        return None
+    write_text(path, cut[0], "the rule target {}".format(target))
+    return cut[1]
+
+
+def citing_rules(target, case_base, root="."):
+    """The ids of the rules in `target` whose marker cites the case `case_base`.
+
+    A marker cites a case by its leading number (`0027`) or by the full directory name
+    (`0027-decision-taken-reopened`); `case 0270` does not cite `0027`, because the ids are
+    compared whole, never as prefixes. A multi case marker (`0065+0066`) cites each.
+    """
+    wanted = {case_base.split("-", 1)[0], case_base}
+    return [rule_id for rule_id, info in read_rules(target, root).items()
+            if wanted & set(case_list(info["case"]))]
 
 
 def read_rules(target, root="."):

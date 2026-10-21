@@ -612,3 +612,13 @@ def test_run_jobs_4_matches_jobs_1_byte_for_byte(tmp_path, capsys):
 
     assert rc1 == rc4 == 0
     assert payload_1 == payload_4
+
+
+def test_targets_expand_a_home_directory(monkeypatch):
+    import argparse
+
+    from trimwrit import cli
+
+    monkeypatch.setenv("HOME", "/somewhere/home")
+    got = cli._targets(argparse.Namespace(target="~/.claude/CLAUDE.md,CLAUDE.md"))
+    assert got == ["/somewhere/home/.claude/CLAUDE.md", "CLAUDE.md"]

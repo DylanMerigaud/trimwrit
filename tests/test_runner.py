@@ -6,6 +6,8 @@ direction as the model is invisible in an end to end run.
 """
 import os
 
+import pytest
+
 from trimwrit import runner
 from trimwrit.cases import Case
 
@@ -389,3 +391,107 @@ def test_the_sandbox_note_is_opt_in(tmp_path):
         plain, runner.ARM_WITH, 0, {}, claude=claude).final_text
     assert "--append-system-prompt" in runner.run_once(
         noted, runner.ARM_WITH, 0, {}, claude=claude).final_text
+
+
+# ---------------------------------------------------------------- rule level ablation
+
+
+RULED = ("intro\n\n"
+         "<!-- trimwrit: R1 case 0027 -->\nthe rule block\n\n"
+         "<!-- trimwrit: R2 case 0099 -->\nanother rule\n")
+
+
+def _ruled_case(tmp_path, name="0027-some-case"):
+    d = tmp_path / "evals" / name
+    d.mkdir(parents=True)
+    return Case(str(d), {"name": name}, "prompt", [])
+
+
+def test_rule_arm_files_with_keeps_the_file_and_without_drops_only_citing_blocks(tmp_path):
+    (tmp_path / "CLAUDE.md").write_text(RULED, encoding="utf-8")
+    with_f, without_f = runner.rule_arm_files(_ruled_case(tmp_path), ["CLAUDE.md"],
+                                              root=str(tmp_path))
+    assert with_f == {"CLAUDE.md": RULED}
+    assert "the rule block" not in without_f["CLAUDE.md"]
+    assert "another rule" in without_f["CLAUDE.md"] and "intro" in without_f["CLAUDE.md"]
+
+
+def test_rule_arm_files_unclaimed_when_no_target_cites_the_case(tmp_path):
+    (tmp_path / "CLAUDE.md").write_text(RULED, encoding="utf-8")
+    with pytest.raises(runner.AblationError) as err:
+        runner.rule_arm_files(_ruled_case(tmp_path, "0500-other"), ["CLAUDE.md"],
+                              root=str(tmp_path))
+    assert err.value.kind == "unclaimed"
+
+
+def test_rule_arm_files_collision_when_two_same_named_targets_cite_the_case(tmp_path):
+    for sub in ("a", "b"):
+        (tmp_path / sub).mkdir()
+        (tmp_path / sub / "CLAUDE.md").write_text(RULED, encoding="utf-8")
+    with pytest.raises(runner.AblationError) as err:
+        runner.rule_arm_files(_ruled_case(tmp_path), ["a/CLAUDE.md", "b/CLAUDE.md"],
+                              root=str(tmp_path))
+    assert err.value.kind == "collision"
+
+
+def test_rule_arm_files_seeds_only_the_targets_that_cite_the_case(tmp_path):
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    (tmp_path / "a" / "CLAUDE.md").write_text(RULED, encoding="utf-8")
+    (tmp_path / "b" / "CLAUDE.md").write_text("<!-- trimwrit: R7 case 0500 -->\nx\n",
+                                              encoding="utf-8")
+    with_f, without_f = runner.rule_arm_files(_ruled_case(tmp_path),
+                                              ["a/CLAUDE.md", "b/CLAUDE.md"], root=str(tmp_path))
+    assert with_f == {"CLAUDE.md": RULED} and set(without_f) == {"CLAUDE.md"}
+
+
+def test_rule_arm_files_expands_a_home_target(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / "x").mkdir(parents=True)
+    (home / "x" / "CLAUDE.md").write_text(RULED, encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    root = tmp_path / "elsewhere"
+    root.mkdir()
+    with_f, _ = runner.rule_arm_files(_ruled_case(tmp_path), ["~/x/CLAUDE.md"], root=str(root))
+    assert with_f == {"CLAUDE.md": RULED}
+
+
+def _cat_claude(tmp_path):
+    path = tmp_path / "cat-claude.py"
+    path.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os\n"
+        "text = open('CLAUDE.md').read() if os.path.exists('CLAUDE.md') else 'none'\n"
+        "print(json.dumps({'type': 'result', 'result': text}))\n", encoding="utf-8")
+    os.chmod(path, 0o755)
+    return str(path)
+
+
+def test_run_once_without_files_show_the_rule_in_with_and_not_in_without(tmp_path):
+    case = _ruled_case(tmp_path)
+    fake = _cat_claude(tmp_path)
+    with_f = {"CLAUDE.md": RULED}
+    without_f = {"CLAUDE.md": "intro\n"}
+    w = runner.run_once(case, runner.ARM_WITH, 0, with_f, claude=fake, without_files=without_f)
+    wo = runner.run_once(case, runner.ARM_WITHOUT, 0, with_f, claude=fake,
+                         without_files=without_f)
+    assert "the rule block" in w.final_text
+    assert wo.final_text.strip() == "intro"
+    bare = runner.run_once(case, runner.ARM_WITHOUT, 0, with_f, claude=fake)
+    assert bare.final_text == "none"
+
+
+def test_run_many_files_by_case_and_start_by_case_set_files_and_run_indexes(tmp_path):
+    case = _ruled_case(tmp_path)
+    fake = _cat_claude(tmp_path)
+    seen = []
+    out = runner.run_many([case], {"CLAUDE.md": "ignored\n"}, runs=2, claude=fake,
+                          files_by_case={case.path: ({"CLAUDE.md": RULED},
+                                                     {"CLAUDE.md": "intro\n"})},
+                          start_by_case={case.path: 3},
+                          progress=lambda c, a, i, n: seen.append((a, i, n)))
+    assert [r.run_index for r in out[case.path][runner.ARM_WITH]] == [3, 4]
+    assert [r.run_index for r in out[case.path][runner.ARM_WITHOUT]] == [3, 4]
+    assert "the rule block" in out[case.path][runner.ARM_WITH][0].final_text
+    assert out[case.path][runner.ARM_WITHOUT][0].final_text.strip() == "intro"
+    assert (runner.ARM_WITH, 1, 2) in seen and (runner.ARM_WITH, 2, 2) in seen

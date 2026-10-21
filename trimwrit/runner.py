@@ -27,6 +27,7 @@ import subprocess
 import tempfile
 import time
 
+from . import integrate
 from .models import (DEFAULT_CASE_MODEL, DEFAULT_JUDGE_MODEL, model_usage_of,
                      require_full_id)
 
@@ -353,12 +354,14 @@ def _stream_model_usage(raw):
 
 
 def run_once(case, arm, run_index, rule_files, extra_args=(), claude="claude", cwd_seed=None,
-             isolate=True, model=DEFAULT_CASE_MODEL):
+             isolate=True, model=DEFAULT_CASE_MODEL, without_files=None):
     """One run of one case in one arm, in a scratch directory.
 
     The scratch directory is the ablation. In the `with` arm the rule files are written into it,
-    in the `without` arm they are not, and nothing else differs. `model` is a full id, checked
-    before anything is created (see models.require_full_id).
+    in the `without` arm they are not, and nothing else differs. With `without_files` (rule
+    level ablation) the `without` arm gets those files instead of nothing: the same targets
+    with the citing rule blocks taken out. `model` is a full id, checked before anything is
+    created (see models.require_full_id).
     """
     require_full_id(model)
     workdir = tempfile.mkdtemp(prefix="trimwrit-")
@@ -368,14 +371,14 @@ def run_once(case, arm, run_index, rule_files, extra_args=(), claude="claude", c
                 src = os.path.join(cwd_seed, entry)
                 dst = os.path.join(workdir, entry)
                 shutil.copytree(src, dst) if os.path.isdir(src) else shutil.copy2(src, dst)
-        if arm == ARM_WITH:
-            for relpath, content in rule_files.items():
-                dest = os.path.join(workdir, relpath)
-                parent = os.path.dirname(dest)
-                if parent:
-                    os.makedirs(parent, exist_ok=True)
-                with open(dest, "w", encoding="utf-8") as fh:
-                    fh.write(content)
+        seeded = rule_files if arm == ARM_WITH else (without_files or {})
+        for relpath, content in seeded.items():
+            dest = os.path.join(workdir, relpath)
+            parent = os.path.dirname(dest)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(dest, "w", encoding="utf-8") as fh:
+                fh.write(content)
 
         before = _snapshot(workdir)
         cmd = [claude, "-p", case.prompt, "--model", model, "--output-format", "stream-json",
@@ -461,9 +464,49 @@ def make_judge(claude="claude", model=DEFAULT_JUDGE_MODEL):
     return judge
 
 
+class AblationError(Exception):
+    """A case the rule level ablation cannot measure. `kind` says why: `unclaimed` (no target
+    holds a rule citing the case) or `collision` (two citing targets share a file name, so the
+    scratch directory could hold only one of them)."""
+
+    def __init__(self, kind, message):
+        super(AblationError, self).__init__(message)
+        self.kind = kind
+
+
+def rule_arm_files(case, targets, root="."):
+    """(with_files, without_files) for the rule level ablation of one case.
+
+    Only the targets holding a rule that cites the case are seeded; the `with` files are their
+    text intact, the `without` files the same text minus the citing blocks, so the two arms differ
+    by exactly the rules under test and a verdict is about the rule, not about the whole
+    CLAUDE.md. Keys are the target's basename, which is where the model looks for it. A target
+    like `~/.claude/CLAUDE.md` is expanded before it is joined under `root`.
+    """
+    base = os.path.basename(case.path.rstrip("/\\"))
+    with_files, without_files = {}, {}
+    for target in targets:
+        target = os.path.expanduser(target)
+        ids = integrate.citing_rules(target, base, root)
+        if not ids:
+            continue
+        name = os.path.basename(target)
+        if name in with_files:
+            raise AblationError(
+                "collision", "two targets named {} cite case {}: the scratch directory can hold "
+                "only one, so this case cannot be ablated by rule".format(name, base))
+        with open(os.path.join(root, target), encoding="utf-8") as fh:
+            text = fh.read()
+        with_files[name] = text
+        without_files[name] = integrate.strip_rules(text, ids)[0]
+    if not with_files:
+        raise AblationError("unclaimed", "no target holds a rule citing case {}".format(base))
+    return with_files, without_files
+
+
 def run_many(cases, rule_files, arms=(ARM_WITH, ARM_WITHOUT), runs=None, claude="claude",
              judge=None, extra_args=(), cwd_seed=None, progress=None, isolate=True, jobs=1,
-             model=DEFAULT_CASE_MODEL):
+             model=DEFAULT_CASE_MODEL, files_by_case=None, start_by_case=None):
     """Run every (case, arm, run_index) triple across every case in `cases`.
 
     Returns {case.path: {arm: [Result, ...]}}, the same shape `run_case` returns for one case,
@@ -484,8 +527,15 @@ def run_many(cases, rule_files, arms=(ARM_WITH, ARM_WITHOUT), runs=None, claude=
     a suite run at `--jobs 8` are byte for byte the same as the same suite at `--jobs 1`. The
     only thing that becomes non-deterministic is the order progress lines print in, and that is
     a terminal, not a result.
+
+    `files_by_case[case.path] = (with_files, without_files)` replaces `rule_files` for that case
+    (rule level ablation: the `without` arm keeps the file minus the citing rules).
+    `start_by_case[case.path]` offsets that case's run indexes, so a later batch of a sequential
+    decision writes `with-3.md` instead of rewriting `with-0.md`.
     """
     require_full_id(model)
+    files_by_case = files_by_case or {}
+    start_by_case = start_by_case or {}
     triples = []
     for case in cases:
         n = runs or case.runs
@@ -498,7 +548,9 @@ def run_many(cases, rule_files, arms=(ARM_WITH, ARM_WITHOUT), runs=None, claude=
         n = runs or case.runs
         if progress:
             progress(case, arm, i + 1, n)
-        res = run_once(case, arm, i, rule_files, extra_args, claude, cwd_seed, isolate, model)
+        with_f, without_f = files_by_case.get(case.path, (rule_files, None))
+        res = run_once(case, arm, start_by_case.get(case.path, 0) + i, with_f, extra_args,
+                       claude, cwd_seed, isolate, model, without_files=without_f)
         apply_graders(case, res, judge)
         return res
 

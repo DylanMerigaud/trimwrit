@@ -85,3 +85,55 @@ def test_short_marker_without_incident_is_read(tmp_path):
     assert rules["R0065"]["case"] == "0065+0066"
     assert rules["R0065"]["date"] == "2026-09-30"
     assert [r for r, _ in integ.rule_ids(text)] == ["R0020", "R0065"]
+
+
+THREE_RULES = (
+    "# Title\n\n"
+    "<!-- trimwrit: R1 case 0001, 2026-08-23: one -->\nrule one\nmore one\n\n"
+    "<!-- trimwrit: R2 case 0002, 2026-08-23: two -->\nrule two\n\n"
+    "<!-- trimwrit: R3 case 0003 -->\nrule three\n  keep   spacing\n\n"
+    "tail\n")
+
+
+def test_strip_rules_removes_the_named_blocks_and_keeps_the_rest_byte_for_byte():
+    new, removed = I.strip_rules(THREE_RULES, ["R1", "R2"])
+    assert removed == ["R1", "R2"]
+    assert new == ("# Title\n\n"
+                   "<!-- trimwrit: R3 case 0003 -->\nrule three\n  keep   spacing\n\n"
+                   "tail\n")
+
+
+def test_strip_rules_ignores_ids_that_are_absent_and_reports_only_what_it_removed():
+    new, removed = I.strip_rules(THREE_RULES, ["R9", "R3"])
+    assert removed == ["R3"]
+    assert "rule three" not in new and "rule one" in new
+    assert I.strip_rules(THREE_RULES, []) == (THREE_RULES, [])
+
+
+def test_strip_rules_does_not_confuse_r1_with_r10():
+    text = "<!-- trimwrit: R10 case 0010 -->\nten\n\n<!-- trimwrit: R1 case 0001 -->\none\n"
+    new, removed = I.strip_rules(text, ["R1"])
+    assert removed == ["R1"] and "ten" in new and "one" not in new.replace("ten", "")
+
+
+def test_drop_rule_returns_the_block_and_matches_strip_rules(tmp_path):
+    (tmp_path / "CLAUDE.md").write_text(THREE_RULES, encoding="utf-8")
+    block = I.drop_rule("CLAUDE.md", "R2", root=str(tmp_path))
+    assert block == "<!-- trimwrit: R2 case 0002, 2026-08-23: two -->\nrule two"
+    assert (tmp_path / "CLAUDE.md").read_text(encoding="utf-8") == \
+        I.strip_rules(THREE_RULES, ["R2"])[0]
+
+
+def test_citing_rules_matches_the_leading_number_and_the_full_name(tmp_path):
+    (tmp_path / "CLAUDE.md").write_text(
+        "<!-- trimwrit: R1 case 0027, 2026-08-23: a -->\none\n\n"
+        "<!-- trimwrit: R2 case 0027-decision-taken-reopened, 2026-08-23: b -->\ntwo\n\n"
+        "<!-- trimwrit: R3 case 0270 -->\nthree\n\n"
+        "<!-- trimwrit: R4 case 0026+0027 -->\nfour\n\n"
+        "<!-- trimwrit: R5 case 0027-other -->\nfive\n", encoding="utf-8")
+    got = I.citing_rules("CLAUDE.md", "0027-decision-taken-reopened", root=str(tmp_path))
+    assert got == ["R1", "R2", "R4"]
+
+
+def test_citing_rules_of_a_missing_target_is_empty(tmp_path):
+    assert I.citing_rules("nope.md", "0001-x", root=str(tmp_path)) == []
