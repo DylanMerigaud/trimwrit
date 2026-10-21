@@ -11,6 +11,20 @@ def _run(tmp_path, *argv):
     return main(["--root", str(tmp_path)] + list(argv))
 
 
+def _promote(tmp_path, *rule_ids):
+    """Promotion rows in the root's ledger, as `integrate` writes them. Since 0.9.2 prune and
+    `--ablate rule` act only on a marker whose rule is live in `--root`'s ledger; any other is
+    foreign."""
+    import json
+
+    d = tmp_path / ".trimwrit"
+    d.mkdir(exist_ok=True)
+    with open(str(d / "ledger.jsonl"), "a", encoding="utf-8") as fh:
+        for rule_id in rule_ids:
+            fh.write(json.dumps({"kind": "promotion", "rule": rule_id, "tag": rule_id.lower(),
+                                 "route": "counter", "corrections": []}) + "\n")
+
+
 def test_the_whole_loop(tmp_path, capsys):
     assert _run(tmp_path, "log", "you used an em dash again", "--tag", "em-dash",
                 "--session", "s1") == 0
@@ -125,6 +139,7 @@ def test_prune_finds_the_orphan_and_changes_nothing_without_apply(tmp_path, caps
     (tmp_path / "CLAUDE.md").write_text(
         "<!-- trimwrit: R0099 case 0099, 2026-08-23: an old incident -->\nan orphan rule\n",
         encoding="utf-8")
+    _promote(tmp_path, "R0099")
     assert _run(tmp_path, "prune") == 0
     out = capsys.readouterr().out
     assert "orphan" in out and "nothing was changed" in out
@@ -136,6 +151,7 @@ def test_prune_apply_deletes_and_records_the_removal(tmp_path, capsys):
     (tmp_path / "CLAUDE.md").write_text(
         "<!-- trimwrit: R0099 case 0099, 2026-08-23: an old incident -->\nan orphan rule\n",
         encoding="utf-8")
+    _promote(tmp_path, "R0099")
     assert _run(tmp_path, "prune", "--apply") == 0
     assert "an orphan rule" not in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
     removals = [r for r in ledger.rows(root=str(tmp_path)) if r.get("kind") == "removal"]
@@ -169,6 +185,7 @@ def test_results_with_no_value_still_loads_the_inert_finding(tmp_path, capsys):
     (tmp_path / "CLAUDE.md").write_text(
         "<!-- trimwrit: R0001 case 0001, 2026-08-23: an incident -->\nthe rule\n",
         encoding="utf-8")
+    _promote(tmp_path, "R0001")
     (evals / "results").mkdir(parents=True, exist_ok=True)
     (evals / "results" / "latest.json").write_text(
         json.dumps({"0001-some-case": {"with": 1.0, "without": 1.0, "delta": 0.0}}),
@@ -197,6 +214,7 @@ def test_prune_apply_keeps_a_rule_whose_case_fails_in_both_arms(tmp_path, capsys
         "<!-- trimwrit: R0001 case 0001, 2026-08-23: an incident -->\nrule one\n\n"
         "<!-- trimwrit: R0002 case 0002, 2026-08-23: an incident -->\nrule two\n",
         encoding="utf-8")
+    _promote(tmp_path, "R0001", "R0002")
     (evals / "results").mkdir(parents=True, exist_ok=True)
     (evals / "results" / "latest.json").write_text(json.dumps({
         "0001-fails-both": {"with": 0.0, "without": 0.0, "delta": 0.0},
@@ -264,6 +282,7 @@ def test_prune_prints_the_viz_hint_after_a_findings_table(tmp_path, capsys):
     (tmp_path / "CLAUDE.md").write_text(
         "<!-- trimwrit: R0099 case 0099, 2026-08-23: an old incident -->\nan orphan rule\n",
         encoding="utf-8")
+    _promote(tmp_path, "R0099")
     assert _run(tmp_path, "prune") == 0
     out = capsys.readouterr().out
     assert "orphan" in out and "nothing was changed" in out
@@ -661,6 +680,7 @@ def _decide_setup(tmp_path, extra_case=False):
                          [cases.forbid_grader("bad word", name="g")],
                          evals_dir=str(tmp_path / "evals"))
     (tmp_path / "CLAUDE.md").write_text(RULED_CLAUDE, encoding="utf-8")
+    _promote(tmp_path, "R0001")
     return _write_rule_aware_claude(tmp_path)
 
 
@@ -700,13 +720,16 @@ def test_run_decide_by_rule_keeps_a_rule_that_helps(tmp_path, capsys):
     assert summary["files_sha256"]["with"]["CLAUDE.md"] != \
         summary["files_sha256"]["without"]["CLAUDE.md"]
 
+    # One history row per round (0.9.2), each with that round's counts only.
     rows = _history_rows(tmp_path)
-    assert len(rows) == 1
-    row = rows[0]
-    assert row["key"] == summary["key"]
-    assert row["passes"] == {"with": 6, "without": 0}
-    assert row["measured"] == {"with": 6, "without": 6}
-    assert row["attempted"] == {"with": 6, "without": 6}
+    assert len(rows) == 2
+    for row in rows:
+        assert row["key"] == summary["key"]
+        assert row["passes"] == {"with": 3, "without": 0}
+        assert row["measured"] == {"with": 3, "without": 3}
+        assert row["attempted"] == {"with": 3, "without": 3}
+    assert rows[0]["verdict"] == "undecided"
+    row = rows[1]
     assert row["verdict"] == "keep" and row["p_helps"] >= 0.99
     assert "p_equivalent" in row and row["ablate"] == "rule"
     evidence = tmp_path / "evals" / "results" / "runs" / "0001-bad-word-case"
@@ -723,7 +746,7 @@ def test_run_decide_a_second_time_runs_nothing_and_keeps_the_verdict(tmp_path, c
     assert _run(tmp_path, *args) == 0
     out = capsys.readouterr().out
     assert "sessions started: 0" in out
-    assert len(_history_rows(tmp_path)) == 1
+    assert len(_history_rows(tmp_path)) == 2
     assert _latest(tmp_path)["0001-bad-word-case"]["verdict"] == "keep"
 
 
@@ -810,7 +833,7 @@ def test_run_decide_by_rule_lists_an_unclaimed_case_and_leaves_it_out(tmp_path, 
     assert "0002-nobody-cites-me" in out and "unclaimed" in out
     latest = _latest(tmp_path)
     assert "0002-nobody-cites-me" not in latest and "0001-bad-word-case" in latest
-    assert [r["case"] for r in _history_rows(tmp_path)] == ["0001-bad-word-case"]
+    assert [r["case"] for r in _history_rows(tmp_path)] == ["0001-bad-word-case"] * 2
 
 
 def test_run_decide_with_a_budget_marks_the_cut_case(tmp_path, capsys):
@@ -836,9 +859,12 @@ def test_run_decide_after_the_rule_is_edited_starts_a_fresh_count(tmp_path, caps
 
     assert _run(tmp_path, *args) == 0
     assert "sessions started: 12" in capsys.readouterr().out
-    first, second = _history_rows(tmp_path)
+    rows = _history_rows(tmp_path)
+    assert len(rows) == 4  # two rounds per invocation, one row each
+    first, second = rows[0], rows[2]
+    assert rows[1]["key"] == first["key"] and rows[3]["key"] == second["key"]
     assert first["key"] != second["key"]
-    assert second["passes"] == {"with": 6, "without": 0}
+    assert [r["passes"] for r in rows[2:]] == [{"with": 3, "without": 0}] * 2
     latest = _latest(tmp_path)["0001-bad-word-case"]
     assert latest["key"] == second["key"]
     assert latest["attempted"] == {"with": 6, "without": 6}
@@ -915,6 +941,7 @@ def _verdict_setup(tmp_path):
         cases.write_case("000{}".format(n), "case", "p", [cases.forbid_grader("x", name="g")],
                          evals_dir=str(evals))
     (tmp_path / "CLAUDE.md").write_text(VERDICT_CLAUDE, encoding="utf-8")
+    _promote(tmp_path, *("R000{}".format(n) for n in range(1, 7)))
     sha = {"with": {"CLAUDE.md": hashlib.sha256(VERDICT_CLAUDE.encode("utf-8")).hexdigest()},
            "without": {"CLAUDE.md": "0" * 64}}
 
@@ -997,6 +1024,7 @@ def test_prune_apply_keeps_a_rule_that_also_cites_a_case_not_decided_inert(tmp_p
     (tmp_path / "CLAUDE.md").write_text(
         "<!-- trimwrit: R0001 case 0001+0002, 2026-10-21: an incident -->\nthe twin rule\n",
         encoding="utf-8")
+    _promote(tmp_path, "R0001")
     rules = integrate.rules_sha256(["CLAUDE.md"], "0001-twin", str(tmp_path))
     _write_latest(tmp_path, {
         "0001-twin": _verdict_summary("inert", {}, rules),
@@ -1014,12 +1042,13 @@ def test_prune_apply_deletes_every_rule_citing_the_case_by_number_or_by_name(tmp
     # arm took both out, so an inert verdict is about both, and --apply deletes both.
     from trimwrit import cases, integrate
 
-    cases.write_case("0027", "decision taken reopened", "p",
+    cases.write_case("0027", "sample case", "p",
                      [cases.forbid_grader("x", name="g")], evals_dir=str(tmp_path / "evals"))
-    base = "0027-decision-taken-reopened"
+    base = "0027-sample-case"
     (tmp_path / "CLAUDE.md").write_text(
         "<!-- trimwrit: R0027 case 0027 -->\nthe first rule\n\n"
         "<!-- trimwrit: R0332 case " + base + " -->\nthe second rule\n", encoding="utf-8")
+    _promote(tmp_path, "R0027", "R0332")
     rules = integrate.rules_sha256(["CLAUDE.md"], base, str(tmp_path))
     assert sorted(rules) == ["R0027", "R0332"]
     _write_latest(tmp_path, {base: _verdict_summary("inert", {}, rules)})
@@ -1042,6 +1071,7 @@ def test_prune_on_a_legacy_summary_says_it_was_a_fixed_run_count(tmp_path, capsy
     (tmp_path / "CLAUDE.md").write_text(
         "<!-- trimwrit: R0001 case 0001, 2026-08-23: an incident -->\nthe rule\n",
         encoding="utf-8")
+    _promote(tmp_path, "R0001")
     (evals / "results").mkdir(parents=True, exist_ok=True)
     (evals / "results" / "latest.json").write_text(
         json.dumps({"0001-some-case": {"with": 1.0, "without": 1.0, "delta": 0.0}}),
@@ -1083,3 +1113,264 @@ def test_run_decide_by_rule_an_edit_elsewhere_in_the_file_keeps_the_key(tmp_path
     third = _history_rows(tmp_path)[2]
     assert third["key"] != first["key"]
     assert _latest(tmp_path)["0001-bad-word-case"]["attempted"] == {"with": 6, "without": 6}
+
+
+# ==================================================================== 0.9.2, foreign markers
+
+FOREIGN_CLAUDE = ("# global\n\n<!-- trimwrit: R0002 case 0002 -->\nNEVER emit the other thing.\n\n"
+                  "<!-- trimwrit: R0777 case 0777 -->\na rule whose case lives elsewhere\n\n"
+                  "other text\n")
+
+
+def _foreign_setup(tmp_path):
+    """The root's ledger promotes R0001 (case 0001). A second target, standing for the global
+    ~/.claude/CLAUDE.md, holds R0002 and R0777, promoted in ANOTHER ledger: R0002 cites 0002,
+    a number this root also has for an unrelated case; R0777 cites a case this root has not."""
+    from trimwrit import cases
+
+    claude = _decide_setup(tmp_path)
+    cases.write_case("0002", "unrelated rate prep", "say something",
+                     [cases.forbid_grader("bad word", name="g")],
+                     evals_dir=str(tmp_path / "evals"))
+    (tmp_path / "global").mkdir()
+    (tmp_path / "global" / "CLAUDE.md").write_text(FOREIGN_CLAUDE, encoding="utf-8")
+    return claude
+
+
+def test_ablate_rule_never_claims_a_case_for_a_foreign_marker(tmp_path, capsys):
+    import json
+
+    claude = _foreign_setup(tmp_path)
+    rc = _run(tmp_path, "run", "--decide", "--ablate", "rule", "--target",
+              "CLAUDE.md,global/CLAUDE.md", "--claude", claude, "--json")
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert [c["name"] for c in payload["cases"]] == ["0001-bad-word-case"]
+    assert {s["name"]: s["kind"] for s in payload["skipped"]} == {
+        "0002-unrelated-rate-prep": "unclaimed"}
+    assert payload["foreign"] == [
+        {"target": "global/CLAUDE.md", "rule": "R0002", "case": "0002"},
+        {"target": "global/CLAUDE.md", "rule": "R0777", "case": "0777"}]
+    assert "0002-unrelated-rate-prep" not in _latest(tmp_path)
+    # The claimed case's arms carry the foreign target untouched in neither arm: it does not
+    # cite 0001, so it is not seeded at all.
+    assert list(_latest(tmp_path)["0001-bad-word-case"]["rules_sha256"]) == ["R0001"]
+
+
+def test_ablate_rule_lists_foreign_markers_in_the_text_output(tmp_path, capsys):
+    claude = _foreign_setup(tmp_path)
+    assert _run(tmp_path, "run", "--decide", "--ablate", "rule", "--target",
+                "CLAUDE.md,global/CLAUDE.md", "--claude", claude) == 0
+    out = capsys.readouterr().out
+    assert "foreign R0002 in global/CLAUDE.md" in out
+    assert "foreign R0777 in global/CLAUDE.md" in out
+
+
+def test_prune_apply_never_deletes_or_orphans_a_foreign_marker(tmp_path, capsys):
+    # The scenario the whole-branch review reproduced: a verdict for the root's 0002 (as 0.9.1
+    # wrote it, with R0002 measured) and a foreign rule citing a case the root has not. Neither
+    # foreign block moves, the root's ledger gets no removal, and the live inert rule still goes.
+    from trimwrit import integrate, ledger
+
+    _foreign_setup(tmp_path)
+    targets = ["CLAUDE.md", "global/CLAUDE.md"]
+    _write_latest(tmp_path, {
+        "0001-bad-word-case": _verdict_summary(
+            "inert", {}, integrate.rules_sha256(targets, "0001-bad-word-case", str(tmp_path))),
+        "0002-unrelated-rate-prep": _verdict_summary(
+            "inert", {}, integrate.rules_sha256(targets, "0002-unrelated-rate-prep",
+                                                str(tmp_path)))})
+    assert _run(tmp_path, "prune", "--results", "--apply", "--target",
+                "CLAUDE.md,global/CLAUDE.md") == 0
+    out = capsys.readouterr().out
+    assert (tmp_path / "global" / "CLAUDE.md").read_text(encoding="utf-8") == FOREIGN_CLAUDE
+    removals = [r["rule"] for r in ledger.rows(root=str(tmp_path)) if r.get("kind") == "removal"]
+    assert removals == ["R0001"]
+    assert "orphan" not in out
+    assert "foreign R0002 in global/CLAUDE.md" in out
+    assert "foreign R0777 in global/CLAUDE.md" in out
+    assert "removed 1 rule(s)" in out
+
+
+def test_prune_json_lists_foreign_markers_findings_and_removals(tmp_path, capsys):
+    import json
+
+    from trimwrit import integrate
+
+    _foreign_setup(tmp_path)
+    targets = ["CLAUDE.md", "global/CLAUDE.md"]
+    _write_latest(tmp_path, {"0001-bad-word-case": _verdict_summary(
+        "inert", {}, integrate.rules_sha256(targets, "0001-bad-word-case", str(tmp_path)))})
+    assert _run(tmp_path, "prune", "--results", "--apply", "--json", "--target",
+                "CLAUDE.md,global/CLAUDE.md") == 0
+    doc = json.loads(capsys.readouterr().out)
+    assert doc["foreign"] == [
+        {"target": "global/CLAUDE.md", "rule": "R0002", "case": "0002"},
+        {"target": "global/CLAUDE.md", "rule": "R0777", "case": "0777"}]
+    # 0002 is cited only by the foreign R0002, so no rule of this root points at it.
+    assert [(f["kind"], f["rule"]) for f in doc["findings"]] == [("unused-case", None),
+                                                                 ("inert", "R0001")]
+    assert doc["removed"] == ["R0001"] and doc["kept"] == []
+
+
+def test_a_marker_with_no_root_ledger_at_all_is_foreign(tmp_path, capsys):
+    (tmp_path / "CLAUDE.md").write_text(
+        "<!-- trimwrit: R0099 case 0099, 2026-08-23: an old incident -->\na hand written rule\n",
+        encoding="utf-8")
+    assert _run(tmp_path, "prune", "--apply") == 0
+    out = capsys.readouterr().out
+    assert "foreign R0099 in CLAUDE.md" in out and "orphan" not in out
+    assert "a hand written rule" in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+
+
+# ==================================================================== 0.9.2, prune --inert-only
+
+
+def test_prune_inert_only_deletes_only_decided_inert_rules(tmp_path, capsys):
+    from trimwrit import ledger
+
+    _verdict_setup(tmp_path)
+    with open(str(tmp_path / "CLAUDE.md"), "a", encoding="utf-8") as fh:
+        fh.write("<!-- trimwrit: R0099 case 0099, 2026-08-23: an old incident -->\nan orphan rule\n")
+    _promote(tmp_path, "R0099")
+    assert _run(tmp_path, "prune", "--results", "--apply", "--inert-only") == 0
+    out = capsys.readouterr().out
+    assert "kept R0099: an orphan; --inert-only deletes only a rule decided inert" in out
+    assert "removed 2 rule(s)" in out
+    assert "harmful" not in out and "inert-fail" not in out
+    kept = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "an orphan rule" in kept and "rule 1 text" not in kept and "rule 6 text" not in kept
+    removals = [r["rule"] for r in ledger.rows(root=str(tmp_path)) if r.get("kind") == "removal"]
+    assert sorted(removals) == ["R0001", "R0006"]
+
+
+def test_prune_inert_only_keeps_a_fixed_count_inert_rule(tmp_path, capsys):
+    from trimwrit import cases
+
+    evals = tmp_path / "evals"
+    cases.write_case("0001", "some case", "p", [cases.forbid_grader("x", name="g")],
+                     evals_dir=str(evals))
+    (tmp_path / "CLAUDE.md").write_text(
+        "<!-- trimwrit: R0001 case 0001, 2026-08-23: an incident -->\nthe rule\n",
+        encoding="utf-8")
+    _promote(tmp_path, "R0001")
+    _write_latest(tmp_path, {"0001-some-case": {"with": 1.0, "without": 1.0, "delta": 0.0}})
+    assert _run(tmp_path, "prune", "--results", "--apply", "--inert-only") == 0
+    out = capsys.readouterr().out
+    assert "kept R0001: measured with a fixed run count" in out
+    assert "removed 0 rule(s)" in out
+
+
+def test_prune_inert_only_without_apply_narrows_the_report(tmp_path, capsys):
+    _verdict_setup(tmp_path)
+    with open(str(tmp_path / "CLAUDE.md"), "a", encoding="utf-8") as fh:
+        fh.write("<!-- trimwrit: R0099 case 0099, 2026-08-23: an old incident -->\nan orphan rule\n")
+    _promote(tmp_path, "R0099")
+    before = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+    assert _run(tmp_path, "prune", "--results", "--inert-only") == 0
+    out = capsys.readouterr().out
+    table = [line for line in out.splitlines() if line.startswith(("inert ", "orphan ",
+                                                                   "harmful ", "inert-fail "))]
+    assert [line.split()[1] for line in table] == ["R0001", "R0006"]
+    assert "left out R0099: an orphan; --inert-only deletes only a rule decided inert" in out
+    assert (tmp_path / "CLAUDE.md").read_text(encoding="utf-8") == before
+
+
+def test_prune_inert_only_without_results_is_refused(tmp_path, capsys):
+    assert _run(tmp_path, "prune", "--apply", "--inert-only") == 2
+    err = capsys.readouterr().err
+    assert "--inert-only" in err and "--results" in err
+
+
+# ==================================================================== 0.9.2, unmeasured runs
+
+
+def _write_erroring_claude(tmp_path):
+    """Every run answers an is_error envelope whose text would pass the forbid grader: what a
+    usage limit looks like from `claude -p`."""
+    path = tmp_path / "limit-claude.py"
+    path.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': True,\n"
+        "                  'result': 'Claude AI usage limit reached'}))\n", encoding="utf-8")
+    os.chmod(path, 0o755)
+    return str(path)
+
+
+def test_run_decide_stops_with_exit_4_when_a_round_measures_nothing(tmp_path, capsys):
+    import json
+
+    _decide_setup(tmp_path)
+    claude = _write_erroring_claude(tmp_path)
+    rc = _run(tmp_path, "run", "--decide", "--ablate", "rule", "--target", "CLAUDE.md",
+              "--claude", claude, "--json")
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert rc == 4
+    assert payload["stopped"] == "unmeasured"
+    assert payload["sessions"] == 6
+    assert payload["unmeasured"] == {"with": 3, "without": 3}
+    assert payload["cases"][0]["unmeasured"] == {"with": 3, "without": 3}
+    reason = [line for line in captured.err.splitlines() if "unmeasured" in line]
+    assert len(reason) == 1 and reason[0].startswith("stopped:")
+    rows = _history_rows(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["attempted"] == {"with": 3, "without": 3}
+    assert rows[0]["measured"] == {"with": 0, "without": 0}
+    assert _latest(tmp_path)["0001-bad-word-case"]["status"] == "stopped"
+
+
+def test_run_decide_json_counts_unmeasured_runs_per_case_and_in_total(tmp_path, capsys):
+    import json
+
+    claude = _decide_setup(tmp_path)
+    assert _run(tmp_path, "run", "--decide", "--ablate", "rule", "--target", "CLAUDE.md",
+                "--claude", claude, "--json") == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["stopped"] is None
+    assert payload["unmeasured"] == {"with": 0, "without": 0}
+    assert payload["cases"][0]["unmeasured"] == {"with": 0, "without": 0}
+
+
+def test_run_help_documents_exit_4(capsys):
+    import pytest
+
+    with pytest.raises(SystemExit):
+        main(["run", "--help"])
+    out = capsys.readouterr().out
+    assert "4" in out and "measured no run" in out
+
+
+def test_run_decide_writes_history_after_every_round(tmp_path, capsys, monkeypatch):
+    # A kill (the scheduler's timeout) after the first round keeps that round's evidence, and
+    # the next invocation counts it once.
+    from trimwrit import runner
+
+    claude = _decide_setup(tmp_path)
+    real, calls = runner.run_many, []
+
+    def dies_second(*a, **k):
+        calls.append(1)
+        if len(calls) == 2:
+            raise KeyboardInterrupt
+        return real(*a, **k)
+
+    monkeypatch.setattr(runner, "run_many", dies_second)
+    args = ("run", "--decide", "--ablate", "rule", "--target", "CLAUDE.md", "--claude", claude)
+    try:
+        _run(tmp_path, *args)
+    except KeyboardInterrupt:
+        pass
+    rows = _history_rows(tmp_path)
+    assert len(rows) == 1 and rows[0]["attempted"] == {"with": 3, "without": 3}
+    assert (tmp_path / "evals" / "results" / "runs" / "0001-bad-word-case" / "with-2.md").exists()
+
+    monkeypatch.setattr(runner, "run_many", real)
+    capsys.readouterr()
+    assert _run(tmp_path, *args) == 0
+    assert "sessions started: 6 " in capsys.readouterr().out
+    latest = _latest(tmp_path)["0001-bad-word-case"]
+    assert latest["verdict"] == "keep"
+    assert latest["attempted"] == {"with": 6, "without": 6}
+    assert sum(r["attempted"]["with"] for r in _history_rows(tmp_path)) == 6

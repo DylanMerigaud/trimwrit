@@ -88,23 +88,145 @@ def test_a_case_passing_everywhere_is_inert_at_eighteen_runs_per_arm(tmp_path):
     assert state["spent"] == 36
 
 
-def test_a_case_never_measured_stays_undecided_and_stops_at_thirty_runs(tmp_path):
-    case = _case(tmp_path, "0001-refused")
+def test_a_round_with_no_measured_run_stops_the_invocation(tmp_path):
+    # An outage (every claude call failing, a usage limit) used to run every case to the
+    # 30-run cap: the week was spent and the cap with it. A round where no started session
+    # was measured, across all cases, stops the invocation instead.
+    cs = [_case(tmp_path, n) for n in ("0001-refused", "0002-refused")]
     calls = []
-    state = _run(tmp_path, [case], _always(NOTHING), calls)[case.path]
-    assert state["verdict"]["verdict"] == verdict.UNDECIDED
-    assert state["counts"]["attempted"] == {"with": 30, "without": 30}
-    assert state["counts"]["measured"] == {"with": 0, "without": 0}
+    states = _run(tmp_path, cs, _always(NOTHING), calls)
+    assert states.stopped == decide.STOPPED_UNMEASURED
+    assert len(calls) == 1
+    for state in states.values():
+        assert state["verdict"]["verdict"] == verdict.UNDECIDED
+        assert state["counts"]["attempted"] == {"with": 3, "without": 3}
+        assert state["counts"]["measured"] == {"with": 0, "without": 0}
+        assert state["status"] == decide.STOPPED
+        # The sessions were started, so they are spent against the budget all the same.
+        assert state["spent"] == 6
+
+
+def test_a_round_that_measured_something_does_not_stop(tmp_path):
+    cs = [_case(tmp_path, n) for n in ("0001-helps", "0002-refused")]
+    calls = []
+    states = _run(tmp_path, cs, lambda c, a: NOTHING if "refused" in c.path else _helps(c, a),
+                  calls, max_runs=6)
+    assert states.stopped is None
+    assert len(calls) == 2
+
+
+def _indexed_batcher(outcome, calls):
+    """`outcome(case, arm, run_index)` says how one run ends."""
+    def run_batch(cases, n, start_by_case):
+        calls.append(([c.path for c in cases], n, dict(start_by_case)))
+        out = {}
+        for c in cases:
+            start = start_by_case.get(c.path, 0)
+            for arm in (runner.ARM_WITH, runner.ARM_WITHOUT):
+                out.setdefault(c.path, {})[arm] = [
+                    _result(c, arm, start + i, outcome(c, arm, start + i)) for i in range(n)]
+        return out
+    return run_batch
+
+
+def test_max_runs_caps_measured_runs_not_attempted_ones(tmp_path):
+    # Every third run is unmeasured: the cap of 6 is reached at 6 MEASURED runs per arm, after
+    # 9 attempted, and the unmeasured ones are still spent.
+    case = _case(tmp_path, "0001-flaky")
+    calls = []
+    files = {case.path: ({"CLAUDE.md": "rule"}, {"CLAUDE.md": ""})}
+    state = decide.run_until_decided(
+        [case], files, {case.path: "k"}, str(tmp_path / "history.jsonl"),
+        _indexed_batcher(lambda c, a, i: NOTHING if i % 3 == 0 else PASS, calls), 1.0,
+        max_runs=6)[case.path]
+    assert state["counts"]["measured"] == {"with": 6, "without": 6}
+    assert state["counts"]["attempted"] == {"with": 9, "without": 9}
+    assert state["spent"] == 18
     assert state["status"] == "ran"
-    assert len(calls) == 10
+    assert [n for _, n, _ in calls] == [3, 3, 2, 1]
+    assert [s[case.path] for _, _, s in calls] == [0, 3, 6, 8]
 
 
 def test_the_last_batch_is_partial_when_the_cap_is_not_a_multiple(tmp_path):
-    case = _case(tmp_path, "0001-refused")
+    case = _case(tmp_path, "0001-flat")
     calls = []
-    state = _run(tmp_path, [case], _always(NOTHING), calls, max_runs=4)[case.path]
+    state = _run(tmp_path, [case], _always(PASS), calls, max_runs=4)[case.path]
     assert [n for _, n, _ in calls] == [3, 1]
     assert state["counts"]["attempted"] == {"with": 4, "without": 4}
+
+
+def test_a_key_whose_unmeasured_runs_reach_the_cap_is_unmeasurable(tmp_path):
+    # One broken case among working ones: it runs while the others measure, and once its
+    # unmeasured runs reach the cap in an arm it is unmeasurable, not started again.
+    broken, working = _case(tmp_path, "0001-broken"), _case(tmp_path, "0002-working")
+    calls = []
+    states = _run(tmp_path, [broken, working],
+                  lambda c, a: NOTHING if "broken" in c.path else PASS, calls, max_runs=6)
+    assert states.stopped is None
+    assert states[broken.path]["status"] == decide.UNMEASURABLE
+    assert states[broken.path]["counts"]["attempted"] == {"with": 6, "without": 6}
+    assert states[working.path]["status"] == "ran"
+    assert states[working.path]["counts"]["measured"] == {"with": 6, "without": 6}
+
+
+def test_an_unmeasurable_key_is_not_started_again_until_it_changes(tmp_path):
+    case = _case(tmp_path, "0001-broken")
+    _history(tmp_path, _row("k", (0, 0), (0, 0), (30, 30)))
+    calls = []
+    state = _run(tmp_path, [case], _helps, calls, keys={case.path: "k"})[case.path]
+    assert calls == []
+    assert state["status"] == decide.UNMEASURABLE and state["spent"] == 0
+    calls = []
+    state = _run(tmp_path, [case], _helps, calls, keys={case.path: "k2"})[case.path]
+    assert state["verdict"]["verdict"] == verdict.KEEP and calls
+
+
+def test_on_round_gets_each_round_s_runs_once(tmp_path):
+    # History is written after every round (cli), so a killed invocation keeps the rounds it
+    # finished; each call carries that round's runs only, so summing rows never counts twice.
+    case = _case(tmp_path, "0001-helps")
+    rounds = []
+
+    def on_round(ran, states):
+        rounds.append({p: {a: len(rs) for a, rs in per_arm.items()} for p, per_arm in ran.items()})
+        assert states[case.path]["verdict"] is not None
+
+    files = {case.path: ({"CLAUDE.md": "rule"}, {"CLAUDE.md": ""})}
+    state = decide.run_until_decided([case], files, {case.path: "k"},
+                                     str(tmp_path / "history.jsonl"), _batcher(_helps, []), 1.0,
+                                     on_round=on_round)[case.path]
+    assert rounds == [{case.path: {"with": 3, "without": 3}}] * 2
+    assert state["verdict"]["verdict"] == verdict.KEEP
+
+
+def test_a_killed_invocation_keeps_the_rounds_it_wrote(tmp_path):
+    case = _case(tmp_path, "0001-helps")
+    history = str(tmp_path / "history.jsonl")
+    files = {case.path: ({"CLAUDE.md": "rule"}, {"CLAUDE.md": ""})}
+    inner = _batcher(_helps, [])
+    seen = []
+
+    def dies_second(cases, n, start_by_case):
+        seen.append(n)
+        if len(seen) == 2:
+            raise KeyboardInterrupt
+        return inner(cases, n, start_by_case)
+
+    def on_round(ran, states):
+        with open(history, "a", encoding="utf-8") as fh:
+            for path, per_arm in ran.items():
+                row = {"key": "k"}
+                row.update(decide.count(per_arm, 1.0))
+                fh.write(json.dumps(row) + "\n")
+
+    with pytest.raises(KeyboardInterrupt):
+        decide.run_until_decided([case], files, {case.path: "k"}, history, dies_second, 1.0,
+                                 on_round=on_round)
+    assert decide.prior_counts(history, "k")["attempted"] == {"with": 3, "without": 3}
+    state = decide.run_until_decided([case], files, {case.path: "k"}, history, inner, 1.0,
+                                     on_round=on_round)[case.path]
+    assert state["verdict"]["verdict"] == verdict.KEEP
+    assert decide.prior_counts(history, "k")["attempted"] == {"with": 6, "without": 6}
 
 
 def test_prior_rows_with_the_same_key_are_summed_and_a_decided_key_is_not_run(tmp_path):
@@ -224,3 +346,18 @@ def test_in_rule_mode_the_key_hashes_the_citing_blocks_not_the_files(tmp_path):
     assert key("intro\nthe rule", {"R1": "b" * 64}) != base
     # Without block hashes (file mode), the files are what the key covers.
     assert key("intro\nthe rule", None) != key("intro, edited\nthe rule", None)
+
+
+def test_the_case_hash_skips_dotfiles(tmp_path):
+    # A stray .DS_Store (or any dot path) in a case directory is not a new experiment.
+    case = _case(tmp_path, "0001-a")
+    base = _key(case)
+    d = tmp_path / "evals" / "0001-a"
+    (d / ".DS_Store").write_bytes(b"finder")
+    (d / ".cache").mkdir()
+    (d / ".cache" / "x").write_text("x", encoding="utf-8")
+    (d / "graders").mkdir()
+    (d / "graders" / ".hidden").write_text("h", encoding="utf-8")
+    assert _key(case) == base
+    (d / "graders" / "g.md").write_text("a grader", encoding="utf-8")
+    assert _key(case) != base

@@ -90,6 +90,13 @@ SANDBOX_NOTE = ("This run is a replay in a scratch directory: there is no reposi
 # a model that QUOTES the phrase while answering is a measured run.
 API_REFUSAL_PREFIXES = ("API Error:",)
 
+# The result envelope of `claude -p` says itself whether the run worked: `is_error` true, or a
+# `subtype` other than `success` (`error_max_turns`, `error_during_execution`), is a run that did
+# not happen as asked, whatever text it carries. Seen in the review of 0.9.1: Claude Code
+# reports a usage limit as an is_error envelope whose `result` is the limit text, and that text
+# was graded as the model's answer, a measured fail (or a pass, against a forbid grader).
+SUCCESS_SUBTYPE = "success"
+
 ARM_WITH = "with"
 ARM_WITHOUT = "without"
 
@@ -136,7 +143,10 @@ class Result(object):
 
     @property
     def unmeasured(self):
-        """True when this run produced nothing a grader could honestly score.
+        """True when this run produced nothing a grader could honestly score: an error (a
+        timeout, a binary that would not start, a non-zero exit with no successful result
+        envelope, an envelope with `is_error` or a non-success `subtype`, a judge that did not
+        answer), an empty final text, or a text starting with an API refusal prefix.
 
         The incident: three runs came back with no final text at all (an API safeguard refused
         one prompt, another hit max_turns mid tool-call) and were scored 0.0 by `score` above,
@@ -279,6 +289,11 @@ def grade_llm(spec, result, judge=None):
         result.judge_model = getattr(judge, "model", None)
         for mid, use in (usage or {}).items():
             result.judge_model_usage.setdefault(mid, []).append(use)
+        if verdict is None:
+            # The judge hit an error (a usage limit, a crash): that says nothing about the
+            # model's answer, so the run is unmeasured rather than failed.
+            result.error = result.error or "the judge did not answer"
+            return False, "the judge did not answer, the run is unmeasured"
     return verdict, "judge said {}".format("PASS" if verdict else "FAIL")
 
 
@@ -292,6 +307,13 @@ def apply_graders(case, result, judge=None):
         name = spec.get("name")
         weight = float(spec.get("weight", 1))
         if gtype == "llm":
+            if result.unmeasured:
+                # Never sent to the judge: there is no answer to grade, and a judge call on an
+                # error text costs money to produce a verdict nobody should read.
+                result.grades.append({"name": name, "type": gtype, "passed": False,
+                                      "weight": weight,
+                                      "detail": "not judged, the run is unmeasured"})
+                continue
             ok, detail = grade_llm(spec, result, judge)
             if ok is None:
                 result.grades.append({"name": name, "type": gtype, "passed": False,
@@ -335,6 +357,47 @@ def _parse_stream(raw):
         elif ev.get("type") == "result" and ev.get("result"):
             final = ev["result"]
     return final, tools
+
+
+def _result_envelope(raw):
+    """The last `result` event of a stream-json transcript, or None."""
+    env = None
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(ev, dict) and ev.get("type") == "result":
+            env = ev
+    return env
+
+
+def envelope_error(env):
+    """Why a result envelope says the run did not work, or None. A missing `subtype` is not a
+    failure: only one that is present and other than `success` is."""
+    if not isinstance(env, dict):
+        return None
+    subtype = env.get("subtype")
+    if env.get("is_error") is True:
+        return "result is_error (subtype {}): {}".format(
+            subtype, " ".join(str(env.get("result") or "").split())[:200])
+    if subtype is not None and subtype != SUCCESS_SUBTYPE:
+        return "result subtype {}".format(subtype)
+    return None
+
+
+def _run_error(raw, returncode):
+    """The error that makes a finished `claude -p` unmeasured, or None."""
+    env = _result_envelope(raw)
+    why = envelope_error(env)
+    if why:
+        return why
+    if returncode != 0 and env is None:
+        return "claude exited {} with no result envelope".format(returncode)
+    return None
 
 
 def _stream_model_usage(raw):
@@ -410,7 +473,8 @@ def run_once(case, arm, run_index, rule_files, extra_args=(), claude="claude", c
                           model=model, model_usage=_stream_model_usage(proc.stdout))
         final, tools = _parse_stream(proc.stdout)
         files = _created(workdir, before)
-        return Result(case, arm, run_index, final, tools, files, model=model,
+        return Result(case, arm, run_index, final, tools, files,
+                      error=_run_error(proc.stdout, proc.returncode), model=model,
                       model_usage=_stream_model_usage(proc.stdout))
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
@@ -442,7 +506,7 @@ def make_judge(claude="claude", model=DEFAULT_JUDGE_MODEL):
     """A judge built on `claude -p`. Returns None when the binary is missing, and the caller
     turns that into a failing grader rather than a silent pass. `model` is a full id, checked
     first, so a bad id fails even where the binary is absent. The judge answers
-    (verdict, modelUsage of its json envelope)."""
+    (verdict, modelUsage of its json envelope), the verdict None when it did not answer."""
     require_full_id(model)
     if not shutil.which(claude):
         return None
@@ -452,12 +516,15 @@ def make_judge(claude="claude", model=DEFAULT_JUDGE_MODEL):
                   "FAIL and nothing else.\n\nRULE:\n{}\n\nOUTPUT:\n{}".format(criteria, text))
         cmd = [claude, "-p", prompt, "--model", model, "--output-format", "json"]
         cmd.extend(ISOLATE_ARGS)
+        # (None, usage) when the judge did not answer: grade_llm makes the run unmeasured.
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
             payload = json.loads(proc.stdout or "{}")
             answer = str(payload.get("result", "")).strip().upper()
         except (ValueError, OSError, subprocess.TimeoutExpired, AttributeError):
-            return False, {}
+            return None, {}
+        if envelope_error(payload) or not answer:
+            return None, model_usage_of(payload)
         return answer.startswith("PASS"), model_usage_of(payload)
 
     judge.model = model
@@ -474,14 +541,16 @@ class AblationError(Exception):
         self.kind = kind
 
 
-def rule_arm_files(case, targets, root="."):
+def rule_arm_files(case, targets, root=".", live=None):
     """(with_files, without_files) for the rule level ablation of one case.
 
     Only the targets holding a rule that cites the case are seeded; the `with` files are their
     text intact, the `without` files the same text minus the citing blocks, so the two arms differ
     by exactly the rules under test and a verdict is about the rule, not about the whole
     CLAUDE.md. Keys are the target's basename, which is where the model looks for it. A target
-    like `~/.claude/CLAUDE.md` is expanded before it is joined under `root`.
+    like `~/.claude/CLAUDE.md` is expanded before it is joined under `root`. `live` (the rules
+    promoted in the root's ledger) leaves a foreign marker out: it claims nothing
+    (integrate.foreign).
     """
     base = os.path.basename(case.path.rstrip("/\\"))
     with_files, without_files = {}, {}
@@ -491,7 +560,7 @@ def rule_arm_files(case, targets, root="."):
         if not os.path.exists(os.path.join(root, target)):
             missing.append(target)
             continue
-        ids = integrate.citing_rules(target, base, root)
+        ids = integrate.citing_rules(target, base, root, live)
         if not ids:
             continue
         name = os.path.basename(target)

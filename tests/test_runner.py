@@ -514,3 +514,87 @@ def test_write_evidence_records_the_evidence_key_when_given(tmp_path):
     assert "\nkey:" not in text
     path = runner.write_evidence(res, str(tmp_path), key="ab" * 32)
     assert "key: " + "ab" * 32 in open(path, encoding="utf-8").read()
+
+
+# ---------------------------------------------------------------- 0.9.2, an errored envelope is unmeasured
+
+
+def _envelope_claude(tmp_path, envelope, code=0, before=None):
+    """A stand in for `claude -p` that prints `before` stream lines, then one result envelope,
+    and exits `code`."""
+    import json
+    path = tmp_path / "envelope-claude.py"
+    lines = [json.dumps(e) for e in (before or [])]
+    if envelope is not None:
+        lines.append(json.dumps(envelope))
+    path.write_text(
+        "#!/usr/bin/env python3\nimport sys\n"
+        "print({!r})\nsys.exit({})\n".format("\n".join(lines), code), encoding="utf-8")
+    os.chmod(path, 0o755)
+    return str(path)
+
+
+def _plain_case():
+    return Case("/tmp/x", {"name": "x"}, "prompt",
+                [{"type": "regex", "name": "g", "pattern": "x", "match": "not_contains"}])
+
+
+def test_an_is_error_envelope_is_unmeasured_whatever_its_text(tmp_path):
+    # The CLI reports a usage limit as an is_error envelope carrying the limit text; graded,
+    # it read as a measured fail (or a pass, against a forbid grader).
+    claude = _envelope_claude(tmp_path, {"type": "result", "subtype": "success",
+                                         "is_error": True,
+                                         "result": "Claude AI usage limit reached|1761000000"})
+    res = runner.run_once(_plain_case(), runner.ARM_WITH, 0, {}, claude=claude)
+    assert res.unmeasured
+    assert "is_error" in res.error
+
+
+def test_a_non_success_subtype_is_unmeasured(tmp_path):
+    claude = _envelope_claude(tmp_path, {"type": "result", "subtype": "error_max_turns",
+                                         "is_error": False, "result": "half an answer"})
+    res = runner.run_once(_plain_case(), runner.ARM_WITH, 0, {}, claude=claude)
+    assert res.unmeasured
+    assert "error_max_turns" in res.error
+
+
+def test_a_success_envelope_is_measured(tmp_path):
+    claude = _envelope_claude(tmp_path, {"type": "result", "subtype": "success",
+                                         "is_error": False, "result": "a real answer"})
+    res = runner.run_once(_plain_case(), runner.ARM_WITH, 0, {}, claude=claude)
+    assert not res.unmeasured and res.error is None
+    assert res.final_text == "a real answer"
+
+
+def test_a_failed_exit_with_no_success_envelope_is_unmeasured(tmp_path):
+    claude = _envelope_claude(tmp_path, None, code=1, before=[
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "partial"}]}}])
+    res = runner.run_once(_plain_case(), runner.ARM_WITH, 0, {}, claude=claude)
+    assert res.unmeasured
+    assert "exited 1" in res.error
+
+
+def test_an_unmeasured_run_is_never_sent_to_the_judge():
+    calls = []
+
+    def judge(criteria, text):
+        calls.append(text)
+        return True
+
+    case = _case([{"type": "llm", "name": "j", "criteria": "is it good"}])
+    res = runner.Result(case, runner.ARM_WITH, 0, "Claude AI usage limit reached", [], {},
+                        error="result is_error")
+    runner.apply_graders(case, res, judge=judge)
+    assert calls == []
+    assert res.unmeasured
+
+
+def test_a_judge_that_did_not_answer_leaves_the_run_unmeasured(tmp_path):
+    # The judge hitting the same usage limit is not the model failing the rule.
+    claude = _envelope_claude(tmp_path, {"type": "result", "subtype": "success",
+                                         "is_error": True, "result": "usage limit reached"})
+    judge = runner.make_judge(claude)
+    case = _case([{"type": "llm", "name": "j", "criteria": "is it good"}])
+    res = runner.apply_graders(case, _result("a real answer"), judge=judge)
+    assert res.unmeasured
+    assert "judge" in res.error

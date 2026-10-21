@@ -286,6 +286,21 @@ fix is a rewrite of the rule or of its case. It keeps a `harmful` rule: the case
 often with it than without it, and that also calls for a rewrite, not a silent deletion. A rule
 that cites several cases stays until every one of them is decided `inert`.
 
+Only a rule promoted in `--root`'s own ledger (`.trimwrit/ledger.jsonl`) is this root's to
+judge. A marker whose rule is not live there is **foreign**: a rule another ledger promoted,
+like the global `~/.claude/CLAUDE.md` measured from a repository, or a marker written by hand.
+Its case number belongs to the other root, where `0002` may be a different case altogether, so
+a foreign marker is listed (`foreign R0002 in ~/.claude/CLAUDE.md (case 0002): not promoted in
+this root's ledger, left alone`), never an orphan, never a holder of a verdict, never deleted,
+and `run --ablate rule` never runs a case because of it. Measure it from its own root.
+
+`--inert-only` narrows `--apply` to rules decided `inert`: an orphan and a fixed-count finding
+are printed (`kept R0031: an orphan; --inert-only deletes only a rule decided inert`) and kept.
+Without `--apply` it narrows the report the same way. It needs `--results`, where the verdicts
+are. An unattended job should pass it: an orphan has no measurement behind it. `--json` prints
+`{"findings", "foreign", "applied", "removed", "kept", "left_out"}` instead of the table
+(`left_out`: what `--inert-only` set aside without `--apply`).
+
 A verdict is about the rule as it was measured, so `--apply` refuses to delete a rule that
 changed since: when a rule block citing the case no longer hashes to what was measured, the rule
 stays and the line says "the rule file changed since it was measured; run `trimwrit run
@@ -298,9 +313,13 @@ means as it always has (a flat delta is `inert` when the case passes without the
 pass line `--threshold`, default 1.0, and `inert-fail` below it) and adds one line: "measured
 with a fixed run count; `trimwrit run --decide` decides with enough runs". `--apply` deletes
 nothing on such a result: three runs per arm cannot tell an inert rule from noise, so the rule
-stays with "kept R...: measured with a fixed run count; run `trimwrit run --decide`". Whatever
-the finding, the case stays: it is what will notice if the behaviour comes back after a model
-update.
+stays with "kept R...: measured with a fixed run count; run `trimwrit run --decide`".
+
+Whatever the finding, the case stays in `evals/`: it is the evidence the rule was tried, and the
+replay of the situation. Once its rule is deleted no rule cites it, so `run --ablate rule` no
+longer claims it and a weekly run spends nothing on it. `trimwrit run --no-ablation --case
+<id>` replays it by hand, after a model update for instance. A behaviour that comes back on its
+own comes back as a new correction, and the loop starts again from `trimwrit log`.
 
 ## How many runs
 
@@ -315,10 +334,24 @@ trimwrit prune --target CLAUDE.md --results --apply
 ```
 
 A case runs 3 times per arm, with the rule and without it. A run passes when its score reaches
-the pass line (`--threshold`, default 1.0). A run with nothing to grade (no final text, an
-error, an API refusal) counts as attempted, never as measured, so it is neither a pass nor a
-fail. After each batch the pass counts are compared, and a case still undecided
-runs 3 more per arm, until the numbers decide or it has 30 runs per arm.
+the pass line (`--threshold`, default 1.0). An unmeasured run (see "Unmeasured is not failed":
+an error, a non-zero exit with no successful result, a result envelope with `is_error` or a
+`subtype` other than `success`, a judge that did not answer, an empty text, a text starting
+with `API Error:`) counts as attempted, never as measured, so it is neither a pass nor a fail.
+After each batch the pass counts are compared, and a case still undecided runs 3 more per arm,
+until the numbers decide or it has 30 measured runs per arm.
+
+An unmeasured run still started a session, so it is spent against `--budget`, but it never
+counts toward the 30. A round where no session was measured, across every case, stops the
+invocation: the history keeps what ran, the JSON says `"stopped": "unmeasured"`, one line on
+stderr says why, and `run` exits 4, so a scheduler can tell "claude did not answer, try later"
+from a failure. A case whose unmeasured runs reach 30 in one arm is `unmeasurable` and is not
+started again until something in its key changes: one broken case cannot spend the budget
+every week. The JSON counts this invocation's unmeasured runs per arm, per case (`unmeasured`
+next to `summary`) and in total (`unmeasured` next to `sessions`).
+
+Exit codes of `run`: 0 done (an undecided case is a result), 1 a case below `--threshold` (plain
+run), 2 refused, 4 `--decide` stopped on a round that measured nothing.
 
 The counts add up across invocations, under a key: the sha256 of the case directory, of the
 rule blocks citing the case (with `--ablate rule`; with `--ablate file`, of both arms' whole
@@ -326,9 +359,17 @@ files), of the two model ids, the pass line, the ablation mode and the sandbox n
 of them, one word of the rule included, and the count starts over, so no old run leaks into a
 new rule's verdict. An edit elsewhere in the file keeps the count under `--ablate rule`: the
 global CLAUDE.md changes almost daily, and a deletion by prune must not reset every other rule
-of its file. A case already decided under its key is not run again. One that reached 30 runs
-per arm stays undecided until something in its key changes. A plain `run` writes its counts
-under the same key, so its runs count too.
+of its file. A case already decided under its key is not run again. One that reached 30
+measured runs per arm stays undecided until something in its key changes. A plain `run` writes
+its counts under a key too, and they count toward `--decide` only when every part of the key
+matches: a plain run defaults to `--ablate file`, a different key from `--decide --ablate rule`,
+so its runs count only when it is given `--ablate rule` as well, with the same models, pass line
+and sandbox note. A path inside the case directory starting with `.` (a `.DS_Store`) is not
+hashed.
+
+`--decide` writes its history after every round, one line per case that ran in it with that
+round's counts: a run killed half way (a scheduler's timeout) keeps the rounds it finished, and
+the next invocation sums them once.
 
 Each arm gets a uniform prior, and its posterior comes from its pass count. Two numbers come
 out: P(helps), the chance that the arm with the rule passes more often, and P(equivalent), the
@@ -362,8 +403,10 @@ true effect is exactly 0.2 is called `inert` 7 percent of the time.
 **`--ablate rule` takes out only the rule.** The default, `--ablate file`, runs the without arm
 with no rule file at all, so its number is about the whole file. `--ablate rule` seeds both
 arms with every file holding a rule that cites the case, and takes out of the without arm only
-the rule blocks citing it, so the verdict is about that rule. A case no rule cites is listed as
-`unclaimed` and not run.
+the rule blocks citing it, so the verdict is about that rule. Only a marker whose rule is live
+in `--root`'s ledger claims a case; a foreign one (see `prune` above) is listed under `foreign`
+in the output and the JSON, and claims nothing. A case no rule claims is listed as `unclaimed`
+and not run.
 
 **`--budget N` caps the case sessions one invocation starts.** Before each round the open cases
 are taken in name order while they fit; the rest wait for the next invocation, which picks up
@@ -620,8 +663,12 @@ safeguard refused one prompt outright, another hit `max_turns` mid tool call. Bo
 0.0 and were indistinguishable in the table from a run where the model actually did the
 forbidden thing, which is a different failure hiding behind the same number.
 
-A run is **unmeasured** when it errored (a timeout, a bad binary) or its final text is empty
-after stripping. `summarise` means an arm over its MEASURED runs only, so one unmeasured run
+A run is **unmeasured** when it errored (a timeout, a binary that would not start, a non-zero
+exit with no result envelope), when its result envelope says `is_error` or a `subtype` other
+than `success` (a usage limit comes back that way, carrying the limit text, and that text is
+never graded), when an `llm` grader's judge did not answer, when its final text is empty after
+stripping, or when the text starts with `API Error:` (an API refusal). An unmeasured run is
+never sent to the judge. `summarise` means an arm over its MEASURED runs only, so one unmeasured run
 alongside two real ones does not drag the score toward zero; when every run of an arm is
 unmeasured there is no honest score to report, and the arm (and the delta with it) come back
 `None`, printed as `?`. A case unmeasured in the `with` arm never counts toward the exit code by
@@ -653,7 +700,7 @@ off. `results/runs/` is data, same as `results/latest.json`: commit it or ignore
 `results/latest.json` answers "what is true now" and is overwritten on every run.
 `results/history.jsonl` answers a question nothing else in this repo keeps: what has this rule's
 delta looked like across every run anyone has done. One JSON line is appended per case per `run`
-invocation, with `target_sha256`, the sha256 of each ablated rule file as it was actually seeded
+invocation (per round under `--decide`), with `target_sha256`, the sha256 of each ablated rule file as it was actually seeded
 into the `with` arm, so a later reader can tell a real regression from a rule that was simply
 rewritten between two runs. Each line also carries the evidence key, the ablation mode and the
 pass, measured and attempted counts per arm, which `run --decide` sums back, `rules_sha256` (the

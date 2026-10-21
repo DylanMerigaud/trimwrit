@@ -34,6 +34,15 @@ INERT_FAILING, `harmful` HARMFUL, `keep` and `undecided` no finding at all. The 
 `k/n` passes per arm and P(helps), not means. A summary with no verdict keeps the delta logic
 above, and the CLI says it was measured with a fixed run count. Since 0.9.1 such a finding is
 printed and never deleted: `--apply` deletes on a decided `inert` verdict only.
+
+FOREIGN MARKERS
+
+A marker names its case by number, and a number is only unique inside the root whose ledger
+promoted the rule. Since 0.9.2 every function here takes `live`, the rules promoted in
+`--root`'s ledger (ledger.live_rules), and reads only those markers: a rule promoted elsewhere
+is foreign (integrate.foreign). It is never an orphan, never a holder of a verdict, never
+deleted, and it does not make a case of this root look used. `live` None reads every marker,
+as before 0.9.2; the CLI always passes it.
 """
 import hashlib
 import os
@@ -97,12 +106,22 @@ def case_ids(evals_dir="evals"):
     return out
 
 
-def orphans(targets, evals_dir="evals", root="."):
+def _owned(target, root, live):
+    """{rule_id: meta} of the markers in `target` this root owns (all of them when `live` is
+    None). A foreign marker is filtered here, before any finding can see it: an orphan must
+    never swallow a rule whose case lives in another root."""
+    rules = integrate_mod.read_rules(target, root)
+    if live is None:
+        return rules
+    return {rule_id: meta for rule_id, meta in rules.items() if rule_id in live}
+
+
+def orphans(targets, evals_dir="evals", root=".", live=None):
     """Rules whose case is missing. One filesystem walk, no model, no cost."""
     known = case_ids(evals_dir)
     found = []
     for target in targets:
-        for rule_id, meta in sorted(integrate_mod.read_rules(target, root).items()):
+        for rule_id, meta in sorted(_owned(target, root, live).items()):
             # EVERY cited case must be missing before the rule is an orphan. A rule citing two
             # cases where one survives is still backed by evidence, and calling it an orphan
             # would delete a rule that a passing test is holding up.
@@ -117,12 +136,12 @@ def orphans(targets, evals_dir="evals", root="."):
     return found
 
 
-def unused_cases(targets, evals_dir="evals", root="."):
+def unused_cases(targets, evals_dir="evals", root=".", live=None):
     """Cases that no rule points at. Not a deletion order: usually it means an integrate step
     was never run, and the fix is to write the rule, not to delete the case."""
     referenced = set()
     for target in targets:
-        for meta in integrate_mod.read_rules(target, root).values():
+        for meta in _owned(target, root, live).values():
             referenced.update(integrate_mod.case_list(meta["case"]))
             referenced.add(meta["case"])
     out = []
@@ -137,7 +156,7 @@ def unused_cases(targets, evals_dir="evals", root="."):
     return out
 
 
-def inert(summaries, targets, evals_dir="evals", root=".", pass_line=PASS_LINE):
+def inert(summaries, targets, evals_dir="evals", root=".", pass_line=PASS_LINE, live=None):
     """Rules whose case scores no better with them than without.
 
     `summaries` is {case_dir_basename: runner.summarise(...) dict}. A flat delta is two
@@ -148,7 +167,7 @@ def inert(summaries, targets, evals_dir="evals", root=".", pass_line=PASS_LINE):
     """
     by_case = {}
     for target in targets:
-        for rule_id, meta in integrate_mod.read_rules(target, root).items():
+        for rule_id, meta in _owned(target, root, live).items():
             for cid in integrate_mod.case_list(meta["case"]):
                 by_case.setdefault(cid, []).append((rule_id, target, meta))
 
@@ -195,7 +214,7 @@ def inert(summaries, targets, evals_dir="evals", root=".", pass_line=PASS_LINE):
 
 def _holders(by_case, cid, base):
     """Every rule citing the case, by its number (`0027`) or by its full directory name
-    (`0027-decision-taken-reopened`), each once. The same union `--ablate rule` takes out of the
+    (`0027-sample-case`), each once. The same union `--ablate rule` takes out of the
     without arm (integrate.citing_rules), so a verdict deletes exactly the rules it measured;
     `by_case.get(cid) or by_case.get(base)` found only the first kind when both were present."""
     seen, out = set(), []
@@ -271,7 +290,7 @@ def read_target(target, root="."):
         return None
 
 
-def changed_since_measured(finding, summary, root=".", text=None, targets=None):
+def changed_since_measured(finding, summary, root=".", text=None, targets=None, live=None):
     """True when what the verdict measured is no longer what the target holds.
 
     A verdict is about the rule as it was measured. Delete a rule that has been edited since,
@@ -282,6 +301,7 @@ def changed_since_measured(finding, summary, root=".", text=None, targets=None):
     file mode the whole file was under test, so the target's text is compared with what the
     `with` arm seeded; `text` is the target as the caller read it, by default read now. A
     summary that never recorded what it measured cannot vouch for it, so that is True too.
+    `live` filters the blocks as `run` did when it measured them (integrate.rules_sha256).
     """
     summary = summary or {}
     if summary.get("ablate") == "rule":
@@ -289,7 +309,7 @@ def changed_since_measured(finding, summary, root=".", text=None, targets=None):
         if not want:
             return True
         return integrate_mod.rules_sha256(targets or [finding.target], finding.case,
-                                          root) != want
+                                          root, live) != want
     seeded = (summary.get("files_sha256") or {}).get("with") or {}
     want = seeded.get(os.path.basename(finding.target or ""))
     if text is None:
@@ -299,10 +319,16 @@ def changed_since_measured(finding, summary, root=".", text=None, targets=None):
     return hashlib.sha256(text.encode("utf-8")).hexdigest() != want
 
 
-def report(targets, evals_dir="evals", root=".", summaries=None, pass_line=PASS_LINE):
-    """Every finding, cheapest evidence first."""
-    out = orphans(targets, evals_dir, root)
-    out.extend(unused_cases(targets, evals_dir, root))
+def report(targets, evals_dir="evals", root=".", summaries=None, pass_line=PASS_LINE,
+           live=None):
+    """Every finding, cheapest evidence first. `live` as in the module docstring."""
+    out = orphans(targets, evals_dir, root, live)
+    out.extend(unused_cases(targets, evals_dir, root, live))
     if summaries:
-        out.extend(inert(summaries, targets, evals_dir, root, pass_line))
+        out.extend(inert(summaries, targets, evals_dir, root, pass_line, live))
     return out
+
+
+def is_decided_inert(finding):
+    """True for the one finding `--inert-only` deletes: `inert` from a decided verdict."""
+    return finding.kind == INERT and "verdict" in finding.numbers

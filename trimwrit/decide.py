@@ -7,8 +7,25 @@ The 21 cases measured before this existed rested on 3 runs per arm, mostly one b
 2026-09-02, and three runs per arm can never decide: 3 of 3 against 0 of 3 gives `p_helps`
 0.986, under the 0.99 line. Asking the operator to pick a run count was asking the question the
 statistics are there to answer. So a case runs `BATCH` per arm, the verdict is recomputed, and
-only the cases still undecided go again, until each one has a verdict or `MAX_RUNS` attempted
+only the cases still undecided go again, until each one has a verdict or `MAX_RUNS` measured
 runs per arm.
+
+WHY UNMEASURED RUNS ARE COUNTED APART
+
+Until 0.9.2 the cap counted attempted runs, so a week where every `claude -p` call failed (a
+usage limit, an outage) ran every case to the cap with nothing measured, and the case was
+closed for good. Now an unmeasured run (runner.Result.unmeasured) is spent against `--budget`,
+since it started a session, but `MAX_RUNS` caps measured runs only. A round where no started
+session was measured, across every case, stops the invocation (`stopped` "unmeasured", exit 4
+in the CLI): the next round would fail the same way. A key whose unmeasured runs reach
+`MAX_RUNS` in one arm is `unmeasurable` and not started again until its key changes, so one
+broken case cannot spend the budget every week.
+
+WHY A ROUND AT A TIME
+
+`on_round` is called after every round with that round's runs only, and the CLI writes their
+evidence and one history row per case there: a killed invocation keeps the rounds it finished,
+and since a row carries one round's counts, summing the rows never counts a run twice.
 
 WHY A KEY
 
@@ -41,6 +58,17 @@ DECIDED_EARLIER = "decided-earlier"
 EXHAUSTED_EARLIER = "exhausted-earlier"
 RAN = "ran"
 BUDGET = "budget"
+UNMEASURABLE = "unmeasurable"
+STOPPED = "stopped"
+# `Outcome.stopped` when a round measured nothing.
+STOPPED_UNMEASURED = "unmeasured"
+
+
+class Outcome(dict):
+    """{case.path: state}, plus `stopped`: None, or STOPPED_UNMEASURED when the invocation
+    stopped because a round measured no run."""
+
+    stopped = None
 
 
 def sha256_text(text):
@@ -56,11 +84,14 @@ def files_sha256(with_files, without_files):
 
 def _case_tree(path):
     """{relative path: sha256 of bytes} for every file under the case directory. A grader's
-    pattern or proof sample changing is a different experiment, not only the prompt."""
+    pattern or proof sample changing is a different experiment, not only the prompt. A path
+    with a component starting with `.` is skipped: a `.DS_Store` Finder drops is not one."""
     out = {}
     for dirpath, dirnames, filenames in os.walk(path):
-        dirnames.sort()
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
         for name in filenames:
+            if name.startswith("."):
+                continue
             full = os.path.join(dirpath, name)
             with open(full, "rb") as fh:
                 rel = os.path.relpath(full, path).replace(os.sep, "/")
@@ -92,8 +123,8 @@ def zero_counts():
 
 def count(per_arm, threshold):
     """Pass, measured and attempted counts per arm. A run passes when it is measured and its
-    score reaches `threshold`; an unmeasured run (an API refusal, no final text) is attempted
-    but never measured, so it neither helps nor hurts a rule."""
+    score reaches `threshold`; an unmeasured run (runner.Result.unmeasured) is attempted but
+    never measured, so it neither helps nor hurts a rule."""
     out = zero_counts()
     for arm in ARMS:
         for r in per_arm.get(arm, []):
@@ -159,23 +190,40 @@ def _attempted(counts):
     return max(counts["attempted"][a] for a in ARMS)
 
 
+def _measured(counts):
+    return max(counts["measured"][a] for a in ARMS)
+
+
+def unmeasured(counts):
+    """{arm: attempted minus measured}."""
+    return {a: counts["attempted"][a] - counts["measured"][a] for a in ARMS}
+
+
+def _unmeasurable(counts, max_runs):
+    return max(unmeasured(counts).values()) >= max_runs
+
+
 def run_until_decided(cases, files_by_case, keys, history_path, run_batch, threshold,
                       batch=verdict.BATCH, max_runs=verdict.MAX_RUNS, budget=None,
-                      margin=verdict.MARGIN):
-    """{case.path: state} for every case, after running the open ones batch by batch.
+                      margin=verdict.MARGIN, on_round=None):
+    """An Outcome, {case.path: state} for every case, after running the open ones batch by batch.
 
-    A key already decided is `decided-earlier` and a key already at `max_runs` attempted runs
-    per arm is `exhausted-earlier`: neither runs again until something in its key changes. Each
-    round, the open cases run `min(batch, max_runs - attempted)` per arm (one `run_batch` call
-    per distinct size), then each is decided again on its cumulative counts. `budget` caps the
-    sessions this call starts: before each round the open cases are taken in name order while
-    they fit, and the first that does not fit closes with every case after it as `budget`.
+    A key already decided is `decided-earlier`, a key already at `max_runs` measured runs per
+    arm is `exhausted-earlier`, and a key whose unmeasured runs reached `max_runs` in an arm is
+    `unmeasurable`: none runs again until something in its key changes. Each round, the open
+    cases run `min(batch, max_runs - measured)` per arm (one `run_batch` call per distinct
+    size), then each is decided again on its cumulative counts, and `on_round(ran, states)` gets
+    `{case.path: per_arm}` of that round's runs. `budget` caps the sessions this call starts,
+    measured or not: before each round the open cases are taken in name order while they fit,
+    and the first that does not fit closes with every case after it as `budget`. A round that
+    started sessions and measured none closes every open case as `stopped` and sets
+    `Outcome.stopped`.
     """
     if budget is not None and budget < 2 * batch:
         raise ValueError("a budget of {} cannot pay for one batch of one case ({} sessions)"
                          .format(budget, 2 * batch))
     rows = _read_rows(history_path)
-    states, open_cases = {}, []
+    states, open_cases = Outcome(), []
     for case in sorted(cases, key=lambda c: os.path.basename(c.path)):
         prior = _sum(rows, keys[case.path])
         with_files, without_files = files_by_case[case.path]
@@ -186,15 +234,17 @@ def run_until_decided(cases, files_by_case, keys, history_path, run_batch, thres
         states[case.path] = state
         if state["verdict"]["verdict"] != verdict.UNDECIDED:
             state["status"] = DECIDED_EARLIER
-        elif _attempted(prior) >= max_runs:
+        elif _measured(prior) >= max_runs:
             state["status"] = EXHAUSTED_EARLIER
+        elif _unmeasurable(prior, max_runs):
+            state["status"] = UNMEASURABLE
         else:
             open_cases.append(case)
 
     spent = 0
     stalled = set()
     while open_cases:
-        sizes = {c.path: min(batch, max_runs - _attempted(states[c.path]["counts"]))
+        sizes = {c.path: min(batch, max_runs - _measured(states[c.path]["counts"]))
                  for c in open_cases}
         if budget is not None:
             fits = []
@@ -210,8 +260,11 @@ def run_until_decided(cases, files_by_case, keys, history_path, run_batch, thres
         groups = {}
         for c in open_cases:
             groups.setdefault(sizes[c.path], []).append(c)
+        ran_now, started, measured = {}, 0, 0
         for n in sorted(groups, reverse=True):
             group = groups[n]
+            # Run indexes follow the attempted count, so an unmeasured run's evidence file is
+            # never overwritten by the next one.
             start = {c.path: _attempted(states[c.path]["counts"]) for c in group}
             out = run_batch(group, n, start)
             for c in group:
@@ -224,17 +277,31 @@ def run_until_decided(cases, files_by_case, keys, history_path, run_batch, thres
                 ran = sum(got["attempted"].values())
                 state["spent"] += ran
                 spent += ran
-                if not ran:
+                started += ran
+                measured += sum(got["measured"].values())
+                if ran:
+                    ran_now[c.path] = per_arm
+                else:
                     stalled.add(c.path)
+        dead_round = started > 0 and measured == 0
         still = []
         for c in open_cases:
             state = states[c.path]
             state["verdict"] = judge(state["counts"], margin)
             # A batch that came back with no run at all would ask for the same batch forever.
             if state["verdict"]["verdict"] != verdict.UNDECIDED \
-                    or _attempted(state["counts"]) >= max_runs or c.path in stalled:
+                    or _measured(state["counts"]) >= max_runs or c.path in stalled:
                 state["status"] = RAN
+            elif _unmeasurable(state["counts"], max_runs):
+                state["status"] = UNMEASURABLE
+            elif dead_round:
+                state["status"] = STOPPED
             else:
                 still.append(c)
+        if on_round is not None and ran_now:
+            on_round(ran_now, states)
+        if dead_round:
+            states.stopped = STOPPED_UNMEASURED
+            break
         open_cases = still
     return states

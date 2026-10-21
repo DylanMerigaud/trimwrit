@@ -169,16 +169,42 @@ def drop_rule(target, rule_id, root="."):
     return cut[1]
 
 
-def citing_rules(target, case_base, root="."):
+def citing_rules(target, case_base, root=".", live=None):
     """The ids of the rules in `target` whose marker cites the case `case_base`.
 
     A marker cites a case by its leading number (`0027`) or by the full directory name
-    (`0027-decision-taken-reopened`); `case 0270` does not cite `0027`, because the ids are
+    (`0027-sample-case`); `case 0270` does not cite `0027`, because the ids are
     compared whole, never as prefixes. A multi case marker (`0065+0066`) cites each.
+
+    `live` (the rule ids promoted in `--root`'s ledger, see ledger.live_rules) keeps only the
+    markers this root owns: a rule promoted in another ledger cites a case number of THAT
+    root, and the same number here is another case (see `foreign`). None keeps every marker.
     """
     wanted = {case_base.split("-", 1)[0], case_base}
     return [rule_id for rule_id, info in read_rules(target, root).items()
-            if wanted & set(case_list(info["case"]))]
+            if wanted & set(case_list(info["case"]))
+            and (live is None or rule_id in live)]
+
+
+def foreign(targets, root=".", live=None):
+    """[{"target", "rule", "case"}] for every marker in `targets` whose rule is not in `live`.
+
+    The incident (review of 0.9.1): the global ~/.claude/CLAUDE.md holds `R0002 case 0002`,
+    promoted in the global ledger, whose case 0002 is a dash case; one repository measured with
+    that file as a target has its own, unrelated 0002. Matched by number, `--ablate rule` ran
+    the repository's case against the global rule, and an inert verdict let `prune --apply`
+    delete the global rule and write the removal into the wrong ledger. A foreign marker is
+    listed, never claimed, never deleted, never an orphan. `live` None means none is foreign.
+    """
+    if live is None:
+        return []
+    out = []
+    for target in targets:
+        for rule_id, info in sorted(read_rules(os.path.expanduser(target), root).items(),
+                                    key=lambda kv: kv[1]["line"]):
+            if rule_id not in live:
+                out.append({"target": target, "rule": rule_id, "case": info["case"]})
+    return out
 
 
 def rule_block(text, rule_id):
@@ -195,13 +221,14 @@ def rule_block(text, rule_id):
     return "\n".join(text.split("\n")[start:end])
 
 
-def rules_sha256(targets, case_base, root="."):
+def rules_sha256(targets, case_base, root=".", live=None):
     """{rule_id: sha256 of its block} for every rule citing `case_base`, across `targets`.
 
     The union `runner.rule_arm_files` strips from the without arm. In rule mode the evidence
     key and prune's stale guard hash these blocks, not the whole files: the global CLAUDE.md
     changes almost daily, and hashing it whole would reset every rule's count on any edit and
-    let one deletion make every other rule of the file stale.
+    let one deletion make every other rule of the file stale. `live` filters as in
+    `citing_rules`, so run and prune hash the same blocks.
     """
     out = {}
     for target in targets:
@@ -209,7 +236,7 @@ def rules_sha256(targets, case_base, root="."):
         path = os.path.join(root, target)
         if not os.path.exists(path):
             continue
-        ids = citing_rules(target, case_base, root)
+        ids = citing_rules(target, case_base, root, live)
         if not ids:
             continue
         with open(path, encoding="utf-8") as fh:

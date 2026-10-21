@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.9.2, 2026-10-21
+
+- **A marker another ledger promoted is foreign, and left alone.** A marker names its case by
+  number, and a number is unique only inside the root that promoted the rule. Measured from a
+  repository with the global `~/.claude/CLAUDE.md` as a target, `--ablate rule` ran the
+  repository's own, unrelated `0002` against the global `R0002 case 0002`, and an `inert`
+  verdict would have let `prune --apply` delete the global rule and write the removal into the
+  repository's ledger. Now `--ablate rule` claims a case, and `prune` judges or deletes a rule,
+  only through a marker whose rule is live in `--root`'s ledger. Any other marker (another
+  ledger's, or one written by hand with no promotion) is listed under `foreign`, with its file
+  and rule id, in the text and the JSON of `run` and `prune`: never run because of it, never
+  deleted, never an orphan, never a holder of a verdict, and it does not make a case look used.
+  A repository whose markers have no promotion in its ledger sees them all foreign: promote
+  them with `trimwrit integrate`, or measure them from the root that did.
+- **`prune --inert-only`.** With `--apply` it deletes only rules decided `inert` (with the
+  stale and multi-case guards as before); an orphan or a fixed-count finding is printed ("kept
+  R...: an orphan; --inert-only deletes only a rule decided inert") and kept. Without `--apply`
+  the report is narrowed the same way. It needs `--results` and is refused without it.
+- **`prune --json`** prints the findings, the foreign markers, and what `--apply` removed and
+  kept.
+- **An errored result is unmeasured, whatever its text.** A result envelope with `is_error`, or
+  a `subtype` other than `success`, made the run unmeasured only if its text was empty or began
+  with `API Error:`; Claude Code reports a usage limit as an `is_error` envelope carrying the
+  limit text, and that text was graded as the model's answer. A non-zero exit with no result
+  envelope is unmeasured too, and so is a run whose `llm` judge did not answer. An unmeasured
+  run is never sent to the judge.
+- **`--decide`: the cap counts measured runs, and an outage stops the run.** `--max-runs` (30)
+  now caps measured runs per arm; an unmeasured run is still spent against `--budget`. A round
+  where no started session was measured, across all cases, stops the invocation with exit 4
+  (new; `run --help` lists the exit codes), `"stopped": "unmeasured"` in the JSON and one line
+  on stderr. A key whose unmeasured runs reach the cap in an arm is `unmeasurable` and not
+  started again until its key changes. The JSON counts this invocation's unmeasured runs per
+  arm, per case and in total. Until now a week where every call failed spent its budget and
+  moved every case toward a permanent cap with nothing measured.
+- **`--decide` writes its history after every round**, one line per case that ran, with that
+  round's counts: a killed invocation keeps the rounds it finished, and the next one sums them
+  once. Evidence files are written per round too.
+- **The evidence key skips dot paths** of a case directory: a `.DS_Store` no longer resets a
+  case's count.
+- **README.** Which runs are unmeasured, exactly; a plain `run` shares a key with `--decide`
+  only with the same flags (it defaults to `--ablate file`); what becomes of a case once its
+  rule is deleted (it stays in `evals/`, `--ablate rule` no longer claims it, `trimwrit run
+  --no-ablation --case <id>` replays it, a relapse comes back as a new correction); foreign
+  markers, `--inert-only`, exit 4. The 0.9.1 entry below names its sample case by a neutral
+  slug.
+
 ## 0.9.1, 2026-10-21
 
 - **In rule mode the evidence key hashes the rule blocks citing the case, not the whole
@@ -17,7 +63,7 @@
   is printed and kept under `--apply` ("kept R...: measured with a fixed run count; run
   `trimwrit run --decide`"). Only a decided `inert` verdict, or an orphan, is deleted.
 - **A case cited both by number and by name has every rule judged.** With one rule citing
-  `0027` and another `0027-decision-taken-reopened`, prune saw only the first, while the without
+  `0027` and another `0027-sample-case`, prune saw only the first, while the without
   arm had taken out both. It now takes the union, so `--apply` deletes exactly the rules the
   verdict measured.
 - **A verdict no rule claims is no finding**, as for a plain result: it is already the

@@ -43,6 +43,13 @@ from .text import RefusedWrite, one_line, write_text
 
 BAR = "-" * 72
 DEFAULT_TARGETS = ("CLAUDE.md",)
+# `run --decide` stopped because a round measured no run (an outage, a usage limit): not a
+# refusal (2) and not a failing case (1), so a scheduler can tell "try later" from "broken".
+EXIT_UNMEASURED = 4
+RUN_EPILOG = ("exit codes: 0 done (an undecided case is a result), 1 a case below --threshold "
+              "(plain run), 2 refused, 4 --decide stopped: a round measured no run (every "
+              "session errored, hit a usage limit or answered nothing), history kept for what "
+              "ran")
 
 
 def _today():
@@ -404,13 +411,14 @@ def _decide_refusal(args):
     return None
 
 
-def _arm_files(args, found, rule_files):
+def _arm_files(args, found, rule_files, live=None):
     """({case.path: (with_files, without_files)}, {case.path: (kind, reason)}).
 
     `--ablate file` seeds every case with the whole rule files and the `without` arm with
     nothing, as `run` always has. `--ablate rule` seeds each case with only the targets citing
     it, and takes the citing blocks out of the `without` copy (runner.rule_arm_files); a case
-    it cannot ablate is returned in the second dict and is not run.
+    it cannot ablate is returned in the second dict and is not run. `live` (rule mode) is the
+    rules promoted in the root's ledger: only their markers claim a case.
     """
     files, skipped = {}, {}
     for case in found:
@@ -418,10 +426,20 @@ def _arm_files(args, found, rule_files):
             files[case.path] = (rule_files, {})
             continue
         try:
-            files[case.path] = runner_mod.rule_arm_files(case, _targets(args), args.root)
+            files[case.path] = runner_mod.rule_arm_files(case, _targets(args), args.root, live)
         except runner_mod.AblationError as exc:
             skipped[case.path] = (exc.kind, str(exc))
     return files, skipped
+
+
+FOREIGN_LINE = ("foreign {rule} in {target} (case {case}): not promoted in this root's ledger, "
+                "left alone (never measured or deleted from here)")
+
+
+def _print_foreign(foreign, say=print):
+    """One line per foreign marker: listed so a reader sees it was left alone on purpose."""
+    for f in foreign:
+        say(FOREIGN_LINE.format(**f))
 
 
 def _skipped_payload(skipped):
@@ -466,8 +484,13 @@ def _decide_words(state):
         return word
     if state["status"] == decide_mod.BUDGET:
         return "undecided, budget spent"
-    return "undecided after {} runs per arm".format(
-        max(state["counts"]["attempted"].values()))
+    if state["status"] == decide_mod.STOPPED:
+        return "undecided, stopped: the last round measured no run"
+    if state["status"] == decide_mod.UNMEASURABLE:
+        return "UNMEASURABLE, {} runs in an arm never measured: fix the case, then its key " \
+               "moves".format(max(decide_mod.unmeasured(state["counts"]).values()))
+    return "undecided after {} measured runs per arm".format(
+        max(state["counts"]["measured"].values()))
 
 
 def _decide_summary(state, ablate, rules_sha256=None):
@@ -490,15 +513,21 @@ def _decide_summary(state, ablate, rules_sha256=None):
 
 
 def _run_decide(args, runnable, blocked, skipped, files_by_case, keys, rule_files, judge,
-                progress, evals_dir, history_path, ts, unproven_total, rules_by_case=None):
+                progress, evals_dir, history_path, ts, unproven_total, rules_by_case=None,
+                foreign=()):
     """`run --decide`: the loop is decide.run_until_decided; this writes what it found.
 
-    Evidence files and a history row only for a case that ran in this invocation (a case
-    decided earlier adds nothing to sum), latest.json for every claimed case, run now or not,
-    because `prune` reads its verdicts from there and a second invocation that runs nothing
-    must still leave them in place. Exit 0: an undecided case is a result, not a failure.
+    Evidence files and a history row after every round, for each case that ran in it, with that
+    round's counts only (decide.py, WHY A ROUND AT A TIME), latest.json at the end for every
+    claimed case, run now or not, because `prune` reads its verdicts from there and a second
+    invocation that runs nothing must still leave them in place. Exit 0: an undecided case is a
+    result, not a failure. Exit 4 when a round measured no run (decide.py, WHY UNMEASURED RUNS
+    ARE COUNTED APART).
     """
     arms = (runner_mod.ARM_WITH, runner_mod.ARM_WITHOUT)
+    ablate = args.ablate
+    by_path = {c.path: c for c in runnable}
+    wrote = []
 
     def run_batch(cases, n, start_by_case):
         return runner_mod.run_many(
@@ -506,50 +535,69 @@ def _run_decide(args, runnable, blocked, skipped, files_by_case, keys, rule_file
             progress=progress, isolate=not args.no_isolation, jobs=args.jobs, model=args.model,
             files_by_case=files_by_case, start_by_case=start_by_case)
 
+    def on_round(ran, states):
+        for path in sorted(ran, key=os.path.basename):
+            per_arm, state, case = ran[path], states[path], by_path[path]
+            if not args.no_save:
+                for rs in per_arm.values():
+                    for r in rs:
+                        runner_mod.write_evidence(r, evals_dir, key=state["key"])
+                        wrote.append(r)
+            v = state["verdict"]
+            evidence = {"key": state["key"], "ablate": ablate,
+                        "files_sha256": state["files_sha256"],
+                        "rules_sha256": (rules_by_case or {}).get(path),
+                        "verdict": v["verdict"], "p_helps": v["p_helps"],
+                        "p_equivalent": v["p_equivalent"]}
+            evidence.update(decide_mod.count(per_arm, args.threshold))
+            _append_history(history_path, ts, case, runner_mod.summarise(per_arm),
+                            files_by_case[path][0], _targets(args), args.claude,
+                            model=args.model, judge_model=args.judge_model,
+                            model_usage=_seen_usage(per_arm), evidence=evidence)
+
     states = decide_mod.run_until_decided(
         runnable, files_by_case, keys, history_path, run_batch, args.threshold,
-        batch=args.batch, max_runs=args.max_runs, budget=args.budget, margin=args.margin)
+        batch=args.batch, max_runs=args.max_runs, budget=args.budget, margin=args.margin,
+        on_round=on_round)
 
-    ablate = args.ablate
     summaries, payload = {}, {"cases": [], "skipped": _skipped_payload(skipped),
                               "unchecked": [{"name": os.path.basename(p), "reason": r}
-                                            for p, r in sorted(blocked.items())]}
-    spent, wrote_evidence = 0, False
+                                            for p, r in sorted(blocked.items())],
+                              "foreign": list(foreign)}
+    spent = 0
+    total_unmeasured = {a: 0 for a in arms}
     for case in sorted(runnable, key=lambda c: os.path.basename(c.path)):
         base = os.path.basename(case.path)
         state = states[case.path]
         summary = _decide_summary(state, ablate, (rules_by_case or {}).get(case.path))
         summaries[base] = summary
-        payload["cases"].append({"name": base, "summary": summary,
+        now = decide_mod.unmeasured(decide_mod.count(state["results"], args.threshold))
+        for a in arms:
+            total_unmeasured[a] += now[a]
+        payload["cases"].append({"name": base, "summary": summary, "unmeasured": now,
                                  "arms": _arms_payload(state["results"])})
-        if not state["spent"]:
-            continue
         spent += state["spent"]
-        if not args.no_save:
-            for rs in state["results"].values():
-                for r in rs:
-                    runner_mod.write_evidence(r, evals_dir, key=state["key"])
-                    wrote_evidence = True
-        evidence = {"key": state["key"], "ablate": ablate,
-                    "files_sha256": state["files_sha256"],
-                    "rules_sha256": summary["rules_sha256"],
-                    "verdict": summary["verdict"], "p_helps": summary["p_helps"],
-                    "p_equivalent": summary["p_equivalent"]}
-        evidence.update(decide_mod.count(state["results"], args.threshold))
-        _append_history(history_path, ts, case, runner_mod.summarise(state["results"]),
-                        files_by_case[case.path][0], _targets(args), args.claude,
-                        model=args.model, judge_model=args.judge_model,
-                        model_usage=_seen_usage(state["results"]), evidence=evidence)
 
     budget = "none" if args.budget is None else args.budget
+    code = EXIT_UNMEASURED if states.stopped else 0
+    if states.stopped:
+        first = next((r.error or "no final text" for rs in
+                      (st["results"][a] for st in states.values() for a in arms)
+                      for r in rs if r.unmeasured), "no final text")
+        print("stopped: unmeasured, the last round measured none of its runs ({}); the "
+              "history keeps what ran, run again when claude answers".format(
+                  one_line(first)[:160]), file=sys.stderr)
     if args.json:
         payload["sessions"] = spent
         payload["budget"] = args.budget
+        payload["unmeasured"] = total_unmeasured
+        payload["stopped"] = states.stopped
         _save_results(args, summaries, stream=sys.stderr)
         print(json.dumps(payload, indent=2, ensure_ascii=False))
-        return 0
+        return code
 
     _print_skipped(skipped)
+    _print_foreign(foreign)
     row = "{:<36} {:<12} {:<15} {:<16} {}"
     print("\n" + row.format("case", "with", "without", "P(helps)", "verdict"))
     print(BAR)
@@ -567,13 +615,16 @@ def _run_decide(args, runnable, blocked, skipped, files_by_case, keys, rule_file
         print("{:<36} UNCHECKED, grader failed its own proof: {}".format(
             os.path.basename(path), reason))
     print("\nsessions started: {} (budget {}; judge calls not counted)".format(spent, budget))
+    if any(total_unmeasured.values()):
+        print("unmeasured runs: {} with, {} without (spent, never counted toward a "
+              "verdict)".format(total_unmeasured["with"], total_unmeasured["without"]))
     _save_results(args, summaries)
     if unproven_total and not args.strict:
         print("{} unproven grader(s), run with --strict to refuse them.".format(unproven_total))
-    if wrote_evidence:
+    if wrote:
         print("evidence written to {}".format(os.path.join(evals_dir, "results", "runs")))
     print("viz: run 'trimwrit viz --target {}' to see this as a canvas".format(_targets(args)[0]))
-    return 0
+    return code
 
 
 def cmd_run(args):
@@ -611,7 +662,11 @@ def cmd_run(args):
     # Rule level ablation decides which files each case is seeded with, so it runs before
     # anything else looks at a case: a case no target claims is not under test at all.
     ablate = "none" if args.no_ablation else args.ablate
-    files_by_case, skipped = _arm_files(args, found, rule_files)
+    # Rule mode claims a case only through a marker whose rule this root's ledger promoted:
+    # any other marker is foreign (integrate.foreign), listed and left alone.
+    live = ledger_mod.live_rules(root=args.root) if ablate == "rule" else None
+    foreign = integrate_mod.foreign(_targets(args), args.root, live)
+    files_by_case, skipped = _arm_files(args, found, rule_files, live)
     found = [c for c in found if c.path not in skipped]
 
     arms = (runner_mod.ARM_WITH,) if args.no_ablation else (runner_mod.ARM_WITH,
@@ -647,7 +702,7 @@ def cmd_run(args):
     # Rule mode: the experiment is the citing blocks, so the key hashes them and not the whole
     # files (decide.py, WHY A KEY). None in file mode, where the whole file is under test.
     rules_by_case = {c.path: (integrate_mod.rules_sha256(
-        _targets(args), os.path.basename(c.path), args.root) if ablate == "rule" else None)
+        _targets(args), os.path.basename(c.path), args.root, live) if ablate == "rule" else None)
         for c in found}
     keys = {c.path: decide_mod.evidence_key(
         c, files_by_case[c.path][0], files_by_case[c.path][1], args.model, args.judge_model,
@@ -656,7 +711,7 @@ def cmd_run(args):
     if args.decide:
         return _run_decide(args, runnable, blocked, skipped, files_by_case, keys, rule_files,
                            judge, progress, evals_dir, history_path, ts, unproven_total,
-                           rules_by_case=rules_by_case)
+                           rules_by_case=rules_by_case, foreign=foreign)
 
     results_by_case = runner_mod.run_many(
         runnable, rule_files, arms=arms, runs=args.runs, claude=args.claude, judge=judge,
@@ -666,6 +721,8 @@ def cmd_run(args):
     summaries, payload = {}, {"cases": []}
     if skipped:
         payload["skipped"] = _skipped_payload(skipped)
+    if foreign:
+        payload["foreign"] = foreign
     failures, unmeasured_cases, wrote_evidence = 0, 0, False
     for case in found:
         base = os.path.basename(case.path)
@@ -707,6 +764,7 @@ def cmd_run(args):
         return 1 if failures else 0
 
     _print_skipped(skipped)
+    _print_foreign(foreign)
     print("\n{:<36} {:>6} {:>9} {:>7}  verdict".format("case", "with", "without", "delta"))
     print(BAR)
     for base, s in sorted(summaries.items()):
@@ -803,7 +861,21 @@ def cmd_check(args):
 # ------------------------------------------------------------------ prune
 
 
+INERT_ONLY_WHY = "--inert-only deletes only a rule decided inert"
+
+
+def _finding_payload(f):
+    return {"kind": f.kind, "rule": f.rule, "case": f.case, "target": f.target,
+            "detail": f.detail, "numbers": f.numbers}
+
+
 def cmd_prune(args):
+    if args.inert_only and args.results is None:
+        # The decided verdicts are only ever read from a results file: without one there is
+        # nothing --inert-only could delete, and an empty report would read as "nothing inert".
+        print("refused: --inert-only acts on the verdicts `run --decide` wrote, so it needs "
+              "--results.", file=sys.stderr)
+        return 2
     summaries = None
     # `is not None`, not a truthiness test. `--results` with no value stores the empty string,
     # the empty string is falsy, and the whole inert branch was skipped in silence: prune
@@ -820,29 +892,59 @@ def cmd_prune(args):
         with open(path, encoding="utf-8") as fh:
             summaries = json.load(fh)
 
-    findings = prune_mod.report(_targets(args), os.path.join(args.root, args.evals),
-                                args.root, summaries, args.threshold)
-    if not findings:
-        print("nothing to prune. Every rule names a case that exists, and no case that ran\n"
-              "says its rule is unneeded.")
-        print("viz: run 'trimwrit viz --target {}' to see this as a canvas".format(_targets(args)[0]))
+    targets = _targets(args)
+    # Only a rule this root's ledger promoted is this root's to judge and delete: any other
+    # marker is foreign (integrate.foreign), listed, and neither an orphan nor a holder.
+    live = ledger_mod.live_rules(root=args.root)
+    foreign = integrate_mod.foreign(targets, args.root, live)
+    findings = prune_mod.report(targets, os.path.join(args.root, args.evals),
+                                args.root, summaries, args.threshold, live=live)
+    left_out = []
+    if args.inert_only:
+        left_out = [f for f in findings if f.rule and f.target
+                    and f.kind in (prune_mod.ORPHAN, prune_mod.INERT)
+                    and not prune_mod.is_decided_inert(f)]
+        findings = [f for f in findings if prune_mod.is_decided_inert(f)]
+    doc = {"findings": [_finding_payload(f) for f in findings], "foreign": foreign,
+           "applied": bool(args.apply), "removed": [], "kept": [], "left_out": []}
+    say = (lambda *a, **k: None) if args.json else print
+
+    def keep(rule, why, word="kept"):
+        doc["kept" if word == "kept" else "left_out"].append({"rule": rule, "why": why})
+        say("{} {}: {}".format(word, rule, why))
+
+    def done():
+        if args.json:
+            print(json.dumps(doc, indent=2, ensure_ascii=False))
+        else:
+            print("viz: run 'trimwrit viz --target {}' to see this as a canvas".format(targets[0]))
         return 0
 
-    print("{:<12} {:<8} why".format("kind", "rule"))
-    print(BAR)
-    for f in findings:
-        print(f.line())
+    _print_foreign(foreign, say)
+    if not findings and not left_out:
+        say("nothing to prune. Every rule names a case that exists, and no case that ran\n"
+            "says its rule is unneeded.")
+        return done()
+
+    if findings:
+        say("{:<12} {:<8} why".format("kind", "rule"))
+        say(BAR)
+        for f in findings:
+            say(f.line())
     measured = (prune_mod.INERT, prune_mod.INERT_FAILING)
     if any(f.kind in measured and "verdict" not in f.numbers for f in findings):
-        print("\n" + prune_mod.FIXED_COUNT_LINE + ".")
+        say("\n" + prune_mod.FIXED_COUNT_LINE + ".")
+    for f in left_out:
+        why = "an orphan" if f.kind == prune_mod.ORPHAN else prune_mod.FIXED_COUNT_LINE
+        keep(f.rule, "{}; {}".format(why, INERT_ONLY_WHY),
+             word="kept" if args.apply else "left out")
 
     if args.apply:
         # Every guard is decided before the first deletion: deleting one rule must not make the
         # next one look changed (file mode hashes the whole file).
         stale = {id(f): prune_mod.changed_since_measured(f, summaries.get(f.case), args.root,
-                                                         targets=_targets(args))
+                                                         targets=targets, live=live)
                  for f in findings if f.kind == prune_mod.INERT and "verdict" in f.numbers}
-        removed = 0
         for f in findings:
             # Only an orphan or a decided inert rule is deleted. An inert-fail rule is a rewrite
             # order (its case is not reliably passed), a harmful one too (its case is worse with
@@ -852,31 +954,31 @@ def cmd_prune(args):
             if f.kind == prune_mod.INERT and "verdict" not in f.numbers:
                 # A mean over a fixed run count is a signal, not a decision: three runs per arm
                 # cannot tell inert from noise (verdict.py), so it is printed and kept.
-                print("kept {}: {}".format(f.rule, prune_mod.FIXED_COUNT_KEPT))
+                keep(f.rule, prune_mod.FIXED_COUNT_KEPT)
                 continue
             if "verdict" in f.numbers:
                 if f.numbers.get("held_by"):
-                    print("kept {}: it also cites {}, not decided inert.".format(
-                        f.rule, ", ".join(f.numbers["held_by"])))
+                    keep(f.rule, "it also cites {}, not decided inert.".format(
+                        ", ".join(f.numbers["held_by"])))
                     continue
                 if stale[id(f)]:
-                    print("kept {}: {}".format(f.rule, prune_mod.STALE_LINE))
+                    keep(f.rule, prune_mod.STALE_LINE)
                     continue
             if integrate_mod.drop_rule(f.target, f.rule, root=args.root):
                 ledger_mod.remove(f.rule, f.detail, root=args.root)
-                removed += 1
-        print("\nremoved {} rule(s), each one recorded in the ledger with the reason.".format(removed))
+                doc["removed"].append(f.rule)
+        say("\nremoved {} rule(s), each one recorded in the ledger with the reason.".format(
+            len(doc["removed"])))
     else:
-        print("\nnothing was changed. Re-run with --apply to delete these rules and record the\n"
-              "removal in the ledger.")
+        say("\nnothing was changed. Re-run with --apply to delete these rules and record the\n"
+            "removal in the ledger.")
     if any(f.kind == prune_mod.INERT_FAILING for f in findings):
-        print("an inert-fail rule is kept even with --apply: its case is not reliably passed\n"
-              "even with the rule, so rewrite the rule or its case before deleting it.")
+        say("an inert-fail rule is kept even with --apply: its case is not reliably passed\n"
+            "even with the rule, so rewrite the rule or its case before deleting it.")
     if any(f.kind == prune_mod.HARMFUL for f in findings):
-        print("a harmful rule is kept even with --apply: its case passes less often with it\n"
-              "than without it, so rewrite it.")
-    print("viz: run 'trimwrit viz --target {}' to see this as a canvas".format(_targets(args)[0]))
-    return 0
+        say("a harmful rule is kept even with --apply: its case passes less often with it\n"
+            "than without it, so rewrite it.")
+    return done()
 
 
 # ------------------------------------------------------------------ viz
@@ -1095,7 +1197,8 @@ def main(argv=None):
     ig.add_argument("--route", default=ledger_mod.ROUTE_COUNTER, choices=ledger_mod.ROUTES)
     ig.set_defaults(func=cmd_integrate)
 
-    rn = sub.add_parser("run", help="run the cases with the rule and without it")
+    rn = sub.add_parser("run", help="run the cases with the rule and without it",
+                        epilog=RUN_EPILOG)
     rn.add_argument("--case", help="substring filter on the case directory name")
     rn.add_argument("--target", help="comma separated rule files to ablate (default CLAUDE.md)")
     rn.add_argument("--runs", type=int, help="override the per-case run count")
@@ -1141,11 +1244,12 @@ def main(argv=None):
     rn.add_argument("--batch", type=int,
                     help="--decide: runs per arm per round (default {})".format(verdict_mod.BATCH))
     rn.add_argument("--max-runs", type=int,
-                    help="--decide: attempted runs per arm after which a case stays undecided "
+                    help="--decide: measured runs per arm after which a case stays undecided, "
+                         "and unmeasured runs per arm after which it is unmeasurable "
                          "(default {})".format(verdict_mod.MAX_RUNS))
     rn.add_argument("--budget", type=int,
-                    help="--decide: the most case sessions this invocation starts; judge calls "
-                         "are not counted")
+                    help="--decide: the most case sessions this invocation starts, measured "
+                         "or not; judge calls are not counted")
     rn.add_argument("--margin", type=float,
                     help="--decide: two pass rates closer than this are equivalent (default "
                          "{})".format(verdict_mod.MARGIN))
@@ -1164,7 +1268,14 @@ def main(argv=None):
                     help="actually delete, and record it: orphans and rules decided inert by "
                          "`run --decide`. An inert-fail or harmful rule is never deleted, nor "
                          "an inert one from a fixed run count, nor one edited since it was "
-                         "measured")
+                         "measured, nor a foreign one (promoted in another root's ledger)")
+    pr.add_argument("--inert-only", action="store_true",
+                    help="only rules decided inert by `run --decide`: with --apply nothing "
+                         "else is deleted (an orphan or a fixed-count finding is printed and "
+                         "kept), without it the report lists only them. Needs --results")
+    pr.add_argument("--json", action="store_true",
+                    help="print the findings, the foreign markers and what --apply removed "
+                         "and kept, as JSON")
     pr.add_argument("--threshold", type=float, default=prune_mod.PASS_LINE,
                     help="the pass line the run used (default {}): a flat case at or above it "
                          "without the rule is inert, below it inert-fail".format(

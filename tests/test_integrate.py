@@ -127,11 +127,11 @@ def test_drop_rule_returns_the_block_and_matches_strip_rules(tmp_path):
 def test_citing_rules_matches_the_leading_number_and_the_full_name(tmp_path):
     (tmp_path / "CLAUDE.md").write_text(
         "<!-- trimwrit: R1 case 0027, 2026-08-23: a -->\none\n\n"
-        "<!-- trimwrit: R2 case 0027-decision-taken-reopened, 2026-08-23: b -->\ntwo\n\n"
+        "<!-- trimwrit: R2 case 0027-sample-case, 2026-08-23: b -->\ntwo\n\n"
         "<!-- trimwrit: R3 case 0270 -->\nthree\n\n"
         "<!-- trimwrit: R4 case 0026+0027 -->\nfour\n\n"
         "<!-- trimwrit: R5 case 0027-other -->\nfive\n", encoding="utf-8")
-    got = I.citing_rules("CLAUDE.md", "0027-decision-taken-reopened", root=str(tmp_path))
+    got = I.citing_rules("CLAUDE.md", "0027-sample-case", root=str(tmp_path))
     assert got == ["R1", "R2", "R4"]
 
 

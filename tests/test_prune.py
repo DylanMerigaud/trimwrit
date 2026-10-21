@@ -216,8 +216,8 @@ def test_a_verdict_no_rule_claims_is_no_finding(tmp_path):
 def test_rules_citing_by_number_and_by_name_are_both_holders(tmp_path):
     root = str(tmp_path)
     evals = os.path.join(root, "evals")
-    base = "0027-decision-taken-reopened"
-    cases.write_case("0027", "decision taken reopened", "p",
+    base = "0027-sample-case"
+    cases.write_case("0027", "sample case", "p",
                      [cases.forbid_grader("x", name="g")], evals_dir=evals)
     integrate.write_rule("CLAUDE.md", "R0027", "0027", "2026-10-21", "i", "first", root=root)
     integrate.write_rule("CLAUDE.md", "R0332", base, "2026-10-21", "i", "second", root=root)

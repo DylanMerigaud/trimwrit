@@ -44,7 +44,9 @@ trimwrit prune --target CLAUDE.md --results
 ```
 
 `--decide` runs each case 3 times per arm at a time until the pass counts decide (`keep`,
-`harmful`, `inert`, `inert-fail`) or it reaches 30 runs per arm (`undecided`). The counts add
+`harmful`, `inert`, `inert-fail`) or it reaches 30 measured runs per arm (`undecided`). An
+unmeasured run (an error, a usage limit, no answer) is spent but never counted; a round that
+measures nothing stops the run with exit 4. The counts add
 up across invocations until the case, the rule blocks citing it or the model changes; an edit
 elsewhere in the same file keeps them. `--ablate rule` takes out only the rule blocks that cite
 the case, so the verdict is about that rule and not about the whole file. Add `--budget N` to
@@ -69,14 +71,26 @@ run --decide`"). It refuses to delete a rule whose citing block was edited since
 another rule of the same file does not count. It keeps a rule that cites another case not
 decided `inert`.
 
+Only a rule promoted in `--root`'s own ledger is judged. A marker whose rule another ledger
+promoted (the global `~/.claude/CLAUDE.md` measured from a repository, say) is listed as
+`foreign`: it is never an orphan, never run by `--ablate rule`, never deleted from here. Its
+case number belongs to the other root.
+
+`--inert-only` narrows `--apply` to rules decided `inert`: an orphan or a fixed-count finding is
+printed and kept. It needs `--results`. An unattended job should pass it, since an orphan has no
+measurement behind it. `--json` prints the findings, the foreign markers, and what was removed
+and kept.
+
 Every removal is written into the same ledger as the promotion that put the rule there, with
 the reason. One file answers "is this rule live", which is the point: a second file for
 removals would give two answers and the tool would have reproduced the drift it exists to stop.
 
-**Keep the case.** Deleting an inert rule keeps its case, and that is deliberate. The case is
-the thing that will notice if the behaviour comes back, and it is the evidence that the rule was
-tried. A model update six months from now can make an inert rule necessary again, and the case
-is what will say so.
+**Keep the case.** Deleting an inert rule keeps its case in `evals/`, and that is deliberate:
+it is the evidence the rule was tried, and the replay of the situation. Once the rule is gone,
+`run --ablate rule` no longer claims the case (no rule cites it), so a weekly run does not spend
+on it. `trimwrit run --no-ablation --case <id>` replays it by hand, after a model update for
+instance. If the behaviour comes back on its own, it comes back as a new correction, and the
+loop starts again from `trimwrit log`.
 
 ## What to tell the user
 
