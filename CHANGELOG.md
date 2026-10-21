@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.8.1, 2026-10-21
+
+- **`trimwrit prune` tells a rule that is unneeded from a rule that does not work.** A case with
+  a delta of zero or less used to read "The model already behaves" even at 0.00 in both arms,
+  where the model behaves in neither. Now the `without` arm is read against the pass line
+  `trimwrit run` uses (`--threshold`, default 1.0, also a `prune` flag): at or above it the
+  finding stays `inert` (the case passes without the rule, delete the rule, keep the case);
+  below it the finding is `inert-fail` (the case fails in both arms, the rule as written does
+  not produce the behaviour, rewrite it). `--apply` never deletes an `inert-fail` rule.
+- **The privacy scanner (`tools/no-private-data.py`) is stricter.** Under `docs/production/`
+  a `case` value must be a bare number or `(unnamed)`, and `rule`, `value`, `source` and
+  `target` join the refused free-text keys. Three more phone shapes are caught: a plus prefix
+  with mixed grouping, the French ten digits unbroken, and the dotted North American form. A
+  file that is not valid UTF-8 is read with its bad bytes replaced instead of skipped.
+- **README, "In production".** The reading of the flat cases says what the data shows: a rule
+  at 1.00 in both arms adds nothing measurable, and a rule at 0.00 in both arms does not
+  produce the behaviour, so it is a candidate for a rewrite or removal.
+
 ## 0.8.0, 2026-10-21
 
 - **`trimwrit report`: the whole life of one harness from its own ledgers.** One command reads

@@ -571,7 +571,7 @@ def cmd_prune(args):
             summaries = json.load(fh)
 
     findings = prune_mod.report(_targets(args), os.path.join(args.root, args.evals),
-                                args.root, summaries)
+                                args.root, summaries, args.threshold)
     if not findings:
         print("nothing to prune. Every rule names a case that exists, and every case that ran\n"
               "scored better with its rule than without it.")
@@ -586,7 +586,10 @@ def cmd_prune(args):
     if args.apply:
         removed = 0
         for f in findings:
-            if f.kind == prune_mod.UNUSED_CASE or not f.rule or not f.target:
+            # An inert-fail rule is a rewrite order, not a deletion order: the case fails in
+            # both arms, so the number says the rule does not work, not that it is unneeded.
+            if f.kind in (prune_mod.UNUSED_CASE, prune_mod.INERT_FAILING) \
+                    or not f.rule or not f.target:
                 continue
             if integrate_mod.drop_rule(f.target, f.rule, root=args.root):
                 ledger_mod.remove(f.rule, f.detail, root=args.root)
@@ -595,6 +598,9 @@ def cmd_prune(args):
     else:
         print("\nnothing was changed. Re-run with --apply to delete these rules and record the\n"
               "removal in the ledger.")
+    if any(f.kind == prune_mod.INERT_FAILING for f in findings):
+        print("an inert-fail rule is kept even with --apply: its case fails in both arms, so it\n"
+              "needs a rewrite, not a deletion.")
     print("viz: run 'trimwrit viz --target {}' to see this as a canvas".format(_targets(args)[0]))
     return 0
 
@@ -819,7 +825,7 @@ def main(argv=None):
     rn.add_argument("--case", help="substring filter on the case directory name")
     rn.add_argument("--target", help="comma separated rule files to ablate (default CLAUDE.md)")
     rn.add_argument("--runs", type=int, help="override the per-case run count")
-    rn.add_argument("--threshold", type=float, default=1.0)
+    rn.add_argument("--threshold", type=float, default=prune_mod.PASS_LINE)
     rn.add_argument("--no-ablation", action="store_true",
                     help="run the `with` arm only. Faster, and it proves nothing about the rule")
     rn.add_argument("--claude", default="claude")
@@ -859,7 +865,12 @@ def main(argv=None):
     pr.add_argument("--target", help="comma separated rule files (default CLAUDE.md)")
     pr.add_argument("--results", nargs="?", const="", help="results json from `trimwrit run`, "
                                                            "needed for the inert finding")
-    pr.add_argument("--apply", action="store_true", help="actually delete, and record it")
+    pr.add_argument("--apply", action="store_true", help="actually delete, and record it. An "
+                                                         "inert-fail rule is never deleted")
+    pr.add_argument("--threshold", type=float, default=prune_mod.PASS_LINE,
+                    help="the pass line the run used (default {}): a flat case at or above it "
+                         "without the rule is inert, below it inert-fail".format(
+                             prune_mod.PASS_LINE))
     pr.set_defaults(func=cmd_prune)
 
     vz = sub.add_parser("viz", help="serialize the pipeline into a canvas payload")

@@ -9,15 +9,22 @@ some other way or a file elsewhere picks up a real person's contact:
 
 - an email address anywhere in a tracked file, unless it is in ALLOW below;
 - a phone number anywhere in a tracked file, in an international shape (a plus sign and a
-  country code, then groups split by one separator used throughout, or one unbroken run of 8 to
-  15 digits), the French national shape (ten digits in pairs) or the North American one;
-- a `text`, `consequence`, `session`, `session_id` or `reason` key in any file under
-  `docs/production/`: those are the fields of the ledgers that hold what a human said.
+  country code, then groups split by one separator used throughout, groups of mixed sizes and
+  separators holding 8 to 15 digits, or one unbroken run of 8 to 15 digits), the French
+  national shape (ten digits in pairs, or unbroken: a zero then nine digits) or the North
+  American one (with parentheses, hyphens or dots);
+- a `text`, `consequence`, `session`, `session_id`, `reason`, `rule`, `value`, `source` or
+  `target` key in any file under `docs/production/`: those are the fields of the ledgers that
+  hold what a human said, or a rule's words, or a path that names one;
+- a `case` value under `docs/production/` that is not a bare case number (`0064`) or
+  `(unnamed)`: a case directory's name is a slug of the correction it came from.
 
 It reads files the way `no-bad-dashes.py` does, and refuses the same way: an empty `git
 ls-files` falls through to a walk, and a scan that read zero files is no answer, so it exits 2
-instead of reporting a clean tree.
+instead of reporting a clean tree. A text file that is not valid UTF-8 is still read, its bad
+bytes replaced, because one stray byte must not hide an address on the next line.
 """
+import json
 import os
 import re
 import subprocess
@@ -48,8 +55,21 @@ PHONES = (
     re.compile(r"(?<![\w.])0[1-9]([ .-])\d{2}(?:\1\d{2}){3}(?![\w.])"),
     # North American: three digits in parentheses or before a hyphen, then three, then four.
     re.compile(r"(?<!\w)(?:\(\d{3}\) ?|\d{3}-)\d{3}-\d{4}(?!\w)"),
+    # North American, dotted: three digits, a dot, three, a dot, four.
+    re.compile(r"(?<![\w.])\d{3}\.\d{3}\.\d{4}(?![\w.])"),
+    # French national, unbroken: a zero, a digit from 1 to 9, then eight digits. The ten digits
+    # in order are the digit alphabet code spells out (`string.digits`), not a number.
+    re.compile(r"(?<![\w.+])(?!0123456789(?!\d))0[1-9]\d{8}(?![\w.])"),
 )
-FREE_TEXT_KEY = re.compile(r'"(text|consequence|session|session_id|reason)"\s*:')
+# International with mixed grouping (a plus sign and a country code, one space, then nine
+# unbroken digits, say): groups of any size split by any of the three separators. Loose on its own,
+# so a match counts only when it holds 8 to 15 digits; a delta like `+1.00 0.17` holds three.
+MIXED_INTERNATIONAL = re.compile(
+    r"(?<![\w+])\+\d{1,3}[ .-]?\(?\d{1,4}\)?(?:[ .-]?\d{2,}){1,5}(?!\w)")
+FREE_TEXT_KEY = re.compile(
+    r'"(text|consequence|session|session_id|reason|rule|value|source|target)"\s*:')
+CASE_VALUE = re.compile(r'"case"\s*:\s*("(?:[^"\\]|\\.)*"|[^\s,}\]]+)')
+CASE_OK = re.compile(r"^\d+$")
 
 
 class NothingRead(Exception):
@@ -85,9 +105,9 @@ def _texts(root):
         if os.path.splitext(path)[1].lower() in SKIP_EXT or not os.path.isfile(path):
             continue
         try:
-            with open(path, encoding="utf-8") as fh:
+            with open(path, encoding="utf-8", errors="replace") as fh:
                 text = fh.read()
-        except (UnicodeDecodeError, OSError):
+        except OSError:
             continue
         read += 1
         yield os.path.relpath(path, root).replace(os.sep, "/"), text
@@ -106,9 +126,28 @@ def _raw_hits(root):
         for pattern in PHONES:
             for m in pattern.finditer(text):
                 yield rel, _line(text, m.start()), "phone", m.group(0)
+        for m in MIXED_INTERNATIONAL.finditer(text):
+            if 8 <= sum(c.isdigit() for c in m.group(0)) <= 15:
+                yield rel, _line(text, m.start()), "phone", m.group(0)
         if rel.startswith(PUBLISHED):
             for m in FREE_TEXT_KEY.finditer(text):
                 yield rel, _line(text, m.start()), "key", m.group(1)
+            for m in CASE_VALUE.finditer(text):
+                if not _case_ok(m.group(1)):
+                    yield rel, _line(text, m.start()), "case", m.group(1)
+
+
+def _case_ok(raw):
+    """A published `case` is a bare number or `(unnamed)`, never a directory name."""
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return False
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return value >= 0
+    return isinstance(value, str) and (value == "(unnamed)" or bool(CASE_OK.match(value)))
 
 
 def addresses(root="."):
@@ -134,10 +173,12 @@ def main(argv=None):
     for path, line, kind, value in hits:
         print("{}:{}: {} {}".format(path, line, kind, value))
     if hits:
-        print("\n{} hit(s). Remove the address, the number or the key; an address that names "
-              "no third party goes in ALLOW with its reason.".format(len(hits)))
+        print("\n{} hit(s). Remove the address, the number or the key, and publish a case by its "
+              "number only; an address that names no third party goes in ALLOW with its reason."
+              .format(len(hits)))
         return 1
-    print("no email address, phone number or free-text snapshot key in any tracked file")
+    print("no email address, phone number, free-text snapshot key or named case in any tracked "
+          "file")
     return 0
 
 

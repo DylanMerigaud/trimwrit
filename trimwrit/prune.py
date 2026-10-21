@@ -6,10 +6,16 @@ ORPHAN   the rule names a case, and the case is not there. Nothing can ever prov
          still needed, because the thing that would prove it does not exist. Cheap to detect,
          no model call, no money.
 
-INERT    the case exists, it runs, and it scores the same with the rule and without it. The
-         rule is not wrong, it is unnecessary: the model already does this. That is the finding
-         that a growing CLAUDE.md never gets told, and it is the only honest reason to delete an
-         instruction that everybody still agrees with.
+INERT    the case exists, it runs, it scores no better with the rule than without it, and it
+         PASSES without the rule. The rule is not wrong, it is unnecessary: the model already
+         does this. That is the finding that a growing CLAUDE.md never gets told, and it is the
+         only honest reason to delete an instruction that everybody still agrees with.
+
+INERT_FAILING  the same flat delta, but the case FAILS in both arms. The model does not behave
+         without the rule and does not behave with it either: the rule as written does not
+         produce the behaviour. That is not a deletion order, it is a rewrite order, and
+         `--apply` leaves the rule in place. The pass line is the one `trimwrit run` uses
+         (`--threshold`, default 1.0).
 
 An inert verdict is a measurement, so it carries its numbers. A finding that says "delete this"
 without showing the two scores is an opinion with a command-line flag.
@@ -21,6 +27,11 @@ from . import integrate as integrate_mod
 
 ORPHAN = "orphan"
 INERT = "inert"
+INERT_FAILING = "inert-fail"
+# The pass line `trimwrit run` uses by default (`--threshold`): a case passes when its score is
+# at or above it. Prune reads it to tell a case that passes without the rule from one that fails
+# in both arms, so the two must stay the same number.
+PASS_LINE = 1.0
 UNUSED_CASE = "unused-case"
 
 
@@ -92,10 +103,14 @@ def unused_cases(targets, evals_dir="evals", root="."):
     return out
 
 
-def inert(summaries, targets, evals_dir="evals", root="."):
+def inert(summaries, targets, evals_dir="evals", root=".", pass_line=PASS_LINE):
     """Rules whose case scores no better with them than without.
 
-    `summaries` is {case_dir_basename: runner.summarise(...) dict}.
+    `summaries` is {case_dir_basename: runner.summarise(...) dict}. A flat delta is two
+    different findings depending on the `without` arm against `pass_line`: at or above it the
+    case passes without the rule (INERT, delete the rule); below it the case fails in both arms
+    (INERT_FAILING, the rule does not produce the behaviour and needs a rewrite). With a delta
+    of zero or less, `without` below the line means `with` is below it too.
     """
     by_case = {}
     for target in targets:
@@ -115,27 +130,35 @@ def inert(summaries, targets, evals_dir="evals", root="."):
             continue
         numbers = {"with": summary.get("with"), "without": summary.get("without"),
                    "delta": delta}
+        without = summary.get("without")
+        passes_without = without is not None and without >= pass_line
+        kind = INERT if passes_without else INERT_FAILING
         if not holders:
             out.append(Finding(
-                INERT, case=base, numbers=numbers,
+                kind, case=base, numbers=numbers,
                 detail="scores {:.2f} with the rule and {:.2f} without it (delta {:+.2f}), and "
                        "no rule claims it.".format(
                            summary.get("with", 0), summary.get("without", 0), delta)))
             continue
+        if passes_without:
+            verdict = ("The model already behaves. Delete the rule and keep the case.")
+        else:
+            verdict = ("The case fails in both arms (pass line {:.2f}): the rule as written does "
+                       "not produce the behaviour. Rewrite the rule and re-run the case; do not "
+                       "delete it on this number.".format(pass_line))
         for rule_id, target, meta in holders:
             out.append(Finding(
-                INERT, rule=rule_id, case=base, target=target, numbers=numbers,
+                kind, rule=rule_id, case=base, target=target, numbers=numbers,
                 detail="case {} scores {:.2f} with {} and {:.2f} without it (delta {:+.2f}). "
-                       "The model already behaves. Delete the rule and keep the case.".format(
-                           base, summary.get("with", 0), rule_id, summary.get("without", 0),
-                           delta)))
+                       "{}".format(base, summary.get("with", 0), rule_id,
+                                   summary.get("without", 0), delta, verdict)))
     return out
 
 
-def report(targets, evals_dir="evals", root=".", summaries=None):
+def report(targets, evals_dir="evals", root=".", summaries=None, pass_line=PASS_LINE):
     """Every finding, cheapest evidence first."""
     out = orphans(targets, evals_dir, root)
     out.extend(unused_cases(targets, evals_dir, root))
     if summaries:
-        out.extend(inert(summaries, targets, evals_dir, root))
+        out.extend(inert(summaries, targets, evals_dir, root, pass_line))
     return out

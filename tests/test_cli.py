@@ -181,6 +181,36 @@ def test_results_with_no_value_still_loads_the_inert_finding(tmp_path, capsys):
     assert "nothing to prune" not in out
 
 
+def test_prune_apply_keeps_a_rule_whose_case_fails_in_both_arms(tmp_path, capsys):
+    """0.00 in both arms is a rule that does not work, not a rule that is unneeded: --apply
+    must leave it in place and say why, while it still deletes an inert rule that passes."""
+    import json
+
+    from trimwrit import cases
+
+    evals = tmp_path / "evals"
+    cases.write_case("0001", "fails both", "p", [cases.forbid_grader("x", name="g")],
+                     evals_dir=str(evals))
+    cases.write_case("0002", "passes both", "p", [cases.forbid_grader("x", name="g")],
+                     evals_dir=str(evals))
+    (tmp_path / "CLAUDE.md").write_text(
+        "<!-- trimwrit: R0001 case 0001, 2026-08-23: an incident -->\nrule one\n\n"
+        "<!-- trimwrit: R0002 case 0002, 2026-08-23: an incident -->\nrule two\n",
+        encoding="utf-8")
+    (evals / "results").mkdir(parents=True, exist_ok=True)
+    (evals / "results" / "latest.json").write_text(json.dumps({
+        "0001-fails-both": {"with": 0.0, "without": 0.0, "delta": 0.0},
+        "0002-passes-both": {"with": 1.0, "without": 1.0, "delta": 0.0}}), encoding="utf-8")
+
+    assert _run(tmp_path, "prune", "--results", "--apply") == 0
+    out = capsys.readouterr().out
+    assert "inert-fail" in out and "R0001" in out
+    assert "removed 1 rule(s)" in out
+    kept = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "rule one" in kept
+    assert "rule two" not in kept
+
+
 def test_a_rule_can_cite_several_cases(tmp_path, capsys):
     """One rule, two cases. The first real use of this tool hit this within the hour: a ban on a
     character needs a case that replays it in prose and one that replays it in a commit message,

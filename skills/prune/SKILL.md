@@ -20,10 +20,15 @@ trimwrit prune --target CLAUDE.md --results    # adds the inert finding, needs a
 still needed, because the thing that would show it does not exist. Detected by reading files,
 costs nothing.
 
-**inert**: the case exists, it runs, and it scores the same with the rule and without it. The
-rule is not wrong. It is unnecessary, because the model already behaves. This is the finding a
-growing CLAUDE.md never gets told, and it is the only honest reason to delete an instruction
-everybody still agrees with.
+**inert**: the case exists, it runs, it scores no better with the rule than without it, and it
+passes without the rule. The rule is not wrong. It is unnecessary, because the model already
+behaves. This is the finding a growing CLAUDE.md never gets told, and it is the only honest
+reason to delete an instruction everybody still agrees with.
+
+**inert-fail**: the same flat delta, but the case fails in both arms (below the pass line
+`trimwrit run` uses, `--threshold`, default 1.0). The model does not behave with the rule
+either: the rule as written does not produce the behaviour. Rewrite it and re-run the case.
+`--apply` never deletes one.
 
 **unused-case**: a case no rule points at. Usually not a deletion order, usually an integrate
 step that never ran. Write the rule, or delete the case.

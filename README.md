@@ -51,8 +51,9 @@ one line when it does; the names are the harness's own.
 The rule that refuses a pull request on someone else's repository moves its case from 0.17
 without it to 1.00 with it, and 12 more cases score higher with their rule. The other 8 move by
 0 or less, which is the list `trimwrit prune` exists to produce: the rule that holds an email
-until the author says go scores 1.00 either way, because the model already waits, and two of
-them score 0.00 even with their rule in place.
+until the author says go scores 1.00 either way, so the rule adds nothing measurable, and two of
+them score 0.00 even with their rule in place: the rule as written does not produce the
+behaviour, so it is a candidate for a rewrite or for removal.
 
 The same report on your own harness:
 
@@ -262,10 +263,13 @@ kind         rule     why
 ------------------------------------------------------------------------
 orphan       R0031    CLAUDE.md:88 names case 0031, which is not in evals/. Nothing can show this rule still earns its place.
 inert        R0014    case 0014-json-only scores 1.00 with R0014 and 1.00 without it (delta +0.00). The model already behaves. Delete the rule and keep the case.
+inert-fail   R0022    case 0022-hold-the-mail scores 0.00 with R0022 and 0.00 without it (delta +0.00). The case fails in both arms (pass line 1.00): the rule as written does not produce the behaviour. Rewrite the rule and re-run the case; do not delete it on this number.
 ```
 
-`--apply` deletes them and writes each removal into the same ledger as the promotion, with the
-reason. The case stays: it is what will notice if the behaviour comes back after a model update.
+`--apply` deletes the orphan and the inert rule and writes each removal into the same ledger as
+the promotion, with the reason. It keeps an `inert-fail` rule: a case that fails in both arms
+says the rule does not work, not that it is unneeded, so the fix is a rewrite. The pass line is
+the one `trimwrit run` uses, `--threshold`, default 1.0. The case stays: it is what will notice if the behaviour comes back after a model update.
 
 ## Why the deletion half is the point
 
@@ -281,7 +285,8 @@ not documentation, it is the thing that makes the rule deletable by someone who 
 
 And it is why `prune` reports numbers rather than an opinion. An **inert** rule is not wrong. It
 is unnecessary, because the model already behaves, and that is the only honest reason to delete
-an instruction everybody still agrees with.
+an instruction everybody still agrees with. A flat delta on a case that fails in both arms is
+the other finding, `inert-fail`: there the rule does not produce the behaviour at all.
 
 ## The runtime half: what a rule did in production
 
