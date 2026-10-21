@@ -15,7 +15,8 @@ WHY A KEY
 A weekly job cannot buy 18 runs per arm for every rule in one sitting, so the counts must add up
 across invocations, and they must only add up while they still describe the same experiment.
 `evidence_key` hashes everything that makes two runs comparable: the case directory's bytes,
-both arms' seeded files, the two model ids, the pass line and the ablation mode. Edit one word
+both arms' seeded files, the two model ids, the pass line, the ablation mode and the sandbox
+note. Edit one word
 of the rule and the key moves, so none of the old counts leak into the new rule's verdict.
 `cli._append_history` writes the key and the counts on every row, plain run or not, and
 `prior_counts` sums them back.
@@ -65,9 +66,12 @@ def _case_tree(path):
 
 
 def evidence_key(case, with_files, without_files, model, judge_model, threshold, ablate):
+    # `sandbox_note` from the case's meta, where `run --sandbox-note` also sets it: a run told
+    # it sits in a scratch directory is a different experiment, and the flag is not in the
+    # case's bytes.
     doc = {"case": _case_tree(case.path), "files": files_sha256(with_files, without_files),
            "model": model, "judge_model": judge_model, "threshold": float(threshold),
-           "ablate": ablate}
+           "ablate": ablate, "sandbox_note": bool(case.meta.get("sandbox_note"))}
     return hashlib.sha256(json.dumps(doc, sort_keys=True).encode("utf-8")).hexdigest()
 
 

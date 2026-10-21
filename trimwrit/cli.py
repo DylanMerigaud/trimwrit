@@ -361,10 +361,33 @@ def _append_history(path, ts, case, summary, rule_files, targets, claude, model=
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+# (attribute, flag, the default `--decide` gives it): flags that mean nothing to a plain run.
+DECIDE_ONLY = (("batch", "--batch", verdict_mod.BATCH),
+               ("max_runs", "--max-runs", verdict_mod.MAX_RUNS),
+               ("budget", "--budget", None),
+               ("margin", "--margin", verdict_mod.MARGIN))
+
+
 def _decide_refusal(args):
-    """The sentence that refuses a `run` whose flags contradict each other, or None."""
+    """The sentence that refuses a `run` whose flags contradict each other, or None.
+
+    `--batch`, `--max-runs`, `--budget` and `--margin` default to None so a plain run given one
+    of them is refused instead of ignoring it: a `--budget 60` that a plain run silently drops
+    would start every case's full run count. With `--decide`, an unset one takes verdict.py's
+    default here.
+    """
+    if args.no_ablation and args.ablate == "rule":
+        return ("refused: --no-ablation runs no without arm, so there is no rule for "
+                "--ablate rule to take out.")
     if not args.decide:
+        given = [flag for attr, flag, _ in DECIDE_ONLY if getattr(args, attr) is not None]
+        if given:
+            return "refused: {} only {} with --decide.".format(
+                ", ".join(given), "applies" if len(given) == 1 else "apply")
         return None
+    for attr, _, default in DECIDE_ONLY:
+        if getattr(args, attr) is None:
+            setattr(args, attr, default)
     if args.runs is not None:
         return ("refused: --decide chooses how many runs each case needs, so it cannot take "
                 "--runs as well.")
@@ -503,7 +526,7 @@ def _run_decide(args, runnable, blocked, skipped, files_by_case, keys, rule_file
         if not args.no_save:
             for rs in state["results"].values():
                 for r in rs:
-                    runner_mod.write_evidence(r, evals_dir)
+                    runner_mod.write_evidence(r, evals_dir, key=state["key"])
                     wrote_evidence = True
         evidence = {"key": state["key"], "ablate": ablate,
                     "files_sha256": state["files_sha256"],
@@ -646,7 +669,7 @@ def cmd_run(args):
             if not args.no_save:
                 for rs in per_arm.values():
                     for r in rs:
-                        runner_mod.write_evidence(r, evals_dir)
+                        runner_mod.write_evidence(r, evals_dir, key=keys[case.path])
                         wrote_evidence = True
             summary = runner_mod.summarise(per_arm)
             payload["cases"].append({"name": base, "summary": summary,
@@ -790,8 +813,8 @@ def cmd_prune(args):
     findings = prune_mod.report(_targets(args), os.path.join(args.root, args.evals),
                                 args.root, summaries, args.threshold)
     if not findings:
-        print("nothing to prune. Every rule names a case that exists, and every case that ran\n"
-              "scored better with its rule than without it.")
+        print("nothing to prune. Every rule names a case that exists, and no case that ran\n"
+              "says its rule is unneeded.")
         print("viz: run 'trimwrit viz --target {}' to see this as a canvas".format(_targets(args)[0]))
         return 0
 
@@ -799,15 +822,31 @@ def cmd_prune(args):
     print(BAR)
     for f in findings:
         print(f.line())
+    measured = (prune_mod.INERT, prune_mod.INERT_FAILING)
+    if any(f.kind in measured and "verdict" not in f.numbers for f in findings):
+        print("\n" + prune_mod.FIXED_COUNT_LINE + ".")
 
     if args.apply:
+        # Hashed before the first deletion: two inert rules measured in the same file are both
+        # checked against the file the run seeded, not against what the first deletion left.
+        before = {f.target: prune_mod.read_target(f.target, args.root)
+                  for f in findings if f.target}
         removed = 0
         for f in findings:
-            # An inert-fail rule is a rewrite order, not a deletion order: the case is below
-            # the pass line in both arms, so the number cannot say the rule is unneeded.
-            if f.kind in (prune_mod.UNUSED_CASE, prune_mod.INERT_FAILING) \
-                    or not f.rule or not f.target:
+            # Only an orphan or an inert rule is deleted. An inert-fail rule is a rewrite order
+            # (its case is not reliably passed), a harmful one too (its case is worse with it),
+            # and an unused case names no rule.
+            if f.kind not in (prune_mod.ORPHAN, prune_mod.INERT) or not f.rule or not f.target:
                 continue
+            if "verdict" in f.numbers:
+                if f.numbers.get("held_by"):
+                    print("kept {}: it also cites {}, not decided inert.".format(
+                        f.rule, ", ".join(f.numbers["held_by"])))
+                    continue
+                if prune_mod.changed_since_measured(f, summaries.get(f.case), args.root,
+                                                    text=before[f.target]):
+                    print("kept {}: {}".format(f.rule, prune_mod.STALE_LINE))
+                    continue
             if integrate_mod.drop_rule(f.target, f.rule, root=args.root):
                 ledger_mod.remove(f.rule, f.detail, root=args.root)
                 removed += 1
@@ -818,6 +857,9 @@ def cmd_prune(args):
     if any(f.kind == prune_mod.INERT_FAILING for f in findings):
         print("an inert-fail rule is kept even with --apply: its case is not reliably passed\n"
               "even with the rule, so rewrite the rule or its case before deleting it.")
+    if any(f.kind == prune_mod.HARMFUL for f in findings):
+        print("a harmful rule is kept even with --apply: its case passes less often with it\n"
+              "than without it, so rewrite it.")
     print("viz: run 'trimwrit viz --target {}' to see this as a canvas".format(_targets(args)[0]))
     return 0
 
@@ -1081,15 +1123,15 @@ def main(argv=None):
                     help="file: the without arm has no rule file (default). rule: both arms "
                          "seed the targets citing the case, the without arm minus the citing "
                          "rule blocks, so the verdict is about the rule alone")
-    rn.add_argument("--batch", type=int, default=verdict_mod.BATCH,
+    rn.add_argument("--batch", type=int,
                     help="--decide: runs per arm per round (default {})".format(verdict_mod.BATCH))
-    rn.add_argument("--max-runs", type=int, default=verdict_mod.MAX_RUNS,
+    rn.add_argument("--max-runs", type=int,
                     help="--decide: attempted runs per arm after which a case stays undecided "
                          "(default {})".format(verdict_mod.MAX_RUNS))
     rn.add_argument("--budget", type=int,
                     help="--decide: the most case sessions this invocation starts; judge calls "
                          "are not counted")
-    rn.add_argument("--margin", type=float, default=verdict_mod.MARGIN,
+    rn.add_argument("--margin", type=float,
                     help="--decide: two pass rates closer than this are equivalent (default "
                          "{})".format(verdict_mod.MARGIN))
     rn.add_argument("--jobs", type=int, default=1,
@@ -1100,10 +1142,13 @@ def main(argv=None):
 
     pr = sub.add_parser("prune", help="rules that no longer earn their place")
     pr.add_argument("--target", help="comma separated rule files (default CLAUDE.md)")
-    pr.add_argument("--results", nargs="?", const="", help="results json from `trimwrit run`, "
-                                                           "needed for the inert finding")
-    pr.add_argument("--apply", action="store_true", help="actually delete, and record it. An "
-                                                         "inert-fail rule is never deleted")
+    pr.add_argument("--results", nargs="?", const="",
+                    help="results json from `trimwrit run` (default evals/results/latest.json), "
+                         "needed for the inert finding; `run --decide` writes the verdicts")
+    pr.add_argument("--apply", action="store_true",
+                    help="actually delete, and record it. An inert-fail or harmful rule is "
+                         "never deleted, nor a decided inert rule whose file changed since it "
+                         "was measured")
     pr.add_argument("--threshold", type=float, default=prune_mod.PASS_LINE,
                     help="the pass line the run used (default {}): a flat case at or above it "
                          "without the rule is inert, below it inert-fail".format(

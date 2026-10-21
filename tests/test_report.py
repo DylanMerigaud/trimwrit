@@ -217,3 +217,67 @@ def test_parse_ts_shapes():
     assert f("2026-08-24T22:00:00+9999") is None
     assert f("2026-08-24T22:00:00-2400") is None
     assert f("junk") is None and f(None) is None and f(5) is None
+
+
+def test_verdicts_counted_from_the_latest_decided_row_per_case_only(tmp_path):
+    his = _write(tmp_path / "h.jsonl", [
+        {"ts": "2026-10-01T00:00:00Z", "case": "0001-a", "with": 1.0, "without": 0.0,
+         "delta": 1.0, "runs": 3, "verdict": "undecided"},
+        {"ts": "2026-10-02T00:00:00Z", "case": "0001-a", "with": 1.0, "without": 0.0,
+         "delta": 1.0, "runs": 3, "verdict": "keep"},
+        {"ts": "2026-10-01T00:00:00Z", "case": "0002-b", "with": 1.0, "without": 1.0,
+         "delta": 0.0, "runs": 3, "verdict": "inert"},
+        # A later plain run carries no verdict: the case's latest verdict is still the one above.
+        {"ts": "2026-10-03T00:00:00Z", "case": "0002-b", "with": 1.0, "without": 1.0,
+         "delta": 0.0, "runs": 3},
+        # A batch with no measured run still carries the cumulative verdict.
+        {"ts": "2026-10-01T00:00:00Z", "case": "0003-c", "with": None, "without": None,
+         "delta": None, "runs": 3, "verdict": "undecided"},
+        {"ts": "2026-10-01T00:00:00Z", "case": "0004-d", "with": 1.0, "without": 0.0,
+         "delta": 1.0, "runs": 3},
+        {"ts": "2026-10-01T00:00:00Z", "case": "0005-e", "with": 1.0, "without": 0.0,
+         "delta": 1.0, "runs": 3, "verdict": SENTINEL},
+    ])
+    doc = report.build(_write(tmp_path / "l.jsonl", []), history_path=his)
+    assert doc["cases"]["verdicts"] == {"keep": 1, "inert": 1, "undecided": 1}
+    text = report.render(doc)
+    assert "verdicts (latest per case): keep 1, inert 1, undecided 1" in text
+    assert SENTINEL not in text + json.dumps(doc)
+
+
+def test_verdicts_line_with_no_decided_row(tmp_path):
+    his = _write(tmp_path / "h.jsonl", [
+        {"ts": "2026-10-01T00:00:00Z", "case": "0004-d", "with": 1.0, "without": 0.0,
+         "delta": 1.0, "runs": 3}])
+    doc = report.build(_write(tmp_path / "l.jsonl", []), history_path=his)
+    assert doc["cases"]["verdicts"] == {}
+    assert "verdicts (latest per case): none yet, `trimwrit run --decide` writes them" in \
+        report.render(doc)
+
+
+def test_a_snapshot_with_verdicts_passes_the_privacy_scanner(tmp_path):
+    """`docs/production/` holds `report --json` snapshots; the verdict counts must not give the
+    scanner anything to refuse (no free-text key, no case slug)."""
+    import importlib.util
+    import os
+    import subprocess
+
+    his = _write(tmp_path / "h.jsonl", [
+        {"ts": "2026-10-01T00:00:00Z", "case": "0001-some-private-words", "with": 1.0,
+         "without": 1.0, "delta": 0.0, "runs": 3, "verdict": "inert"}])
+    doc = report.build(_write(tmp_path / "l.jsonl", []), history_path=his)
+    repo = tmp_path / "repo"
+    (repo / "docs" / "production").mkdir(parents=True)
+    (repo / "docs" / "production" / "snap.json").write_text(json.dumps(doc, indent=2),
+                                                            encoding="utf-8")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update({"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, env=env)
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, env=env)
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    spec = importlib.util.spec_from_file_location(
+        "no_private_data", os.path.join(root, "tools", "no-private-data.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert doc["cases"]["verdicts"] == {"inert": 1}
+    assert mod.scan(str(repo)) == []

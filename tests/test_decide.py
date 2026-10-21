@@ -202,3 +202,11 @@ def test_a_batch_that_returns_no_run_closes_the_case_instead_of_looping(tmp_path
                                      str(tmp_path / "history.jsonl"), empty, 1.0)[case.path]
     assert calls == [3]
     assert state["status"] == "ran" and state["verdict"]["verdict"] == verdict.UNDECIDED
+
+
+def test_the_evidence_key_moves_with_the_sandbox_note(tmp_path):
+    # A run told it sits in a scratch directory is a different experiment from one that is not.
+    case = _case(tmp_path, "0001-a")
+    base = _key(case)
+    case.meta["sandbox_note"] = True
+    assert _key(case) != base

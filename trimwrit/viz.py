@@ -82,6 +82,10 @@ def _gate_stage(tag, corrections_for_tag, promotion, unpromoted_n, case_ids):
             "meta": meta, "next": ["k{}".format(cid) for cid in case_ids]}
 
 
+def _rate(value, fmt):
+    return "?" if value is None else fmt.format(value)
+
+
 def _case_stage(case, summary, rule_ids):
     base = os.path.basename(case.path)
     cid = base.split("-", 1)[0]
@@ -89,11 +93,17 @@ def _case_stage(case, summary, rule_ids):
     if summary is None:
         status = STATUS_PENDING
     else:
+        # A rate is None when its arm has no measured run (`run --decide` writes pass rates per
+        # arm, see cli._decide_summary): it shows as "?", and a case with no delta has proven
+        # nothing yet, so it stays pending rather than failed.
         delta = summary.get("delta", 0.0)
-        meta.append({"label": "with", "value": "{:.2f}".format(summary.get("with", 0.0))})
-        meta.append({"label": "without", "value": "{:.2f}".format(summary.get("without", 0.0))})
-        meta.append({"label": "delta", "value": "{:+.2f}".format(delta)})
-        status = STATUS_PASSED if delta > 0 else STATUS_FAILED
+        meta.append({"label": "with", "value": _rate(summary.get("with", 0.0), "{:.2f}")})
+        meta.append({"label": "without", "value": _rate(summary.get("without", 0.0), "{:.2f}")})
+        meta.append({"label": "delta", "value": _rate(delta, "{:+.2f}")})
+        if delta is None:
+            status = STATUS_PENDING
+        else:
+            status = STATUS_PASSED if delta > 0 else STATUS_FAILED
     return {"id": "k{}".format(cid), "kind": KIND_CASE, "label": base, "status": status,
             "meta": meta, "next": sorted(rule_ids)}
 

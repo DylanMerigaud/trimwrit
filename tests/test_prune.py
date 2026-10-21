@@ -99,3 +99,105 @@ def test_the_pass_line_decides_which_kind_a_flat_case_is(tmp_path):
     assert prune.inert(summaries, ["CLAUDE.md"], evals, root)[0].kind == prune.INERT_FAILING
     assert prune.inert(summaries, ["CLAUDE.md"], evals, root,
                        pass_line=0.8)[0].kind == prune.INERT
+
+
+# ------------------------------------------------------------------ verdicts (run --decide)
+
+
+def _decided(verdict, passes=(18, 18), measured=(18, 18), p_helps=0.5, files_sha256=None):
+    """A latest.json summary as `run --decide` writes it (cli._decide_summary)."""
+    return {"verdict": verdict, "p_helps": p_helps, "p_equivalent": 0.98,
+            "passes": {"with": passes[0], "without": passes[1]},
+            "measured": {"with": measured[0], "without": measured[1]},
+            "attempted": {"with": measured[0], "without": measured[1]},
+            "key": "k" * 64, "ablate": "rule",
+            "files_sha256": files_sha256 or {"with": {}, "without": {}},
+            "with": passes[0] / float(measured[0]), "without": passes[1] / float(measured[1]),
+            "delta": (passes[0] - passes[1]) / float(measured[0])}
+
+
+def test_a_decided_inert_verdict_is_an_inert_finding_with_counts_not_means(tmp_path):
+    root, evals = _setup(tmp_path)
+    found = prune.inert({"0001-kept-case": _decided("inert")}, ["CLAUDE.md"], evals, root)
+    assert [(f.kind, f.rule) for f in found] == [(prune.INERT, "R0001")]
+    detail = found[0].detail
+    assert "18/18 with" in detail and "18/18 without" in detail and "P(helps) 0.500" in detail
+    assert "1.00 with" not in detail
+    assert found[0].numbers["verdict"] == "inert"
+
+
+def test_a_decided_inert_fail_verdict_is_kept_as_a_rewrite(tmp_path):
+    root, evals = _setup(tmp_path)
+    found = prune.inert({"0001-kept-case": _decided("inert-fail", passes=(6, 6))},
+                        ["CLAUDE.md"], evals, root)
+    assert [f.kind for f in found] == [prune.INERT_FAILING]
+    assert "6/18 with" in found[0].detail and "Rewrite the rule or its case" in found[0].detail
+
+
+def test_a_harmful_verdict_is_its_own_finding(tmp_path):
+    root, evals = _setup(tmp_path)
+    found = prune.inert({"0001-kept-case": _decided("harmful", passes=(0, 9), measured=(9, 9),
+                                                     p_helps=0.001)},
+                        ["CLAUDE.md"], evals, root)
+    assert prune.HARMFUL == "harmful"
+    assert [(f.kind, f.rule) for f in found] == [(prune.HARMFUL, "R0001")]
+    assert "0/9 with" in found[0].detail and "9/9 without" in found[0].detail
+    assert "the rule makes its case worse: rewrite it" in found[0].detail
+
+
+def test_keep_and_undecided_verdicts_are_no_finding(tmp_path):
+    root, evals = _setup(tmp_path)
+    # A flat delta under a verdict is not read as the old INERT: the verdict alone decides.
+    for v in ("keep", "undecided"):
+        summary = _decided(v, passes=(3, 3), measured=(3, 3))
+        assert summary["delta"] == 0.0
+        assert prune.inert({"0001-kept-case": summary}, ["CLAUDE.md"], evals, root) == []
+
+
+def test_a_verdict_with_no_measured_run_prints_without_a_rate(tmp_path):
+    root, evals = _setup(tmp_path)
+    summary = _decided("undecided", passes=(0, 0), measured=(1, 1))
+    summary.update({"measured": {"with": 0, "without": 0}, "with": None, "without": None,
+                    "delta": None})
+    assert prune.inert({"0001-kept-case": summary}, ["CLAUDE.md"], evals, root) == []
+
+
+def test_a_rule_citing_a_second_case_not_decided_inert_is_held(tmp_path):
+    # R0003 cites two cases. One is decided inert, the other helps: the rule is still holding
+    # the second one up, so the inert finding says so and `--apply` must not delete it.
+    root, evals = _setup(tmp_path)
+    for cid in ("0003", "0004"):
+        cases.write_case(cid, "twin", "p", [cases.forbid_grader("x", name="g")],
+                         evals_dir=evals)
+    integrate.write_rule("CLAUDE.md", "R0003", "0003+0004", "2026-08-23", "i", "twin rule",
+                         root=root)
+    summaries = {"0003-twin": _decided("inert"), "0004-twin": _decided("keep")}
+    found = prune.inert(summaries, ["CLAUDE.md"], evals, root)
+    assert [(f.kind, f.rule) for f in found] == [(prune.INERT, "R0003")]
+    assert found[0].numbers["held_by"] == ["0004-twin"]
+    summaries["0004-twin"] = _decided("inert")
+    found = prune.inert(summaries, ["CLAUDE.md"], evals, root)
+    assert all(not f.numbers["held_by"] for f in found)
+
+
+def test_a_legacy_summary_is_marked_as_a_fixed_run_count(tmp_path):
+    root, evals = _setup(tmp_path)
+    found = prune.inert({"0001-kept-case": {"with": 1.0, "without": 1.0, "delta": 0.0}},
+                        ["CLAUDE.md"], evals, root)
+    assert found[0].numbers.get("verdict") is None
+    assert prune.FIXED_COUNT_LINE == ("measured with a fixed run count; `trimwrit run --decide` "
+                                      "decides with enough runs")
+
+
+def test_stale_compares_the_target_with_what_the_with_arm_seeded(tmp_path):
+    import hashlib
+    root, evals = _setup(tmp_path)
+    text = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+    sha = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    summary = _decided("inert", files_sha256={"with": {"CLAUDE.md": sha}, "without": {}})
+    f = prune.inert({"0001-kept-case": summary}, ["CLAUDE.md"], evals, root)[0]
+    assert prune.changed_since_measured(f, summary, root) is False
+    (tmp_path / "CLAUDE.md").write_text(text + "\none more line\n", encoding="utf-8")
+    assert prune.changed_since_measured(f, summary, root) is True
+    # A summary that never recorded the file cannot vouch for it.
+    assert prune.changed_since_measured(f, _decided("inert"), root) is True

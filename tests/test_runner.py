@@ -505,3 +505,12 @@ def test_rule_arm_files_unclaimed_names_the_targets_that_were_not_found(tmp_path
     assert err.value.kind == "unclaimed"
     assert "not found: CLAUDE.dm" in str(err.value)
     assert "not found: CLAUDE.md" not in str(err.value)
+
+
+def test_write_evidence_records_the_evidence_key_when_given(tmp_path):
+    case = Case(str(tmp_path / "0001-x"), {"name": "0001-x"}, "prompt", [])
+    res = runner.Result(case, runner.ARM_WITH, 0, "an answer", [], {})
+    text = open(runner.write_evidence(res, str(tmp_path)), encoding="utf-8").read()
+    assert "\nkey:" not in text
+    path = runner.write_evidence(res, str(tmp_path), key="ab" * 32)
+    assert "key: " + "ab" * 32 in open(path, encoding="utf-8").read()

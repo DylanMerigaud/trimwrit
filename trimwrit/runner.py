@@ -631,7 +631,7 @@ def summarise(per_arm):
     }
 
 
-def write_evidence(result, evals_dir):
+def write_evidence(result, evals_dir, key=None):
     """The file `trimwrit run` writes for every run of every case, so a flagged result can be
     READ rather than re-run by hand.
 
@@ -649,6 +649,10 @@ def write_evidence(result, evals_dir):
     model actually produced, including the exact violation a case exists to catch. Refusing to
     write a failing run's own evidence because it contains the character it failed on would
     defeat the file's purpose.
+
+    `key` is the evidence key of decide.py. The file is overwritten slot by slot, so after a
+    rule edit `runs/<case>/` can hold runs of two experiments side by side; the key in the
+    front matter says which one each file belongs to.
     """
     case_dir = os.path.basename(result.case.path)
     out_dir = os.path.join(evals_dir, "results", "runs", case_dir)
@@ -660,6 +664,8 @@ def write_evidence(result, evals_dir):
          "timestamp: {}".format(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())),
          "passed: {}".format("true" if result.passed else "false"),
          "score: {}".format(result.score)]
+    if key:
+        fm.append("key: {}".format(key))
     if result.error:
         fm.append("error: {}".format(result.error))
     fm.append("unmeasured: {}".format("true" if result.unmeasured else "false"))

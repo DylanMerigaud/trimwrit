@@ -20,6 +20,9 @@ Timestamps in these files mix offsets (`-0500`, `+0200`, `Z`, `.753Z`), and a st
 them gives the wrong first and last date. Every timestamp is parsed, converted to UTC, and only
 then compared. One that does not parse still counts as a row and takes no part in a date.
 
+VERDICTS are counted from the latest row per case that carries one (`run --decide` writes the
+case's cumulative verdict on every row), as one line of counts.
+
 A MALFORMED LINE is skipped and counted, never raised: blank, not JSON, or JSON that is not an
 object (or lacks the key a row of its kind cannot do without). A damaged line must not throw
 away the thousand good ones after it.
@@ -30,11 +33,15 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from . import ledger as ledger_mod
+from . import verdict as verdict_mod
 
 _TS = re.compile(r"^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?"
                  r"(Z|[+-]\d{2}:?\d{2})?$")
 UNKNOWN_DOOR = "(unknown)"
 UNNAMED_CASE = "(unnamed)"
+# verdict.py's words, in the order the report prints them.
+VERDICTS = (verdict_mod.KEEP, verdict_mod.HARMFUL, verdict_mod.INERT, verdict_mod.INERT_FAILING,
+            verdict_mod.UNDECIDED)
 
 
 def parse_ts(value):
@@ -196,8 +203,32 @@ def _cases(path):
         "measured": len(measured),
         "unmeasured": len(rows) - len(measured),
         "latest": entries,
+        "verdicts": _verdicts(rows, floor),
         "malformed": malformed,
     }
+
+
+def _verdicts(rows, floor):
+    """{verdict: count} over the latest row per case that carries a verdict.
+
+    A `run --decide` row carries the case's cumulative verdict, so only the latest one counts:
+    an `undecided` row followed by a `keep` row is one rule kept, not one of each. A plain row
+    after it carries no verdict and leaves it standing. Rows with no measured run count too (a
+    decide batch can come back unmeasured and still carry the verdict so far). Only the five
+    words of verdict.py leave this module, so a damaged row cannot carry text out.
+    """
+    latest = {}
+    for r in rows:
+        if r.get("verdict") not in VERDICTS:
+            continue
+        dt = parse_ts(r.get("ts"))
+        prev = latest.get(r["case"])
+        if prev is None or (dt or floor) >= (prev[0] or floor):
+            latest[r["case"]] = (dt, r["verdict"])
+    out = {}
+    for _, v in latest.values():
+        out[v] = out.get(v, 0) + 1
+    return out
 
 
 def build(ledger_path, refusals_path=None, history_path=None):
@@ -247,6 +278,7 @@ def render(doc, bar="-" * 72):
         parts.append("{} measured run(s), {} unmeasured (counted apart, never averaged), "
                      "{} malformed line(s) skipped".format(
                          k["measured"], k["unmeasured"], k["malformed"]))
+        parts.append(_verdicts_line(k.get("verdicts") or {}))
         if k["latest"]:
             parts.append("\n{:<44} {:>6} {:>8} {:>7} {:>5}".format(
                 "case (latest measured run)", "with", "without", "delta", "runs"))
@@ -255,6 +287,13 @@ def render(doc, bar="-" * 72):
                     e["case"][:44], _fmt(e["with"]), _fmt(e["without"]), e["delta"],
                     e["runs"] if e["runs"] is not None else "-"))
     return "\n".join(parts)
+
+
+def _verdicts_line(counts):
+    head = "verdicts (latest per case): "
+    if not counts:
+        return head + "none yet, `trimwrit run --decide` writes them"
+    return head + ", ".join("{} {}".format(v, counts[v]) for v in VERDICTS if counts.get(v))
 
 
 def _fmt(value):

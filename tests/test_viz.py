@@ -306,3 +306,15 @@ def test_viz_opens_the_browser_when_the_viewer_is_present(tmp_path, capsys, monk
     out = capsys.readouterr().out
     assert str(viewer) in out
     assert "opened" in out
+
+
+def test_a_case_with_no_measured_run_in_an_arm_shows_a_question_mark(tmp_path):
+    # `run --decide` writes pass rates, and an arm with no measured run is None, not 0.0.
+    root, evals, target = _build_fixture(tmp_path)
+    with open(os.path.join(evals, "results", "latest.json"), "w", encoding="utf-8") as fh:
+        json.dump({"0002-em-dash-case": {"with": 1.0, "without": None, "delta": None,
+                                         "verdict": "undecided"}}, fh)
+    k2 = _by_id(viz.build_doc(target, root=root, evals_dir="evals"))["k0002"]
+    meta = {m["label"]: m["value"] for m in k2["meta"]}
+    assert meta["with"] == "1.00" and meta["without"] == "?" and meta["delta"] == "?"
+    assert k2["status"] == "pending"
