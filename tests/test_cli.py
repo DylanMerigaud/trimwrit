@@ -622,3 +622,200 @@ def test_targets_expand_a_home_directory(monkeypatch):
     monkeypatch.setenv("HOME", "/somewhere/home")
     got = cli._targets(argparse.Namespace(target="~/.claude/CLAUDE.md,CLAUDE.md"))
     assert got == ["/somewhere/home/.claude/CLAUDE.md", "CLAUDE.md"]
+
+
+# ==================================================================== run --decide
+
+RULE_TEXT = "Never say the bad word, RULE-0001-TEXT."
+RULED_CLAUDE = ("intro line\n\n"
+                "<!-- trimwrit: R0001 case 0001 -->\n" + RULE_TEXT + "\n")
+
+
+def _write_rule_aware_claude(tmp_path):
+    """Like `_write_fake_claude`, but the answer turns on the RULE's text, not on the file: the
+    rule level ablation seeds CLAUDE.md in both arms and only takes the citing block out of the
+    `without` one, so a fake that only checks the file's presence would see two equal arms."""
+    path = tmp_path / "rule-claude.py"
+    path.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os\n"
+        "text = open('CLAUDE.md').read() if os.path.exists('CLAUDE.md') else ''\n"
+        "ruled = " + repr(RULE_TEXT) + " in text\n"
+        "answer = 'a clean answer' if ruled else 'a dirty answer with the bad word'\n"
+        "print(json.dumps({'type': 'result', 'result': answer}))\n",
+        encoding="utf-8")
+    os.chmod(path, 0o755)
+    return str(path)
+
+
+def _decide_setup(tmp_path, extra_case=False):
+    from trimwrit import cases
+
+    cases.write_case("0001", "bad word case", "say something",
+                     [cases.forbid_grader("bad word", name="g")],
+                     evals_dir=str(tmp_path / "evals"))
+    if extra_case:
+        cases.write_case("0002", "nobody cites me", "say something",
+                         [cases.forbid_grader("bad word", name="g")],
+                         evals_dir=str(tmp_path / "evals"))
+    (tmp_path / "CLAUDE.md").write_text(RULED_CLAUDE, encoding="utf-8")
+    return _write_rule_aware_claude(tmp_path)
+
+
+def _history_rows(tmp_path):
+    import json
+
+    path = tmp_path / "evals" / "results" / "history.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def _latest(tmp_path):
+    import json
+
+    return json.loads((tmp_path / "evals" / "results" / "latest.json").read_text(
+        encoding="utf-8"))
+
+
+def test_run_decide_by_rule_keeps_a_rule_that_helps(tmp_path, capsys):
+    claude = _decide_setup(tmp_path)
+    rc = _run(tmp_path, "run", "--decide", "--ablate", "rule", "--target", "CLAUDE.md",
+              "--claude", claude, "--jobs", "4")
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "with 6/6" in out and "without 0/6" in out and "earns its place" in out
+    assert "sessions started: 12 (budget none; judge calls not counted)" in out
+
+    summary = _latest(tmp_path)["0001-bad-word-case"]
+    assert summary["verdict"] == "keep"
+    assert summary["passes"] == {"with": 6, "without": 0}
+    assert summary["measured"] == {"with": 6, "without": 6}
+    assert summary["attempted"] == {"with": 6, "without": 6}
+    assert summary["with"] == 1.0 and summary["without"] == 0.0 and summary["delta"] == 1.0
+    assert summary["ablate"] == "rule"
+    assert set(summary["files_sha256"]) == {"with", "without"}
+    assert summary["files_sha256"]["with"]["CLAUDE.md"] != \
+        summary["files_sha256"]["without"]["CLAUDE.md"]
+
+    rows = _history_rows(tmp_path)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["key"] == summary["key"]
+    assert row["passes"] == {"with": 6, "without": 0}
+    assert row["measured"] == {"with": 6, "without": 6}
+    assert row["attempted"] == {"with": 6, "without": 6}
+    assert row["verdict"] == "keep" and row["p_helps"] >= 0.99
+    assert "p_equivalent" in row and row["ablate"] == "rule"
+    evidence = tmp_path / "evals" / "results" / "runs" / "0001-bad-word-case"
+    assert (evidence / "with-5.md").exists() and (evidence / "without-5.md").exists()
+
+
+def test_run_decide_a_second_time_runs_nothing_and_keeps_the_verdict(tmp_path, capsys):
+    claude = _decide_setup(tmp_path)
+    args = ("run", "--decide", "--ablate", "rule", "--target", "CLAUDE.md", "--claude", claude)
+    assert _run(tmp_path, *args) == 0
+    capsys.readouterr()
+    (tmp_path / "evals" / "results" / "latest.json").unlink()
+
+    assert _run(tmp_path, *args) == 0
+    out = capsys.readouterr().out
+    assert "sessions started: 0" in out
+    assert len(_history_rows(tmp_path)) == 1
+    assert _latest(tmp_path)["0001-bad-word-case"]["verdict"] == "keep"
+
+
+def test_run_decide_json_still_writes_latest_and_prints_only_json(tmp_path, capsys):
+    import json
+
+    claude = _decide_setup(tmp_path)
+    rc = _run(tmp_path, "run", "--decide", "--ablate", "rule", "--target", "CLAUDE.md",
+              "--claude", claude, "--json")
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert payload["sessions"] == 12
+    assert payload["cases"][0]["summary"]["verdict"] == "keep"
+    assert _latest(tmp_path)["0001-bad-word-case"]["verdict"] == "keep"
+
+
+def test_a_plain_run_counts_toward_the_decision(tmp_path, capsys):
+    claude = _decide_setup(tmp_path)
+    assert _run(tmp_path, "run", "--ablate", "rule", "--target", "CLAUDE.md", "--claude", claude,
+                "--runs", "3") == 0
+    capsys.readouterr()
+    row = _history_rows(tmp_path)[0]
+    assert row["passes"] == {"with": 3, "without": 0}
+    assert row["attempted"] == {"with": 3, "without": 3}
+    assert "verdict" not in row
+
+    assert _run(tmp_path, "run", "--decide", "--ablate", "rule", "--target", "CLAUDE.md",
+                "--claude", claude) == 0
+    assert "sessions started: 6" in capsys.readouterr().out
+    assert _history_rows(tmp_path)[1]["key"] == row["key"]
+    assert _latest(tmp_path)["0001-bad-word-case"]["attempted"] == {"with": 6, "without": 6}
+
+
+def test_a_plain_run_row_carries_the_evidence_fields(tmp_path, capsys):
+    import hashlib
+
+    from trimwrit import cases
+
+    cases.write_case("0001", "bad word case", "say something",
+                     [cases.forbid_grader("bad word", name="g")],
+                     evals_dir=str(tmp_path / "evals"))
+    (tmp_path / "CLAUDE.md").write_text("the rule\n", encoding="utf-8")
+    claude = _write_fake_claude(tmp_path)
+    assert _run(tmp_path, "run", "--target", "CLAUDE.md", "--runs", "2", "--claude", claude) == 0
+    out = capsys.readouterr().out
+    assert "earns its place" in out and "sessions started" not in out
+    row = _history_rows(tmp_path)[0]
+    assert row["ablate"] == "file" and len(row["key"]) == 64
+    assert row["passes"] == {"with": 2, "without": 0}
+    assert row["measured"] == {"with": 2, "without": 2}
+    assert row["attempted"] == {"with": 2, "without": 2}
+    sha = hashlib.sha256("the rule\n".encode("utf-8")).hexdigest()
+    assert row["files_sha256"] == {"with": {"CLAUDE.md": sha}, "without": {}}
+
+
+def test_run_decide_with_runs_is_refused(tmp_path, capsys):
+    claude = _decide_setup(tmp_path)
+    assert _run(tmp_path, "run", "--decide", "--runs", "3", "--target", "CLAUDE.md",
+                "--claude", claude) == 2
+    assert "--runs" in capsys.readouterr().err
+    assert _history_rows(tmp_path) == []
+
+
+def test_run_decide_with_no_ablation_is_refused(tmp_path, capsys):
+    claude = _decide_setup(tmp_path)
+    assert _run(tmp_path, "run", "--decide", "--no-ablation", "--target", "CLAUDE.md",
+                "--claude", claude) == 2
+    assert "--no-ablation" in capsys.readouterr().err
+
+
+def test_run_decide_with_a_budget_under_one_batch_is_refused(tmp_path, capsys):
+    claude = _decide_setup(tmp_path)
+    assert _run(tmp_path, "run", "--decide", "--budget", "4", "--target", "CLAUDE.md",
+                "--claude", claude) == 2
+    assert "budget" in capsys.readouterr().err
+    assert _history_rows(tmp_path) == []
+
+
+def test_run_decide_by_rule_lists_an_unclaimed_case_and_leaves_it_out(tmp_path, capsys):
+    claude = _decide_setup(tmp_path, extra_case=True)
+    assert _run(tmp_path, "run", "--decide", "--ablate", "rule", "--target", "CLAUDE.md",
+                "--claude", claude) == 0
+    out = capsys.readouterr().out
+    assert "0002-nobody-cites-me" in out and "unclaimed" in out
+    latest = _latest(tmp_path)
+    assert "0002-nobody-cites-me" not in latest and "0001-bad-word-case" in latest
+    assert [r["case"] for r in _history_rows(tmp_path)] == ["0001-bad-word-case"]
+
+
+def test_run_decide_with_a_budget_marks_the_cut_case(tmp_path, capsys):
+    claude = _decide_setup(tmp_path)
+    assert _run(tmp_path, "run", "--decide", "--ablate", "rule", "--target", "CLAUDE.md",
+                "--claude", claude, "--budget", "6") == 0
+    out = capsys.readouterr().out
+    assert "undecided, budget spent" in out
+    assert "sessions started: 6 (budget 6; judge calls not counted)" in out
+    assert _latest(tmp_path)["0001-bad-word-case"]["verdict"] == "undecided"

@@ -485,8 +485,12 @@ def rule_arm_files(case, targets, root="."):
     """
     base = os.path.basename(case.path.rstrip("/\\"))
     with_files, without_files = {}, {}
+    missing = []
     for target in targets:
         target = os.path.expanduser(target)
+        if not os.path.exists(os.path.join(root, target)):
+            missing.append(target)
+            continue
         ids = integrate.citing_rules(target, base, root)
         if not ids:
             continue
@@ -500,7 +504,10 @@ def rule_arm_files(case, targets, root="."):
         with_files[name] = text
         without_files[name] = integrate.strip_rules(text, ids)[0]
     if not with_files:
-        raise AblationError("unclaimed", "no target holds a rule citing case {}".format(base))
+        # A target that does not exist cites nothing, so a typo in --target would read as a
+        # case nobody claims; naming the missing paths says which of the two it is.
+        raise AblationError("unclaimed", "no target holds a rule citing case {}{}".format(
+            base, " (not found: {})".format(", ".join(missing)) if missing else ""))
     return with_files, without_files
 
 

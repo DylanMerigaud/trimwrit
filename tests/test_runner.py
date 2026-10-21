@@ -495,3 +495,13 @@ def test_run_many_files_by_case_and_start_by_case_set_files_and_run_indexes(tmp_
     assert "the rule block" in out[case.path][runner.ARM_WITH][0].final_text
     assert out[case.path][runner.ARM_WITHOUT][0].final_text.strip() == "intro"
     assert (runner.ARM_WITH, 1, 2) in seen and (runner.ARM_WITH, 2, 2) in seen
+
+
+def test_rule_arm_files_unclaimed_names_the_targets_that_were_not_found(tmp_path):
+    (tmp_path / "CLAUDE.md").write_text(RULED, encoding="utf-8")
+    with pytest.raises(runner.AblationError) as err:
+        runner.rule_arm_files(_ruled_case(tmp_path, "0500-other"), ["CLAUDE.md", "CLAUDE.dm"],
+                              root=str(tmp_path))
+    assert err.value.kind == "unclaimed"
+    assert "not found: CLAUDE.dm" in str(err.value)
+    assert "not found: CLAUDE.md" not in str(err.value)

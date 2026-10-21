@@ -29,6 +29,7 @@ from . import adopt as adopt_mod
 from . import audit as audit_mod
 from . import cases as cases_mod
 from . import check as check_mod
+from . import decide as decide_mod
 from . import integrate as integrate_mod
 from . import ledger as ledger_mod
 from . import prune as prune_mod
@@ -36,6 +37,7 @@ from . import report as report_mod
 from . import models as models_mod
 from . import runner as runner_mod
 from . import stats as stats_mod
+from . import verdict as verdict_mod
 from . import viz as viz_mod
 from .text import RefusedWrite, one_line, write_text
 
@@ -324,7 +326,7 @@ def _unchecked_summary(reason, arms):
 
 
 def _append_history(path, ts, case, summary, rule_files, targets, claude, model=None,
-                    judge_model=None, model_usage=None):
+                    judge_model=None, model_usage=None, evidence=None):
     """One JSON line per case per `run` invocation, appended forever.
 
     `results/latest.json` (see `_save_results`) is overwritten on every run and answers "what is
@@ -337,6 +339,11 @@ def _append_history(path, ts, case, summary, rule_files, targets, claude, model=
     Plain data, hashes and numbers and a case name that is already a filesystem-safe slug, so
     this bypasses `text.append_text`'s dash gate the same way `runner.write_evidence` does: the
     gate is for written copy, not for a machine ledger that cannot legitimately contain one.
+
+    `evidence` adds the fields `run --decide` sums back (see decide.py): the evidence `key`,
+    the `ablate` mode, this invocation's `passes`, `measured` and `attempted` per arm, and
+    `files_sha256`; a decide row also carries its cumulative `verdict`, `p_helps` and
+    `p_equivalent`. Every run writes them, so a plain run's evidence counts toward a decision.
     """
     row = {
         "ts": ts, "case": os.path.basename(case.path), "target": list(targets),
@@ -348,9 +355,199 @@ def _append_history(path, ts, case, summary, rule_files, targets, claude, model=
         # `answered_by`: per model id Claude Code reported, how many runs it answered.
         "model": model, "judge_model": judge_model, "answered_by": dict(model_usage or {}),
     }
+    row.update(evidence or {})
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def _decide_refusal(args):
+    """The sentence that refuses a `run` whose flags contradict each other, or None."""
+    if not args.decide:
+        return None
+    if args.runs is not None:
+        return ("refused: --decide chooses how many runs each case needs, so it cannot take "
+                "--runs as well.")
+    if args.no_ablation:
+        return ("refused: --decide compares the arm with the rule to the arm without it, so it "
+                "cannot run with --no-ablation.")
+    if args.batch < 1 or args.max_runs < 1:
+        return "refused: --batch and --max-runs must each be at least 1."
+    if args.budget is not None and args.budget < 2 * args.batch:
+        # A budget that cannot pay for one batch of one case would end in a run that started
+        # nothing and exited 0, which reads as "all decided" in a weekly log.
+        return ("refused: a budget of {} sessions cannot pay for one batch of one case ({} "
+                "sessions, 2 x --batch).".format(args.budget, 2 * args.batch))
+    return None
+
+
+def _arm_files(args, found, rule_files):
+    """({case.path: (with_files, without_files)}, {case.path: (kind, reason)}).
+
+    `--ablate file` seeds every case with the whole rule files and the `without` arm with
+    nothing, as `run` always has. `--ablate rule` seeds each case with only the targets citing
+    it, and takes the citing blocks out of the `without` copy (runner.rule_arm_files); a case
+    it cannot ablate is returned in the second dict and is not run.
+    """
+    files, skipped = {}, {}
+    for case in found:
+        if args.ablate != "rule":
+            files[case.path] = (rule_files, {})
+            continue
+        try:
+            files[case.path] = runner_mod.rule_arm_files(case, _targets(args), args.root)
+        except runner_mod.AblationError as exc:
+            skipped[case.path] = (exc.kind, str(exc))
+    return files, skipped
+
+
+def _skipped_payload(skipped):
+    return [{"name": os.path.basename(path), "kind": kind, "reason": reason}
+            for path, (kind, reason) in sorted(skipped.items())]
+
+
+def _print_skipped(skipped):
+    for path, (kind, reason) in sorted(skipped.items()):
+        print("{:<36} not run, {}: {}".format(os.path.basename(path), kind, reason))
+
+
+def _arms_payload(per_arm):
+    return {arm: [{"passed": r.passed, "score": r.score, "error": r.error,
+                   "unmeasured": r.unmeasured, "grades": r.grades, "model": r.model,
+                   "model_usage": r.model_usage, "judge_model": r.judge_model,
+                   "judge_model_usage": r.judge_model_usage} for r in rs]
+            for arm, rs in per_arm.items()}
+
+
+def _seen_usage(per_arm):
+    """Per model id Claude Code reported, how many runs it answered."""
+    seen = {}
+    for rs in per_arm.values():
+        for r in rs:
+            for mid in r.model_usage:
+                seen[mid] = seen.get(mid, 0) + 1
+    return seen
+
+
+DECIDE_WORDS = {
+    verdict_mod.KEEP: "earns its place",
+    verdict_mod.HARMFUL: "HARMFUL, worse with the rule",
+    verdict_mod.INERT: "INERT, the model behaves without it",
+    verdict_mod.INERT_FAILING: "INERT-FAIL, rewrite the rule or its case",
+}
+
+
+def _decide_words(state):
+    word = DECIDE_WORDS.get(state["verdict"]["verdict"])
+    if word:
+        return word
+    if state["status"] == decide_mod.BUDGET:
+        return "undecided, budget spent"
+    return "undecided after {} runs per arm".format(
+        max(state["counts"]["attempted"].values()))
+
+
+def _decide_summary(state, ablate):
+    """What latest.json holds for a case decided by `run --decide`, cumulative over every
+    invocation under its key. `with`, `without` and `delta` are pass rates, so a reader of the
+    old fields (viz, prune before it reads `verdict`) sees numbers on the same 0 to 1 scale."""
+    v, counts = state["verdict"], state["counts"]
+    with_rate, without_rate = v["with_rate"], v["without_rate"]
+    return {
+        "verdict": v["verdict"], "p_helps": v["p_helps"], "p_equivalent": v["p_equivalent"],
+        "passes": counts["passes"], "measured": counts["measured"],
+        "attempted": counts["attempted"], "key": state["key"], "ablate": ablate,
+        "files_sha256": state["files_sha256"], "with": with_rate, "without": without_rate,
+        "delta": (with_rate - without_rate
+                  if with_rate is not None and without_rate is not None else None),
+        "status": state["status"], "spent": state["spent"],
+    }
+
+
+def _run_decide(args, runnable, blocked, skipped, files_by_case, keys, rule_files, judge,
+                progress, evals_dir, history_path, ts, unproven_total):
+    """`run --decide`: the loop is decide.run_until_decided; this writes what it found.
+
+    Evidence files and a history row only for a case that ran in this invocation (a case
+    decided earlier adds nothing to sum), latest.json for every claimed case, run now or not,
+    because `prune` reads its verdicts from there and a second invocation that runs nothing
+    must still leave them in place. Exit 0: an undecided case is a result, not a failure.
+    """
+    arms = (runner_mod.ARM_WITH, runner_mod.ARM_WITHOUT)
+
+    def run_batch(cases, n, start_by_case):
+        return runner_mod.run_many(
+            cases, rule_files, arms=arms, runs=n, claude=args.claude, judge=judge,
+            progress=progress, isolate=not args.no_isolation, jobs=args.jobs, model=args.model,
+            files_by_case=files_by_case, start_by_case=start_by_case)
+
+    states = decide_mod.run_until_decided(
+        runnable, files_by_case, keys, history_path, run_batch, args.threshold,
+        batch=args.batch, max_runs=args.max_runs, budget=args.budget, margin=args.margin)
+
+    ablate = args.ablate
+    summaries, payload = {}, {"cases": [], "skipped": _skipped_payload(skipped),
+                              "unchecked": [{"name": os.path.basename(p), "reason": r}
+                                            for p, r in sorted(blocked.items())]}
+    spent, wrote_evidence = 0, False
+    for case in sorted(runnable, key=lambda c: os.path.basename(c.path)):
+        base = os.path.basename(case.path)
+        state = states[case.path]
+        summary = _decide_summary(state, ablate)
+        summaries[base] = summary
+        payload["cases"].append({"name": base, "summary": summary,
+                                 "arms": _arms_payload(state["results"])})
+        if not state["spent"]:
+            continue
+        spent += state["spent"]
+        if not args.no_save:
+            for rs in state["results"].values():
+                for r in rs:
+                    runner_mod.write_evidence(r, evals_dir)
+                    wrote_evidence = True
+        evidence = {"key": state["key"], "ablate": ablate,
+                    "files_sha256": state["files_sha256"],
+                    "verdict": summary["verdict"], "p_helps": summary["p_helps"],
+                    "p_equivalent": summary["p_equivalent"]}
+        evidence.update(decide_mod.count(state["results"], args.threshold))
+        _append_history(history_path, ts, case, runner_mod.summarise(state["results"]),
+                        files_by_case[case.path][0], _targets(args), args.claude,
+                        model=args.model, judge_model=args.judge_model,
+                        model_usage=_seen_usage(state["results"]), evidence=evidence)
+
+    budget = "none" if args.budget is None else args.budget
+    if args.json:
+        payload["sessions"] = spent
+        payload["budget"] = args.budget
+        _save_results(args, summaries, stream=sys.stderr)
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return 0
+
+    _print_skipped(skipped)
+    row = "{:<36} {:<12} {:<15} {:<16} {}"
+    print("\n" + row.format("case", "with", "without", "P(helps)", "verdict"))
+    print(BAR)
+    for case in sorted(runnable, key=lambda c: os.path.basename(c.path)):
+        base, state = os.path.basename(case.path), states[case.path]
+        s = summaries[base]
+        passes, measured = s["passes"], s["measured"]
+        # Rounded down, so 0.9997 never prints as a certainty of 1.000.
+        helps = ("{:.3f}".format(int(s["p_helps"] * 1000) / 1000.0)
+                 if measured["with"] and measured["without"] else "-")
+        print(row.format(base, "with {}/{}".format(passes["with"], measured["with"]),
+                         "without {}/{}".format(passes["without"], measured["without"]),
+                         "P(helps) {}".format(helps), _decide_words(state)))
+    for path, reason in sorted(blocked.items()):
+        print("{:<36} UNCHECKED, grader failed its own proof: {}".format(
+            os.path.basename(path), reason))
+    print("\nsessions started: {} (budget {}; judge calls not counted)".format(spent, budget))
+    _save_results(args, summaries)
+    if unproven_total and not args.strict:
+        print("{} unproven grader(s), run with --strict to refuse them.".format(unproven_total))
+    if wrote_evidence:
+        print("evidence written to {}".format(os.path.join(evals_dir, "results", "runs")))
+    print("viz: run 'trimwrit viz --target {}' to see this as a canvas".format(_targets(args)[0]))
+    return 0
 
 
 def cmd_run(args):
@@ -361,6 +558,10 @@ def cmd_run(args):
         models_mod.require_full_id(args.judge_model)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
+        return 2
+    refusal = _decide_refusal(args)
+    if refusal:
+        print(refusal, file=sys.stderr)
         return 2
     evals_dir = os.path.join(args.root, args.evals)
     found = cases_mod.discover(evals_dir)
@@ -380,6 +581,12 @@ def cmd_run(args):
               "the rules, or pass --no-ablation to run one arm only."
               .format(", ".join(_targets(args))), file=sys.stderr)
         return 2
+
+    # Rule level ablation decides which files each case is seeded with, so it runs before
+    # anything else looks at a case: a case no target claims is not under test at all.
+    ablate = "none" if args.no_ablation else args.ablate
+    files_by_case, skipped = _arm_files(args, found, rule_files)
+    found = [c for c in found if c.path not in skipped]
 
     arms = (runner_mod.ARM_WITH,) if args.no_ablation else (runner_mod.ARM_WITH,
                                                             runner_mod.ARM_WITHOUT)
@@ -411,12 +618,22 @@ def cmd_run(args):
     history_path = os.path.join(evals_dir, "results", "history.jsonl")
     ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     runs_dir = os.path.join(evals_dir, "results", "runs")
+    keys = {c.path: decide_mod.evidence_key(
+        c, files_by_case[c.path][0], files_by_case[c.path][1], args.model, args.judge_model,
+        args.threshold, ablate) for c in found}
+
+    if args.decide:
+        return _run_decide(args, runnable, blocked, skipped, files_by_case, keys, rule_files,
+                           judge, progress, evals_dir, history_path, ts, unproven_total)
 
     results_by_case = runner_mod.run_many(
         runnable, rule_files, arms=arms, runs=args.runs, claude=args.claude, judge=judge,
-        progress=progress, isolate=not args.no_isolation, jobs=args.jobs, model=args.model)
+        progress=progress, isolate=not args.no_isolation, jobs=args.jobs, model=args.model,
+        files_by_case=files_by_case)
 
     summaries, payload = {}, {"cases": []}
+    if skipped:
+        payload["skipped"] = _skipped_payload(skipped)
     failures, unmeasured_cases, wrote_evidence = 0, 0, False
     for case in found:
         base = os.path.basename(case.path)
@@ -432,12 +649,8 @@ def cmd_run(args):
                         runner_mod.write_evidence(r, evals_dir)
                         wrote_evidence = True
             summary = runner_mod.summarise(per_arm)
-            payload["cases"].append({"name": base, "summary": summary, "arms": {
-                arm: [{"passed": r.passed, "score": r.score, "error": r.error,
-                      "unmeasured": r.unmeasured, "grades": r.grades, "model": r.model,
-                      "model_usage": r.model_usage, "judge_model": r.judge_model,
-                      "judge_model_usage": r.judge_model_usage} for r in rs]
-                for arm, rs in per_arm.items()}})
+            payload["cases"].append({"name": base, "summary": summary,
+                                     "arms": _arms_payload(per_arm)})
         summaries[base] = summary
 
         if summary["with"] is None:
@@ -447,18 +660,20 @@ def cmd_run(args):
         elif summary["with"] < args.threshold:
             failures += 1
 
-        seen_usage = {}
-        for rs in (results_by_case.get(case.path) or {}).values():
-            for r in rs:
-                for mid in r.model_usage:
-                    seen_usage[mid] = seen_usage.get(mid, 0) + 1
-        _append_history(history_path, ts, case, summary, rule_files, _targets(args), args.claude,
-                        model=args.model, judge_model=args.judge_model, model_usage=seen_usage)
+        per_arm = results_by_case.get(case.path) or {}
+        evidence = {"key": keys[case.path], "ablate": ablate,
+                    "files_sha256": decide_mod.files_sha256(*files_by_case[case.path])}
+        evidence.update(decide_mod.count(per_arm, args.threshold))
+        _append_history(history_path, ts, case, summary, files_by_case[case.path][0],
+                        _targets(args), args.claude, model=args.model,
+                        judge_model=args.judge_model, model_usage=_seen_usage(per_arm),
+                        evidence=evidence)
 
     if args.json:
         print(json.dumps(payload, indent=2, ensure_ascii=False))
         return 1 if failures else 0
 
+    _print_skipped(skipped)
     print("\n{:<36} {:>6} {:>9} {:>7}  verdict".format("case", "with", "without", "delta"))
     print(BAR)
     for base, s in sorted(summaries.items()):
@@ -509,12 +724,12 @@ def cmd_run(args):
     return 1 if failures else 0
 
 
-def _save_results(args, summaries):
+def _save_results(args, summaries, stream=None):
     path = os.path.join(args.root, args.evals, "results", "latest.json")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(summaries, fh, indent=2)
-    print("results written to {}".format(path))
+    print("results written to {}".format(path), file=stream or sys.stdout)
 
 
 # ------------------------------------------------------------------ check
@@ -857,6 +1072,26 @@ def main(argv=None):
                          "failing")
     rn.add_argument("--no-save", action="store_true",
                     help="do not write the per-run evidence files under results/runs/")
+    rn.add_argument("--decide", action="store_true",
+                    help="run each case {} runs per arm at a time until its verdict is decided "
+                         "(keep, harmful, inert, inert-fail) or it reaches --max-runs; counts "
+                         "add up across invocations while the case, the rule files and the "
+                         "models are unchanged".format(verdict_mod.BATCH))
+    rn.add_argument("--ablate", choices=("file", "rule"), default="file",
+                    help="file: the without arm has no rule file (default). rule: both arms "
+                         "seed the targets citing the case, the without arm minus the citing "
+                         "rule blocks, so the verdict is about the rule alone")
+    rn.add_argument("--batch", type=int, default=verdict_mod.BATCH,
+                    help="--decide: runs per arm per round (default {})".format(verdict_mod.BATCH))
+    rn.add_argument("--max-runs", type=int, default=verdict_mod.MAX_RUNS,
+                    help="--decide: attempted runs per arm after which a case stays undecided "
+                         "(default {})".format(verdict_mod.MAX_RUNS))
+    rn.add_argument("--budget", type=int,
+                    help="--decide: the most case sessions this invocation starts; judge calls "
+                         "are not counted")
+    rn.add_argument("--margin", type=float, default=verdict_mod.MARGIN,
+                    help="--decide: two pass rates closer than this are equivalent (default "
+                         "{})".format(verdict_mod.MARGIN))
     rn.add_argument("--jobs", type=int, default=1,
                     help="run this many (case, arm, run) triples at once across ALL selected "
                          "cases. The table, JSON, evidence and history are identical to --jobs "
