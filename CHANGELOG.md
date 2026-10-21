@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.9.0, 2026-10-21
+
+- **`trimwrit run --decide` chooses how many runs a case needs.** Three runs per arm cannot
+  decide: 3 of 3 against 0 of 3 gives P(helps) 0.986. A case now runs 3 times per arm at a
+  time, and after each batch `trimwrit/verdict.py` compares the two pass counts (a Beta(1, 1)
+  prior per arm, posteriors on a fixed 400 cell grid, no sampling): `keep` when P(helps) is at
+  least 0.99, `harmful` when it is at most 0.01, `inert` or `inert-fail` when P(the two pass
+  rates are within 0.2) is at least 0.975 (`inert` only when the case passes at least 80
+  percent of the time without the rule), `undecided` otherwise. It stops at a verdict or at 30
+  runs per arm. A run with no final text counts as attempted, never as measured.
+  `verdict.simulate` measures what the strict lines cost (300 repetitions, seed 7): with no
+  true effect, `keep` 5 percent and `harmful` 4 percent; two perfect arms `inert` every time
+  after 18 runs per arm; a true gap of exactly the margin called `inert` 7 percent of the time.
+- **Evidence adds up across invocations, under a key.** The key is the sha256 of the case
+  directory, both arms' seeded files, the two model ids, the pass line, the ablation mode and
+  the sandbox note. Every `run`, plain or `--decide`, writes the key and its pass, measured and
+  attempted counts on its history line, and `--decide` starts from their sum. Edit one word of
+  the rule and the count starts over. Each evidence file records the key in its front matter.
+- **`--ablate rule` measures one rule, not the whole file.** Both arms are seeded with every
+  target holding a rule that cites the case; the without arm loses only the citing rule blocks.
+  A case no target cites is listed as `unclaimed` and not run, and `~/.claude/CLAUDE.md` is
+  expanded, never joined as a literal `~`. `--ablate file` stays the default.
+- **`--budget N` caps the case sessions one invocation starts** (judge calls not counted, and
+  the output says so). The open cases are taken in name order while they fit. A budget below
+  one batch of one case is refused with exit 2.
+- **`--batch`, `--max-runs`, `--budget` and `--margin` only apply with `--decide`.** A plain
+  run given one is refused with exit 2, and so is `--no-ablation` with `--ablate rule`.
+- **`trimwrit prune` acts on verdicts.** A summary carrying a verdict is judged by it alone:
+  `inert` is an `inert` finding `--apply` deletes, `inert-fail` one it keeps, `harmful` a new
+  finding it keeps ("the rule makes its case worse: rewrite it"), `keep` and `undecided` no
+  finding. The details show `k/n` passes per arm and P(helps), not means. `--apply` refuses to
+  delete a rule whose file no longer hashes to what the `with` arm was seeded with ("the rule
+  file changed since it was measured; run `trimwrit run --decide` again"), and keeps a rule
+  citing another case not decided `inert`. A summary from a plain run keeps the delta logic and
+  says it was "measured with a fixed run count".
+- **`trimwrit report` counts verdicts**, `cases.verdicts`, over the latest history line per case
+  that carries one, printed as one line.
+- **`trimwrit viz` shows `?`** for an arm with no measured run instead of failing on it.
+- **README, "How many runs"**: the loop, the verdicts, the simulated error rates, `--ablate
+  rule` and `--budget`. The prune section, the prune skill and the examples point at `trimwrit
+  run --decide --ablate rule`.
+
 ## bare-id-gate 0.1.0, 2026-10-21
 
 - **A final message does not show an internal id standing alone.** The eleventh gate, a Stop

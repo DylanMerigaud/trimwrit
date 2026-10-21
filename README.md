@@ -256,6 +256,13 @@ neither could until it was rewritten: 0003 had a grader that forbade what its ow
 for, and 0005 had an llm judge that failed four runs out of four including the ones the
 mechanical grader passed.
 
+That table is a fixed run count, and a fixed run count can only show a signal. To decide, let
+trimwrit choose how many runs each case needs (see "How many runs", below):
+
+```bash
+trimwrit run --decide --ablate rule --target CLAUDE.md
+```
+
 **5. prune.** The step nothing else ships:
 
 ```bash
@@ -266,15 +273,97 @@ trimwrit prune --target CLAUDE.md --results
 kind         rule     why
 ------------------------------------------------------------------------
 orphan       R0031    CLAUDE.md:88 names case 0031, which is not in evals/. Nothing can show this rule still earns its place.
-inert        R0014    case 0014-json-only scores 1.00 with R0014 and 1.00 without it (delta +0.00). The model already behaves. Delete the rule and keep the case.
-inert-fail   R0022    case 0022-cite-the-source scores 0.00 with R0022 and 0.00 without it (delta +0.00). The case is below the pass line (1.00) in both arms, so it is not reliably passed even with the rule. Rewrite the rule or its case and re-run it before deleting the rule.
+inert        R0014    case 0014-json-only: 18/18 with, 18/18 without, P(helps) 0.499. The model behaves without it, decided. Delete the rule and keep the case.
+inert-fail   R0022    case 0022-cite-the-source: 1/30 with, 0/30 without, P(helps) 0.753. The two arms are equivalent, but the case is not reliably passed without the rule. Rewrite the rule or its case before deleting anything.
+harmful      R0040    case 0040-one-question-at-a-time: 0/6 with, 6/6 without, P(helps) 0.000. Decided, the rule makes its case worse: rewrite it.
 ```
 
-`--apply` deletes the orphan and the inert rule and writes each removal into the same ledger as
-the promotion, with the reason. It keeps an `inert-fail` rule: a case below the pass line in
-both arms is not reliably passed even with the rule, so the number cannot say the rule is
-unneeded, and the fix is a rewrite of the rule or of its case. The pass line is
-the one `trimwrit run` uses, `--threshold`, default 1.0. The case stays: it is what will notice if the behaviour comes back after a model update.
+`prune` reads the verdicts `run --decide` wrote to `evals/results/latest.json`. `--apply`
+deletes an orphan rule and a rule whose case is decided `inert`, and writes each removal into
+the same ledger as the promotion, with the reason. It keeps an `inert-fail` rule: the case is
+not reliably passed even with the rule, so the numbers cannot say the rule is unneeded, and the
+fix is a rewrite of the rule or of its case. It keeps a `harmful` rule: the case passes less
+often with it than without it, and that also calls for a rewrite, not a silent deletion. A rule
+that cites several cases stays until every one of them is decided `inert`.
+
+A verdict is about the file as it was measured, so `--apply` refuses to delete a rule whose file
+changed since: when the file no longer hashes to what the `with` arm was seeded with, the rule
+stays and the line says "the rule file changed since it was measured; run `trimwrit run
+--decide` again".
+
+A results file written by a plain `trimwrit run` carries no verdict. `prune` then reads the two
+means as it always has (a flat delta is `inert` when the case passes without the rule, at the
+pass line `--threshold`, default 1.0, and `inert-fail` below it) and adds one line: "measured
+with a fixed run count; `trimwrit run --decide` decides with enough runs". Whatever the
+finding, the case stays: it is what will notice if the behaviour comes back after a model
+update.
+
+## How many runs
+
+Three runs per arm cannot decide anything. 3 passes out of 3 with the rule against 0 out of 3
+without it looks decisive, and it is not: the chance that the rule helps comes out at 0.986,
+under the line below. Asking you for a run count is asking the question the statistics are
+there to answer, so `trimwrit run --decide` answers it:
+
+```bash
+trimwrit run --decide --ablate rule --target CLAUDE.md --budget 150
+trimwrit prune --target CLAUDE.md --results --apply
+```
+
+A case runs 3 times per arm, with the rule and without it. A run passes when its score reaches
+the pass line (`--threshold`, default 1.0). A run with no final text counts as attempted, never
+as a pass or a fail. After each batch the pass counts are compared, and a case still undecided
+runs 3 more per arm, until the numbers decide or it has 30 runs per arm.
+
+The counts add up across invocations, under a key: the sha256 of the case directory, both arms'
+files, the two model ids, the pass line, the ablation mode and the sandbox note. Change any of
+them, one word of the rule included, and the count starts over, so no old run leaks into a new
+rule's verdict. A case already decided under its key is not run again. One that reached 30 runs
+per arm stays undecided until something in its key changes. A plain `run` writes its counts
+under the same key, so its runs count too.
+
+Each arm gets a uniform prior, and its posterior comes from its pass count. Two numbers come
+out: P(helps), the chance that the arm with the rule passes more often, and P(equivalent), the
+chance that the two pass rates are within 0.2 of each other. The verdict, checked in this order:
+
+| verdict | when | what `prune` does |
+|---|---|---|
+| `keep` | P(helps) is at least 0.99 | nothing: the rule earns its place |
+| `harmful` | P(helps) is at most 0.01 | reports it and keeps it: the rule makes its case worse, rewrite it |
+| `inert` | P(equivalent) is at least 0.975, and the case passes at least 80 percent of the time without the rule | `--apply` deletes the rule and records why |
+| `inert-fail` | P(equivalent) is at least 0.975, and the case passes less often than that without the rule | reports it and keeps it: rewrite the rule or its case |
+| `undecided` | none of the above, or an arm with no measured run | nothing |
+
+The lines are strict because the numbers are looked at after every batch, and every look is
+another chance to be fooled. `trimwrit.verdict.simulate` replays the rule on invented arms (300
+repetitions, seed 7, batches of 3, at most 30 runs per arm, margin 0.2). This is what it costs:
+
+| true pass rate, with / without | what `--decide` says |
+|---|---|
+| 0.5 / 0.5, no effect | `keep` 5 percent, `harmful` 4 percent, undecided 91 percent |
+| 1.0 / 1.0 | `inert` every time, after 18 runs per arm |
+| 1.0 / 0.33 | `keep` every time, after 8.5 runs per arm on average |
+| 0.9 / 0.6 | `keep` 70 percent, undecided otherwise |
+| 1.0 / 0.8, a gap of exactly the margin | `keep` about 55 percent, `inert` 7 percent, undecided otherwise |
+| 0.9 / 0.9 | `inert` 39 percent, undecided about 60 percent, `keep` or `harmful` about 2 percent |
+
+So a rule is proven useless only when the model is reliable without it, and a small effect
+stays undecided rather than deleted. The cost is on the other side of the margin: a rule whose
+true effect is exactly 0.2 is called `inert` 7 percent of the time.
+
+**`--ablate rule` takes out only the rule.** The default, `--ablate file`, runs the without arm
+with no rule file at all, so its number is about the whole file. `--ablate rule` seeds both
+arms with every file holding a rule that cites the case, and takes out of the without arm only
+the rule blocks citing it, so the verdict is about that rule. A case no rule cites is listed as
+`unclaimed` and not run.
+
+**`--budget N` caps the case sessions one invocation starts.** Before each round the open cases
+are taken in name order while they fit; the rest wait for the next invocation, which picks up
+their counts where they stopped. Judge calls of `llm` graders are not counted, and the output
+says so. A budget below one batch of one case (6 sessions at the default batch) is refused.
+
+`--batch`, `--max-runs`, `--budget` and `--margin` only apply with `--decide`, and a plain run
+given one of them is refused rather than silently ignoring it.
 
 ## Why the deletion half is the point
 
@@ -290,9 +379,10 @@ not documentation, it is the thing that makes the rule deletable by someone who 
 
 And it is why `prune` reports numbers rather than an opinion. An **inert** rule is not wrong. It
 is unnecessary, because the model already behaves, and that is the only honest reason to delete
-an instruction everybody still agrees with. A flat delta on a case below the pass line in both
-arms is the other finding, `inert-fail`: the case is not reliably passed even with the rule, so
-the rule or the case needs a rewrite before anyone deletes it.
+an instruction everybody still agrees with. Two arms equivalent on a case the model does not
+reliably pass is the other finding, `inert-fail`: the rule or the case needs a rewrite before
+anyone deletes it. And a rule its case passes less often with is `harmful`: it is rewritten,
+not deleted, because the behaviour it was written for still needs a rule that works.
 
 ## The runtime half: what a rule did in production
 
@@ -541,8 +631,8 @@ case by hand and hoping to reproduce it, because nothing kept what the model act
 evals/results/runs/<case>/<arm>-<run index>.md
 ```
 
-Front matter (case, arm, run, an ISO 8601 UTC timestamp, passed, score, the error if any,
-whether it was unmeasured, one line per grader), a `## final message` section with the model's
+Front matter (case, arm, run, an ISO 8601 UTC timestamp, passed, score, the evidence key of
+"How many runs", the error if any, whether it was unmeasured, one line per grader), a `## final message` section with the model's
 answer verbatim, and a `## tools` section with the tool calls as JSON. It is overwritten on
 every run of the same case, arm and index, so it is the LATEST evidence, not a history, and it
 deliberately does not go through this repo's own dash gate: the whole point is to show exactly
@@ -556,7 +646,9 @@ off. `results/runs/` is data, same as `results/latest.json`: commit it or ignore
 delta looked like across every run anyone has done. One JSON line is appended per case per `run`
 invocation, with `target_sha256`, the sha256 of each ablated rule file as it was actually seeded
 into the `with` arm, so a later reader can tell a real regression from a rule that was simply
-rewritten between two runs.
+rewritten between two runs. Each line also carries the evidence key, the ablation mode and the
+pass, measured and attempted counts per arm, which `run --decide` sums back, and a `--decide`
+line carries the verdict.
 
 ## Running the suite faster: --jobs
 
@@ -724,7 +816,7 @@ instead of passing.
 | `trimwrit case` | a correction becomes a native eval case |
 | `trimwrit check` | prove every grader can actually fire, before a run trusts it |
 | `trimwrit integrate` | write the rule, with its case and its incident |
-| `trimwrit run` | run the cases with the rule and without it |
+| `trimwrit run` | run the cases with the rule and without it; `--decide` runs until the numbers decide |
 | `trimwrit prune` | rules that no longer earn their place |
 | `trimwrit viz` | serialize the pipeline into a payload and open it as a canvas |
 | `trimwrit stats` | aggregate a runtime ledger and flag dead weight and friction, no deletion |

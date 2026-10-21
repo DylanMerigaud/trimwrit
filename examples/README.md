@@ -7,9 +7,12 @@ names the case that keeps it alive.
 Reproduce the measurement:
 
 ```bash
-trimwrit run --target examples/CLAUDE.md
+trimwrit run --decide --ablate rule --target examples/CLAUDE.md
 trimwrit prune --target examples/CLAUDE.md --results
 ```
+
+`--decide` keeps running each case until its verdict is decided; `--ablate rule` takes out only
+the rule that cites it.
 
 Delete a rule from `CLAUDE.md` by hand and run it again. The delta for that rule's case is the
 whole answer to "did that rule do anything".
