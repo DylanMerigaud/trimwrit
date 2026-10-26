@@ -14,8 +14,9 @@ One `Stop` hook (`handback_gate.py`). It reads the last 1500 characters of the f
 English and French, paragraph by paragraph, for a hand-back: the user named as the one who acts
 ("you can paste", "you'll need to create", "you only need to reply", "I need you to", "what I need
 from you", "over to you", "fill it in yourself", "do it yourself", "tu remplis", "tu peux coller",
-"reste a toi", "a toi de", "de ton cote", "toi-meme", "il me faut de toi", a configured name
-followed by "can tick" or "manually"), or a second-person imperative at the head of a sentence or
+"reste a toi", "a toi de", "de ton cote", "toi-meme", "il me faut de toi", the takeover question
+"tu t'en occupes ?", "tu le prends ?", "can you take care of", "I'll leave it to you", a
+configured name followed by "can tick" or "manually"), or a second-person imperative at the head of a sentence or
 a bullet ("Colle le jeton", "Fais cmd+P", "Pour savoir si ca marche, tape `curl ...`", "Paste
 your token"). When it finds one, it blocks the stop and tells the model to do the gesture first
 whenever its tools can (a placeholder where a field is not the user's to give, a throwaway phone
@@ -23,7 +24,9 @@ number for instance), and to hand back only what the user alone holds.
 
 What it does not read as a hand-back: code spans, fenced blocks, block quotes and quoted spans (a
 command shown, a draft for a third party, a verbatim); a match with a negation just before it
-("nothing on your side", "you don't need to paste", "rien a faire de ton cote"); a "toi-meme"
+("nothing on your side", "you don't need to paste", "rien a faire de ton cote"), read in its own
+clause only (a colon, a semicolon or a question mark closes it: "rien n'est parti: tu t'en
+occupes ?" is a hand-back); a "toi-meme"
 that reports what the user did ("tu l'as toi-meme retire"); a French verb at the head of a bullet
 in a paragraph that never speaks to the user (a list of what the machine does). A final message
 that is a JSON document is a worker's result, not prose, and is not read.

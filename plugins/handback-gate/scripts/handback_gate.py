@@ -73,6 +73,7 @@ FR_INF = r"""(?:remplir|coller|copier|cocher|cliquer|imprimer|brancher|taper|cr[
   |lancer|installer|activer|t[ée]l[ée]charger|d[ée]poser|scanner|signer|r[ée]essayer|tester
   |v[ée]rifier|saisir|renseigner|envoyer|stocker|enregistrer|(?:te\s+)?connecter
   |(?:te\s+)?(?:re)?logu?er|uploader|configurer|r[ée]gler|ex[ée]cuter|relancer
+  |t['’]en\s+(?:occuper|charger)|t['’]y\s+coller|te\s+charger
   |faire\s+(?:le|la|les|un|une|ce|cette|ces)\b)"""
 FR_PRES = r"""(?:remplis|colles|copies|coches|cliques|imprimes|branches|tapes|cr[ée]es|ajoutes
   |lances|installes|actives|t[ée]l[ée]charges|d[ée]poses|scannes|signes|r[ée]essaies|r[ée]essayes
@@ -123,6 +124,11 @@ HANDBACK_SRC = (r"""
   | \btu\s+(?:dois|devras|devrais|peux|pourras|pourrais|n'as\s+qu'[àa]|as\s+juste\s+[àa]
            |auras\s+[àa]|vas\s+devoir|dois\s+juste|as\s+[àa])\s+(?:\w+\s+){0,2}?""" + FR_INF + r"""\b
   | \btu\s+""" + FR_PRES + r"""\b
+  | \btu\s+(?:t['’]en\s+(?:occupes|charges)|t['’]y\s+colles|te\s+charges)\b
+  | \btu\s+(?:le|la|les)\s+(?:prends|g[eè]res)\b
+  | \bje\s+te\s+(?:le|la|les)\s+laisse\b
+  | \bje\s+te\s+laisse\s+(?:faire|g[ée]rer|d[ée]cider|trancher|juger|choisir|t['’]en\s+occuper
+       |la\s+main|le\s+soin)\b
   | (?:^[ \t]*|[.:;!?]\s+|\*\*\s*)""" + FR_IMP + r"""\s*""" + FR_OBJ + r"""
   | (?:^[ \t]*(?:[-*]|\d[.)])\s+)(?P<bullet>""" + FR_IMP + r""")\s*""" + FR_OBJ + r"""
   | \b(?:pour|si|quand|une\s+fois|d[èe]s\s+que|apr[èe]s|ensuite|sinon|alors)\b[^,.\n]{0,80},\s*"""
@@ -133,6 +139,9 @@ HANDBACK_SRC = (r"""
   | \b(?:you|{names})\s+(?:\w+\s+){0,2}?manually\b
   | \b(?:I\s+need\s+you\s+to|need(?:ed)?\s+from\s+you|over\s+to\s+you|your\s+turn|left\s+for\s+you
        |(?:is|are)\s+(?:on|up\s+to)\s+you|(?:is|are)\s+your\s+call)\b
+  | \b(?:can|could|will|would)\s+you\s+(?:please\s+)?(?:handle|take\s+care\s+of|deal\s+with
+       |take\s+over|pick\s+(?:it|this|that)\s+up)\b
+  | \bleave\s+(?:it|this|that|them|the\s+rest)\s+(?:to|with)\s+you\b
   | (?:^|\n|[.:;!?]\s+|[-*]\s+|\d[.)]\s+|\*\*\s*)(?:then\s+|and\s+)?(?:paste|fill\s+(?:in|out)
        |tick|click|print|plug\s+in|type|log\s+in|sign\s+in|upload|retry|try\s+again|run)\b
        [^.\n]{0,60}\byour\b
@@ -151,10 +160,12 @@ HUMAN_ONLY_RE = re.compile(
     r"|cl[ée]\s+de\s+s[ée]curit[ée]|yubikey)(?!\w)"
     r"|\b(?:forbid\w*|prohibit\w*|interdi\w+|breaks?|viol\w+)\b[^.\n]{0,60}"
     r"\b(?:terms|conditions|cgu|tos|automat\w*|bots?)\b", re.I)
-# A negation just before the match: "rien a faire de ton cote", "none on your side".
+# A negation just before the match, in the same clause: "rien a faire de ton cote", "none on your
+# side". A colon, a semicolon or a question mark closes the clause: in "rien n'est parti: tu t'en
+# occupes ?" the negation reports a fact and the hand-back follows it (2026-10-24).
 NEGATED = re.compile(r"(?:\b(?:pas|plus|rien|jamais|aucun|aucune|sans|ni|no|not|never|nothing"
                      r"|none|without|nobody|personne)\b|n'|n\u2019|\b(?:don|doesn|won|didn|isn"
-                     r"|aren)'?t\b)[^.\n]{0,25}$", re.I)
+                     r"|aren)'?t\b)[^.:;!?\n]{0,25}$", re.I)
 # "toi-meme" after a past tense, a relative clause or a preposition reports or describes:
 # "tu l'as toi-meme retire", "un texte que tu as choisi toi-meme", "un message vers toi-meme".
 REPORTED = re.compile(r"(?:\btu\s+(?:l'|les\s+|la\s+|y\s+)?(?:as|avais|avait|es|[ée]tais)"
@@ -218,7 +229,10 @@ def handback_in(text, cfg=None):
         if CLASS_RE.search(para) or HUMAN_ONLY_RE.search(para):
             continue
         for m in rx.finditer(para):
-            if NEGATED.search(para[max(0, m.start() - 40):m.start()]):
+            # an imperative's match opens on the stop before it ("Rien n'est parti. Colle le
+            # jeton"): what precedes that stop is another clause
+            if m.group(0)[:1] not in ".:;!?" \
+                    and NEGATED.search(para[max(0, m.start() - 40):m.start()]):
                 continue
             bullet = m.groupdict().get("bullet")
             if bullet and FR_AMBIGUOUS.match(bullet.strip()) and not SECOND_PERSON.search(para):

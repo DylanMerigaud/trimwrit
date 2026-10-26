@@ -80,7 +80,7 @@
       "name": "handback-gate",
       "source": "./plugins/handback-gate",
       "description": "Refuses to end a turn that hands the user a gesture or an input the agent could do itself (you fill in the form, paste the token, run this command, tick the boxes) without naming why only the user can.",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "author": { "name": "Dylan Merigaud" },
       "license": "MIT",
       "category": "productivity",

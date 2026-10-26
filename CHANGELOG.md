@@ -1,5 +1,26 @@
 # Changelog
 
+## handback-gate 0.2.0, 2026-10-26
+
+- **The takeover question is a hand-back.** "tu t'en occupes ?", "tu t'en charges", "tu peux
+  t'en occuper", "tu le prends ?", "je te le laisse", "je te laisse trancher", "can you take care
+  of", "I'll leave it to you": the user is asked to take the matter over, and the same paragraph
+  must name why only the user can. The case: three reminders a scheduler composed for the user's
+  phone every hour, "<name> (<company>) a repondu a ton cold, rien n'est parti: tu t'en occupes
+  ?", answered by "why those needs me"; one of them was the machine's own work. That project's
+  card door now reads every card through this plugin's `handback_in`, so the matcher had to see
+  them.
+- **A negation stops at its clause.** A colon, a semicolon or a question mark now closes the
+  window a negation reads (`NEGATED`), and an imperative whose match opens on the stop before it
+  no longer inherits the negation of the sentence before: "rien n'est parti: tu t'en occupes ?"
+  and "Rien n'est parti. Colle le jeton" were both spared as negated. The forbid grader of the
+  eval case is rebuilt from the gate with the same clause boundary; one known gap is added (the
+  imperative after a negated clause, which only the hook sees).
+- Measured on 1,961 turn-final messages of the user's sessions on one machine (5 days): one more
+  refusal (an imperative after a negated sentence), none less. On the 322 distinct phone cards
+  of the same user's scheduler since 2026-09-21: 74 hand-backs read against 20 before, the 54
+  new ones all "tu t'en occupes ?" or "tu le prends ?" with no reason given.
+
 ## 0.9.4, 2026-10-21
 
 - **`trimwrit report` keeps a keyed case with an unmeasured arm.** A case whose current key had

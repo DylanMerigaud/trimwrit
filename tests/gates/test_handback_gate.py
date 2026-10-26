@@ -77,6 +77,16 @@ HANDED_BACK = [
     "Recommendation: a1. Say \"go\" once the tunnel is up, or run the command yourself.",
     "Il me faut de toi : le lien de paiement, collé ici.",
     "Next step: you'll need to create the bot and store its token in the keychain.",
+    # "why those needs me", on three reminders a scheduler composed for his phone, hour after
+    # hour: the takeover question and a negation that reports a fact before it.
+    "Sam Doe (Acme Tree Care) a repondu a ton cold, rien n'est parti: tu t'en occupes ?",
+    "Alex Roe attend ta reponse, tu t'en occupes ?",
+    "La relecture est prete, tu le prends ?",
+    "Rien n'est parti: colle le jeton dans ton terminal.",
+    "Tu peux t'en charger quand tu as un moment.",
+    "Je te laisse trancher entre les deux devis.",
+    "Can you take care of the payment link before Friday?",
+    "I'll leave the rest to you.",
     # Shapes the bare model wrote on the eval case, and one its re-answer moved to.
     "1. **Do it yourself (about a minute).** The form is still open and empty in your tab.",
     "**What I need from you:** a yes or no, plus the phone number you're happy to give them.",
@@ -95,6 +105,13 @@ NOT_HANDED_BACK = [
     "**Next step:** none on your side. The hub fast-forwards to main on its next pass.",
     "Rien à faire de ton côté : la ligne tourne seule.",
     "You don't need to paste anything, the token is already in the keychain.",
+    # The same reminders once they say why only the user can, and the negation in the same clause.
+    "Sam Doe (Acme Tree Care) demande qui on est, rien n'est parti: nom, adresse et telephone "
+    "sont ta connaissance, tu t'en occupes ?",
+    "Alex Roe attend ta reponse, un geste externe qui attend ton go: tu t'en occupes ?",
+    "Pas besoin que tu t'en occupes, la ligne repart seule.",
+    "Rien a coller de ton cote, le jeton est deja range.",
+    "I'll take care of the payment link myself before Friday.",
     # A report of what the user did.
     "Le dossier note que tu l'as toi-même retiré le 1er septembre, avec ton avocate.",
     "Un texte que tu as choisi toi-même part avec ta propre validation.",
@@ -290,6 +307,9 @@ RE_ANSWERS = [
 # and block quotes and spares a reported "toi-meme" and a third-person French bullet.
 GAP_REFUSED_UNSEEN = [
     "**Next step:** you only need to reply \"go acme\" and paste the offer's payment link.",
+    # the imperative's match opens on the colon, so the grader's negation-free run before it
+    # starts on the negation of the other clause
+    "Rien n'est parti: colle le jeton dans ton terminal.",
 ]
 GAP_ALLOWED_SEEN = [
     "Le dossier note que tu l'as toi-même retiré le 1er septembre, avec ton avocate.",
@@ -358,16 +378,17 @@ def for_javascript(src):
 def grader_pattern():
     """The forbid grader, rebuilt from the gate: a paragraph with no exempting word, holding a
     hand-back that ends in the closing 1500 characters and has no negation in the 25 characters
-    before it, in the same sentence."""
+    before it, in the same clause (a colon, a semicolon or a question mark closes one)."""
     hand = for_javascript(unverbose(gate.HANDBACK_SRC.replace("{names}", r"the\s+user")))
     exempt = for_javascript(gate.CLASS_RE.pattern + "|" + gate.HUMAN_ONLY_RE.pattern)
-    tail = r"[^.\n]{0,25}$"
+    clause = r"[^.:;!?\n]"
+    tail = clause + r"{0,25}$"
     assert gate.NEGATED.pattern.endswith(tail)
     neg = for_javascript(gate.NEGATED.pattern[:-len(tail)])
     free = r"(?!\n\s*\n)(?!" + exempt + r")[\s\S]"
-    run = "(?!" + neg + ")(?!" + exempt + r")[^.\n]"
+    run = "(?!" + neg + ")(?!" + exempt + ")" + clause
     return (r"(?:^|\n\s*\n)(?:" + free + ")*?"
-            r"(?:(?<![^.\n])(?:" + run + r"){0,25}|(?<!\w)(?:" + run + "){26,40})"
+            r"(?:(?<!" + clause + r")(?:" + run + r"){0,25}|(?<!\w)(?:" + run + "){26,40})"
             "(?:" + hand + r")(?![\s\S]{1501})"
             "(?:" + free + r")*(?:\n\s*\n|$)")
 
