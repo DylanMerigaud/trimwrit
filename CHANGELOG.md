@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.1, 2026-10-27
+
+- **`trimwrit map --name` reaches the static `<title>`.** The page still said `Harness map` in
+  its `<title>` tag and only set the real name from script at runtime; hosts that read the title
+  from the first 8KB of the file (claude.ai Artifacts) never saw it. The renderer now writes the
+  document's name, HTML-escaped, into the tag (default `Harness map`).
+
 ## handback-gate 0.2.0, 2026-10-26
 
 - **The takeover question is a hand-back.** "tu t'en occupes ?", "tu t'en charges", "tu peux

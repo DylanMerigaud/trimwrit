@@ -28,6 +28,7 @@ and passing it as `--extra`: types, states, items and errors are merged, later w
 
 Read only, like `audit`: no file is written but the page asked for.
 """
+import html
 import json
 import os
 import shlex
@@ -439,4 +440,14 @@ def render(doc):
     if PLACEHOLDER not in page:
         raise MapError("the page template {} has no {} placeholder".format(
             template_path(), PLACEHOLDER))
-    return page.replace(PLACEHOLDER, embed(doc), 1)
+    page = page.replace(PLACEHOLDER, embed(doc), 1)
+    return page.replace("<title>Harness map</title>", "<title>{}</title>".format(_title(doc)), 1)
+
+
+def _title(doc):
+    """The document's name as static title text: hosts read the first 8KB for the title, before any
+    script runs. HTML-escaped; a dash this package refuses to write becomes a character reference."""
+    out = html.escape(doc.get("name") or DEFAULT_NAME, quote=False)
+    for ch in BAD_DASHES:
+        out = out.replace(ch, "&#{};".format(ord(ch)))
+    return out

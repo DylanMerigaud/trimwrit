@@ -213,3 +213,9 @@ def test_template_has_no_external_script_and_one_placeholder():
     page = open(map_mod.template_path(), encoding="utf-8").read()
     assert page.count(map_mod.PLACEHOLDER) == 1
     assert "<script src" not in page
+
+
+def test_render_puts_the_name_in_the_static_title():
+    doc = map_mod.validate({"v": 1, "name": "A & <B>", "items": []})
+    assert "<title>A &amp; &lt;B&gt;</title>" in map_mod.render(doc)
+    assert "<title>Harness map</title>" in map_mod.render(map_mod.validate({"v": 1, "items": []}))
