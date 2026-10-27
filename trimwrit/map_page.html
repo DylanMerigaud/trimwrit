@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Harness map</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800&family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* trimwrit map. Layout: a survey ledger. Summary strip, then the gaps ranked, then one folding
+   tree per project: type, then each level of the item's path, then the items. */
+:root {
+  --bg: #f3f5f7; --surface: #ffffff; --line: #d9dfe5; --fg: #17212b; --muted: #5d6b78;
+  --accent: #1f5f73; --ok: #2f7d4f; --ok-soft: #e1f0e6; --gap: #b5462a; --gap-soft: #f8e4dd;
+  --warn: #9a6b00; --warn-soft: #f6ecd2;
+  --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --body: "Atkinson Hyperlegible", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #11171d; --surface: #182029; --line: #2a3541; --fg: #e4eaf0; --muted: #93a2b0;
+  --accent: #6fb6c9; --ok: #6cc28f; --ok-soft: #1c3226; --gap: #ee8a6c; --gap-soft: #3a2119;
+  --warn: #e0b04f; --warn-soft: #352a12; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #11171d; --surface: #182029; --line: #2a3541; --fg: #e4eaf0; --muted: #93a2b0;
+  --accent: #6fb6c9; --ok: #6cc28f; --ok-soft: #1c3226; --gap: #ee8a6c; --gap-soft: #3a2119;
+  --warn: #e0b04f; --warn-soft: #352a12; color-scheme: dark }
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 920px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 24px 48px; display: grid; gap: 28px; }
+h1, h2 { font-family: var(--display); text-wrap: balance; margin: 0; }
+h1 { font-size: 1.9rem; font-weight: 800; letter-spacing: -0.01em; }
+h2 { font-size: 1.15rem; font-weight: 700; }
+.eyebrow { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+header { display: grid; gap: 6px; }
+.stats { display: flex; flex-wrap: wrap; gap: 10px 22px; font-variant-numeric: tabular-nums; }
+.stat b { font-family: var(--display); font-size: 1.5rem; display: block; line-height: 1.1; }
+.stat span { color: var(--muted); font-size: 0.85rem; }
+.stat.gap b { color: var(--gap); }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; }
+.controls button { font: inherit; font-size: 0.85rem; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); cursor: pointer; }
+.controls button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.controls button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+section { display: grid; gap: 12px; min-width: 0; }
+.gaps { display: grid; gap: 8px; }
+.gapcard { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--gap); border-radius: 6px; padding: 10px 12px; display: grid; gap: 4px; min-width: 0; }
+.path { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); overflow-wrap: anywhere; }
+.gapname { font-weight: 700; overflow-wrap: anywhere; }
+.reco { font-size: 0.88rem; color: var(--fg); }
+.reco::before { content: "Reco "; font-family: var(--mono); font-size: 0.7rem; color: var(--accent); letter-spacing: 0.06em; text-transform: uppercase; }
+.detail { font-size: 0.85rem; color: var(--muted); overflow-wrap: anywhere; }
+.projects { display: grid; gap: 10px; }
+details.project { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
+details.project > summary { padding: 12px 14px; }
+summary { cursor: pointer; list-style: none; display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center; }
+summary::-webkit-details-marker { display: none; }
+summary .label { font-weight: 700; min-width: 0; overflow-wrap: anywhere; }
+summary .label::before { content: "+"; display: inline-block; width: 1.1em; font-family: var(--mono); color: var(--muted); }
+details[open] > summary .label::before { content: "-"; }
+.project > summary .label { font-family: var(--display); font-size: 1.05rem; }
+.counts { font-family: var(--mono); font-size: 0.75rem; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.counts .g { color: var(--gap); font-weight: 600; }
+.bar { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--gap-soft); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--ok); }
+.inner { padding: 0 10px 10px 18px; display: grid; gap: 4px; min-width: 0; }
+details.node { min-width: 0; }
+details.node > summary { padding: 6px 4px; border-top: 1px solid var(--line); }
+.leaf { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; padding: 6px 4px; border-top: 1px dashed var(--line); min-width: 0; }
+.leaf .body { min-width: 0; display: grid; gap: 2px; }
+.leaf .name { overflow-wrap: anywhere; }
+.pill { font-family: var(--mono); font-size: 0.68rem; padding: 2px 7px; border-radius: 999px; white-space: nowrap; align-self: start; margin-top: 2px; }
+.pill.ok { background: var(--ok-soft); color: var(--ok); }
+.pill.gap { background: var(--gap-soft); color: var(--gap); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px; }
+.errors { background: var(--warn-soft); color: var(--warn); padding: 10px 12px; border-radius: 6px; font-size: 0.9rem; overflow-wrap: anywhere; }
+.errors ul { margin: 4px 0 0; padding-left: 18px; }
+.empty { color: var(--muted); font-size: 0.9rem; }
+@media (prefers-reduced-motion: no-preference) { details[open] > .inner { animation: fold 0.15s ease-out; } @keyframes fold { from { opacity: 0.4; } to { opacity: 1; } } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow" id="when"></div>
+    <h1 id="title">Harness map</h1>
+    <div class="stats" id="stats"></div>
+  </header>
+  <div class="errors" id="errors" hidden></div>
+  <section>
+    <h2>Gaps to close, heaviest first</h2>
+    <div class="gaps" id="gaps"></div>
+  </section>
+  <section>
+    <h2>By project, harness type, and sub type</h2>
+    <div class="controls" id="controls">
+      <button type="button" id="f-all" aria-pressed="true">All</button>
+      <button type="button" id="f-gaps" aria-pressed="false">Gaps only</button>
+    </div>
+    <div class="legend" id="legend"></div>
+    <div class="projects" id="tree"></div>
+  </section>
+</div>
+
+<script>
+const RAW = /*__DATA__*/null;
+const DATA = Object.assign({ name: "Harness map", generated_at: "", types: {}, states: {}, items: [], errors: [] }, RAW || {});
+const TYPES = DATA.types || {};
+const STATES = DATA.states || {};
+const ITEMS = (DATA.items || []).map(i => Object.assign({ path: [], detail: "", weight: 1, reco: "" }, i));
+const TOP = 20;
+const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
+const stateOf = code => STATES[code] || null;
+const isGap = i => { const s = stateOf(i.state); return s ? !!s.gap : true; };
+const isSoft = i => { const s = stateOf(i.state); return !!(s && s.soft); };
+const label = code => { const s = stateOf(code); return s && s.label ? s.label : code; };
+const typeLabel = code => TYPES[code] || code;
+const recoOf = i => i.reco || ((stateOf(i.state) || {}).reco) || "";
+const pillClass = i => !isGap(i) ? "ok" : (isSoft(i) ? "warn" : "gap");
+const pill = i => `<span class="pill ${pillClass(i)}">${esc(label(i.state))}</span>`;
+let gapsOnly = false;
+
+function pathOf(i) {
+  return [i.project, typeLabel(i.type)].concat(i.path || []).filter(Boolean).join(" / ");
+}
+
+function header() {
+  const gaps = ITEMS.filter(isGap);
+  const projects = new Set(ITEMS.map(i => i.project));
+  document.title = DATA.name;
+  document.getElementById("title").textContent = DATA.name;
+  document.getElementById("when").textContent = DATA.generated_at ? "Read " + DATA.generated_at.replace("T", " at ").replace(/(Z|\+00:00)$/, " UTC") : "";
+  document.getElementById("stats").innerHTML = [
+    [ITEMS.length, "harnesses"], [projects.size, "projects"],
+    [ITEMS.length - gaps.length, "covered"], [gaps.length, "gaps", "gap"]
+  ].map(([n, l, c]) => `<div class="stat ${c || ""}"><b>${n}</b><span>${l}</span></div>`).join("");
+  if ((DATA.errors || []).length) {
+    const e = document.getElementById("errors");
+    e.hidden = false;
+    e.innerHTML = "Not read or not understood:<ul>" + DATA.errors.map(x => `<li>${esc(x)}</li>`).join("") + "</ul>";
+  }
+}
+
+function topGaps() {
+  const hard = ITEMS.filter(i => isGap(i) && !isSoft(i));
+  hard.sort((a, b) => b.weight - a.weight);
+  const el = document.getElementById("gaps");
+  if (!hard.length) { el.innerHTML = '<p class="empty">No gaps.</p>'; return; }
+  el.innerHTML = hard.slice(0, TOP).map(i => `
+    <div class="gapcard">
+      <div class="path">${esc(pathOf(i))}</div>
+      <div class="gapname">${pill(i)} ${esc(i.name)}</div>
+      ${i.detail ? `<div class="detail">${esc(i.detail)}</div>` : ""}
+      ${recoOf(i) ? `<div class="reco">${esc(recoOf(i))}</div>` : ""}
+    </div>`).join("") + (hard.length > TOP ? `<p class="empty">and ${hard.length - TOP} more in the tree.</p>` : "");
+}
+
+function group(items, keyFn) {
+  const m = new Map();
+  for (const i of items) { const k = keyFn(i); if (!m.has(k)) m.set(k, []); m.get(k).push(i); }
+  return m;
+}
+
+function counts(items) {
+  const g = items.filter(isGap).length;
+  return { n: items.length, g, ok: items.length - g };
+}
+
+function summary(text, items, bar) {
+  const c = counts(items);
+  const pct = c.n ? Math.round(100 * c.ok / c.n) : 0;
+  return `<summary><span class="label">${esc(text)}</span>
+    <span class="counts">${c.n} · <span class="g">${c.g} gap${c.g === 1 ? "" : "s"}</span></span>
+    ${bar ? `<span class="bar" title="${pct}% covered"><i style="width:${pct}%"></i></span>` : ""}</summary>`;
+}
+
+function leaves(items) {
+  return items.slice().sort((a, b) => (isGap(b) - isGap(a)) || b.weight - a.weight || String(a.name).localeCompare(String(b.name)))
+    .map(i => `<div class="leaf">${pill(i)}<div class="body"><span class="name">${esc(i.name)}</span>
+      ${i.detail ? `<span class="detail">${esc(i.detail)}</span>` : ""}
+      ${isGap(i) && recoOf(i) ? `<span class="reco">${esc(recoOf(i))}</span>` : ""}</div></div>`).join("");
+}
+
+const byGaps = (a, b) => counts(b[1]).g - counts(a[1]).g || b[1].length - a[1].length || String(a[0]).localeCompare(String(b[0]));
+const node = (text, sub, body) => `<details class="node">${summary(text, sub, false)}<div class="inner">${body}</div></details>`;
+
+// Below a type, depth d groups by path[d]; an item whose path ends before d is a leaf here.
+function level(items, depth) {
+  const here = items.filter(i => (i.path || []).length <= depth);
+  const deeper = items.filter(i => (i.path || []).length > depth);
+  const entries = [...group(deeper, i => i.path[depth]).entries()].sort(byGaps);
+  return entries.map(([k, sub]) => node(k, sub, level(sub, depth + 1))).join("") + leaves(here);
+}
+
+function byType(items) {
+  const order = Object.keys(TYPES);
+  const rank = k => { const r = order.indexOf(k); return r < 0 ? order.length : r; };
+  const entries = [...group(items, i => i.type).entries()].sort((a, b) => rank(a[0]) - rank(b[0]) || String(a[0]).localeCompare(String(b[0])));
+  return entries.map(([k, sub]) => node(typeLabel(k), sub, level(sub, 0))).join("");
+}
+
+function tree() {
+  const items = gapsOnly ? ITEMS.filter(isGap) : ITEMS;
+  const all = group(ITEMS, i => i.project);
+  const shown = [...group(items, i => i.project).entries()].sort(byGaps);
+  const single = all.size === 1;
+  document.getElementById("tree").innerHTML = shown.map(([p, sub]) =>
+    `<details class="project"${single ? " open" : ""}>${summary(p, all.get(p), true)}<div class="inner">${byType(sub)}</div></details>`
+  ).join("") || `<p class="empty">${gapsOnly ? "No gaps." : "Nothing to show."}</p>`;
+}
+
+function legend() {
+  const codes = Object.keys(STATES).concat([...new Set(ITEMS.map(i => i.state))].filter(s => !(s in STATES)));
+  document.getElementById("legend").innerHTML = codes
+    .map(s => ITEMS.find(i => i.state === s)).filter(Boolean).map(pill).join("");
+}
+
+function setFilter(g) {
+  gapsOnly = g;
+  document.getElementById("f-all").setAttribute("aria-pressed", String(!g));
+  document.getElementById("f-gaps").setAttribute("aria-pressed", String(g));
+  try { localStorage.setItem("trimwrit-map-gaps", g ? "1" : "0"); } catch (e) {}
+  tree();
+}
+
+header(); topGaps(); legend();
+let saved = false;
+try { saved = localStorage.getItem("trimwrit-map-gaps") === "1"; } catch (e) {}
+document.getElementById("f-all").addEventListener("click", () => setFilter(false));
+document.getElementById("f-gaps").addEventListener("click", () => setFilter(true));
+setFilter(saved);
+</script>
+</body>
+</html>

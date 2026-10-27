@@ -21,6 +21,21 @@
   of the same user's scheduler since 2026-09-21: 74 hand-backs read against 20 before, the 54
   new ones all "tu t'en occupes ?" or "tu le prends ?" with no reason given.
 
+## 0.10.0, 2026-10-27
+
+- **`trimwrit map`: every harness of every repo as one coverage tree.** It reads the repos
+  `audit` finds (same `--roots` and `--laptop`, same backing repo rule) and files each harness
+  under project, then type, then an arbitrary `path`: rule files (`no_case` when the repo has no
+  case at all) and each case; doors, the enabled plugins and the hooks of `~/.claude/settings.json`
+  and of each repo's `.claude/settings.json` (`door_missing` when a hook's script is not on the
+  machine, `~` and `$CLAUDE_PROJECT_DIR` expanded, a command with no script skipped); learning,
+  each tag of each ledger (`no_door` when pending, `relapse` when pending again after its rule
+  landed, covered when its rule is live). `--json` prints the document (`"v": 1`), `--out`
+  writes a self contained page (summary, the heaviest hard gaps, a folding tree, a gaps only
+  filter, light and dark), with its data embedded and every `<` escaped so no `</script` can
+  close it. `--from DOC --extra MORE ...` renders a document made elsewhere, merging types,
+  states, items and errors, later wins; an unknown type or state is an error on the page.
+
 ## 0.9.5, 2026-10-27
 
 - **audit: a ledger's backing repo is not its own repo.** When one scanned repo's

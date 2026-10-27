@@ -12,6 +12,7 @@ shows the whole loop as a canvas, plus the one that reads what a rule did after 
   prune      list the rules that no longer earn their place, with the numbers
   viz        serialize the pipeline into a payload and open it as a local canvas
   stats      aggregate a ledger of rule evaluations and flag runtime candidates
+  map        every harness of every repo as a coverage tree, in one self contained page
 
 The CLI is the only writer. Skills call it, they never edit the ledger or a case by hand, and
 that is deliberate: a ledger that a model can edit in prose is a ledger that will disagree with
@@ -32,6 +33,7 @@ from . import check as check_mod
 from . import decide as decide_mod
 from . import integrate as integrate_mod
 from . import ledger as ledger_mod
+from . import map as map_mod
 from . import prune as prune_mod
 from . import report as report_mod
 from . import models as models_mod
@@ -1113,6 +1115,44 @@ def cmd_audit(args):
     return 0
 
 
+# ------------------------------------------------------------------ map
+
+
+def cmd_map(args):
+    if not args.json and not args.out:
+        print("refused: map needs --json (print the document) or --out FILE (write the page)",
+              file=sys.stderr)
+        return 2
+    try:
+        if args.from_doc:
+            doc = map_mod.load(args.from_doc)
+        else:
+            doc = map_mod.collect(args.root, roots=args.roots, laptop=args.laptop,
+                                  name=args.name or map_mod.DEFAULT_NAME)
+        for path in args.extra or []:
+            try:
+                extra = map_mod.load(path)
+            except map_mod.MapError as exc:
+                doc.setdefault("errors", []).append(str(exc))
+                continue
+            map_mod.merge(doc, extra, label=path)
+        if args.name:
+            doc["name"] = args.name
+        doc = map_mod.validate(doc)
+        if args.json:
+            print(json.dumps(doc, indent=1, ensure_ascii=False))
+        if args.out:
+            write_text(args.out, map_mod.render(doc), "the map page")
+            c = map_mod.counts(doc)
+            print("{}: {} item(s), {} gap(s), {} error(s)".format(
+                args.out, c["items"], c["gaps"], c["errors"]),
+                file=sys.stderr if args.json else sys.stdout)
+    except map_mod.MapError as exc:
+        print("refused: {}".format(exc), file=sys.stderr)
+        return 2
+    return 0
+
+
 # ------------------------------------------------------------------ adopt
 
 
@@ -1323,6 +1363,19 @@ def main(argv=None):
     au.add_argument("--stale", type=int, default=audit_mod.DEFAULT_STALE_DAYS,
                     help="days before a repo's last run counts as stale")
     au.set_defaults(func=cmd_audit)
+
+    mp = sub.add_parser("map", help="every harness of every repo as a coverage tree, in one "
+                                    "self contained page")
+    mp.add_argument("--roots", nargs="+", help="directories to scan (default: --root)")
+    mp.add_argument("--laptop", action="store_true", help="scan ~/.claude and ~/Code")
+    mp.add_argument("--from", dest="from_doc", metavar="DOC",
+                    help="render this document instead of scanning")
+    mp.add_argument("--extra", nargs="+", metavar="DOC",
+                    help="documents merged in: types, states, items, errors (later wins)")
+    mp.add_argument("--name", help="the page title (default: Harness map)")
+    mp.add_argument("--json", action="store_true", help="print the document")
+    mp.add_argument("--out", metavar="FILE", help="write the page, data embedded")
+    mp.set_defaults(func=cmd_map)
 
     ad = sub.add_parser("adopt", help="bring the rules written before trimwrit existed into "
                                       "its registry, with no case")

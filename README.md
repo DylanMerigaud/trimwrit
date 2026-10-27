@@ -914,6 +914,7 @@ instead of passing.
 | `trimwrit report` | the whole life of one harness from its own ledgers: counts, dates, doors and case deltas, never a correction's words |
 | `trimwrit audit` | one table for every harness on the machine, and which ones have no case |
 | `trimwrit adopt` | bring the rules written before trimwrit existed into its registry, with no case |
+| `trimwrit map` | every harness of every repo as a coverage tree, in one self contained page |
 
 ## See it
 
@@ -925,6 +926,17 @@ the URL's hash fragment, so nothing leaves the machine. `--json` prints the raw 
 Built with components from [approvals-ui](https://github.com/DylanMerigaud/approvals-ui).
 
 ![trimwrit viz](docs/viz.png)
+
+`viz` draws one rule file. `trimwrit map --laptop --out map.html` draws every harness of every
+repo: one folding tree per project, then the kind of harness (rule files and cases, doors,
+learning), down to each item, each one covered or a gap with what to do about it, and the
+heaviest gaps first. The page is one self contained file with its data embedded and no script
+from anywhere, so it opens from disk or publishes anywhere as is, and it reads on a phone.
+`--json` prints the document instead (`"v": 1`: types, states, items with an arbitrary `path`
+under their type, errors). A project adds its own kinds of harness by writing a document of its
+own and rendering both: `trimwrit map --from base.json --extra evals.json --out map.html` merges
+the extra's types, states, items and errors, the later file winning on a key. An item with an
+unknown type or state is listed on the page as an error, never a crash.
 
 ## State
 
