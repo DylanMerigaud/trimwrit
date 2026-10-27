@@ -294,6 +294,25 @@ def _adopt_counts(registry):
     }
 
 
+def _backing_repos(repo_abspaths):
+    """Repos that are the backing storage of ANOTHER repo's ledger. A repo whose
+    `.trimwrit/ledger.jsonl` is a symlink resolving to the ledger of a second scanned repo shares
+    that ledger, and the second repo is storage, not a harness of its own: counting it would
+    repeat the same corrections and pending promotions as a separate row."""
+    real_of = {p: os.path.realpath(os.path.join(p, ".trimwrit", "ledger.jsonl"))
+               for p in repo_abspaths}
+    backing = set()
+    for p in repo_abspaths:
+        link = os.path.join(p, ".trimwrit", "ledger.jsonl")
+        if not os.path.islink(link):
+            continue
+        for q in repo_abspaths:
+            if q != p and real_of[q] == real_of[p] and not os.path.islink(
+                    os.path.join(q, ".trimwrit", "ledger.jsonl")):
+                backing.add(q)
+    return backing
+
+
 def _repo_record(repo_abspath):
     evals_dir = _find_evals_dir(repo_abspath)
     cases = _count_cases(evals_dir) if evals_dir else 0
@@ -393,6 +412,8 @@ def compute(root=".", roots=None, laptop=False, stale_days=DEFAULT_STALE_DAYS):
             repo_abspath = _find_repo(absf, r)
             harnesses.append(_harness_record(absf, repo_abspath))
 
+    backing = _backing_repos({h["repo_abspath"] for h in harnesses})
+    harnesses = [h for h in harnesses if h["repo_abspath"] not in backing]
     repo_abspaths = sorted({h["repo_abspath"] for h in harnesses}, key=_display_path)
     repo_records = {p: _repo_record(p) for p in repo_abspaths}
 

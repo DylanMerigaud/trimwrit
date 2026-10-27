@@ -236,3 +236,25 @@ def test_history_written_by_run_has_iso_ts_and_does_not_crash(tmp_path):
     assert last_run == 1790778683.0
     assert last_with == 1.0
     assert audit._is_stale({"cases": 1, "last_run": last_run}, 100000) is False
+
+
+def test_ledger_backing_repo_is_not_its_own_repo(tmp_path):
+    base = str(tmp_path)
+    repo_a = _build_repo_a(base)
+    backing = os.path.join(base, "Code", "repoA-store")
+    os.makedirs(os.path.join(backing, ".git"))
+    _write(os.path.join(backing, ".trimwrit", "ledger.jsonl"),
+           open(os.path.join(repo_a, ".trimwrit", "ledger.jsonl"), encoding="utf-8").read())
+    _write(os.path.join(backing, "research", "variants", "v1", "CLAUDE.md"), "# copy\n")
+    link = os.path.join(repo_a, ".trimwrit", "ledger.jsonl")
+    os.remove(link)
+    os.symlink(os.path.join(backing, ".trimwrit", "ledger.jsonl"), link)
+
+    result = audit.compute(root=os.path.join(base, "Code"))
+    names = [r["repo_abspath"] if "repo_abspath" in r else r["repo"] for r in result["repos"]]
+    assert len(result["repos"]) == 1
+    assert not any("store" in n for n in names)
+    assert result["summary"]["repo_count"] == 1
+    assert result["summary"]["harness_count"] == 1
+    assert not any("store" in h["path"] for h in result["harnesses"])
+    assert not any("store" in z for z in result["summary"]["zero_cases"])

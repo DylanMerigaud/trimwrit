@@ -21,6 +21,15 @@
   of the same user's scheduler since 2026-09-21: 74 hand-backs read against 20 before, the 54
   new ones all "tu t'en occupes ?" or "tu le prends ?" with no reason given.
 
+## 0.9.5, 2026-10-27
+
+- **audit: a ledger's backing repo is not its own repo.** When one scanned repo's
+  `.trimwrit/ledger.jsonl` is a symlink that resolves to the ledger of another scanned repo, that
+  other repo is storage, and its harness files (research copies, in the case that found it) are
+  no longer counted. `repo_count`, `harness_count`, `zero_cases` and `stale` drop it. No path name
+  is hard coded: the test is the realpath of the ledger. Test with a symlinked ledger into a
+  backing dir holding a CLAUDE.md under a subfolder.
+
 ## 0.9.4, 2026-10-21
 
 - **`trimwrit report` keeps a keyed case with an unmeasured arm.** A case whose current key had
