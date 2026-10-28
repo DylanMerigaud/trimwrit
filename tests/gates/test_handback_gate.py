@@ -117,6 +117,10 @@ NOT_HANDED_BACK = [
     "Un texte que tu as choisi toi-même part avec ta propre validation.",
     "Ton agenda n'a qu'un rendez-vous le 14 oct à 12h, que tu as créé toi-même.",
     "Le repli est un iMessage vers toi-même depuis Messages sur le Mac.",
+    "La liste est arrivée sur ton WhatsApp à 09h18, dans ta discussion avec toi-même.",
+    # The human-only check the refusal itself names, in the words a re-answer used.
+    "Le chiffre 12 reste à toi : c'est ton second facteur Google, personne d'autre ne le valide.",
+    "Only you can log in, because it takes your password and possibly your second factor.",
     # What the machine or an agent does, spelled like an imperative.
     "Le second agent refait la mesure, vérifie chaque chemin, et exécute les 13 tâches.",
     "L'agent revérifie le plan, installe l'app sur le repo, lance la session, puis rend compte.",
@@ -316,6 +320,7 @@ GAP_ALLOWED_SEEN = [
     "Un texte que tu as choisi toi-même part avec ta propre validation.",
     "Ton agenda n'a qu'un rendez-vous le 14 oct à 12h, que tu as créé toi-même.",
     "Le repli est un iMessage vers toi-même depuis Messages sur le Mac.",
+    "La liste est arrivée sur ton WhatsApp à 09h18, dans ta discussion avec toi-même.",
     "Machine :\n- Propose les verdicts\n- Coche les 3 cases automatiquement\n- Compose le "
     "commentaire",
     "Tu m'as dit « fais tout toi-même », donc je l'ai fait : 4 champs remplis, récap lu.",
@@ -455,3 +460,104 @@ def test_javascript_reads_the_grader_like_python():
                                            "t": texts}))
     assert out.returncode == 0, out.stderr
     assert json.loads(out.stdout) == [bool(forbid().search(t)) for t in texts]
+
+
+# ---- the refusal names the exact fix (2026-10-28) ---------------------------------------------
+# Two sessions were each refused five times or more in a week. In the one on this machine (an
+# apostille and a consulate file, seven refusals) five refused texts told a process or a calendar
+# with the user as the subject, and each re-answer only reworded the one phrase quoted; the
+# re-answers that gave a reason used the refusal's own examples ("second facteur", "un paiement",
+# "c'est ta préférence"), which the gate did not read. Cut to the sentence, identifiers neutral.
+DESCRIBED = [
+    "Le dossier sera complet dès que l'apostille arrive, vers le 02/11 si tu déposes le 28/10.",
+    "La suite :\n- le centre traite les actes en 3 jours ;\n- une fois payé, tu télécharges le "
+    "PDF apostillé, et les originaux reviennent par la poste.",
+    "Sans rendez-vous, il reste la poste : tu fais la demande en ligne et tu envoies l'original.",
+    "Quand tu colles un chemin de fichier dans une session, elle va le chercher toute seule.",
+]
+
+
+@pytest.mark.parametrize("text", DESCRIBED)
+def test_a_description_with_the_user_as_subject_is_still_a_hand_back(text):
+    assert gate.handback_in(text, CFG), text
+    assert forbid().search(text), text
+
+
+@pytest.mark.parametrize("text", gate.DESCRIPTIONS)
+def test_the_descriptions_the_refusal_quotes_are_refused(text):
+    # what the refusal says is read like an order is read like one
+    assert gate.handback_in(text, CFG), text
+
+
+@pytest.mark.parametrize("text", [
+    "Une fois payé, je télécharge le PDF.",
+    "Le centre renvoie les originaux par la poste.",
+    "Le dossier sera complet vers le 02/11, après le dépôt du 28/10.",
+])
+def test_the_rewrites_the_refusal_suggests_pass(text):
+    assert not gate.handback_in(text, CFG), text
+
+
+def test_every_word_the_refusal_names_as_a_reason_lifts_a_hand_back():
+    for word in gate.CLASS_WORDS:
+        assert gate.CLASS_RE.search(word), word
+        assert not gate.handback_in("Le reste est à toi de faire, " + word + ".", CFG), word
+    for word in gate.HUMAN_ONLY_WORDS + ("a captcha", "a second factor", "a biometric"):
+        assert gate.HUMAN_ONLY_RE.search(word), word
+        assert not gate.handback_in("Le reste est à toi de faire, " + word + ".", CFG), word
+
+
+def test_no_word_the_refusal_says_is_not_read_lifts_one():
+    for word in gate.NOT_A_CLASS:
+        assert not gate.CLASS_RE.search(word) and not gate.HUMAN_ONLY_RE.search(word), word
+        assert gate.handback_in("Le reste est à toi de faire, " + word + ".", CFG), word
+
+
+def test_the_reason_names_the_words_and_the_description_rule():
+    reason = gate.reason_text(gate.handbacks_in(DESCRIBED[1], CFG), CFG)
+    assert all(w in reason for w in gate.CLASS_WORDS + gate.HUMAN_ONLY_WORDS + gate.NOT_A_CLASS)
+    assert all(d in reason for d in gate.DESCRIPTIONS)
+    assert "a paragraph ends at a blank line" in reason
+    assert LONG_DASH not in reason and EN_DASH not in reason
+
+
+LONG_DASH, EN_DASH = chr(0x2014), chr(0x2013)
+TWO = ("Le courrier est parti.\n\n- une fois payé, tu télécharges le PDF apostillé.\n\n"
+       "Il reste la poste : tu fais la demande en ligne et tu envoies l'original avec une "
+       "enveloppe retour, c'est tout.")
+
+
+def test_every_hand_back_of_the_closing_is_listed_with_its_sentence():
+    found = gate.handbacks_in(TWO, CFG)
+    assert [p for p, _, _ in found] == ["tu télécharges", "tu fais la", "tu envoies"]
+    assert found[0][2] == "- une fois payé, tu télécharges le PDF apostillé."
+    assert found[1][2] == found[2][2] == (
+        "Il reste la poste : tu fais la demande en ligne et tu envoies l'original avec une "
+        "enveloppe retour, c'est tout.")
+    assert gate.handback_in(TWO, CFG) == found[0][:2]
+    reason = gate.reason_text(found, CFG)
+    assert "The gate read 3 of them, rewrite them all in the same answer:" in reason
+    assert "\n- (\"tu télécharges\") in: une fois payé, tu télécharges le PDF apostillé." in reason
+    assert "\n- (\"tu envoies\") in: Il reste la poste" in reason
+
+
+def test_the_first_phrase_keeps_the_shape_a_retraction_gate_reads():
+    # a project hook takes the phrase from the first ("...") of the refusal
+    reason = gate.reason_text(gate.handbacks_in(TWO, CFG), CFG)
+    assert re.search(r"\(\"(.{1,160}?)\"\)", reason).group(1) == "tu télécharges"
+    assert gate.reason_text("colle le jeton", CFG).startswith(
+        "The final message hands the user a gesture or an input (\"colle le jeton\"). Do it")
+
+
+def test_a_long_sentence_is_cut_around_the_phrase():
+    para = "x " * 300 + "tu télécharges le PDF " + "y " * 300
+    s = gate.sentence_of(para, para.index("tu t"), para.index("tu t") + 14)
+    assert len(s) <= gate.SENTENCE_MAX + 6 and "tu télécharges" in s
+    assert s.startswith("...") and s.endswith("...")
+
+
+def test_the_hook_lists_every_hand_back_in_its_block_reason(tmp_path):
+    path = make_transcript(tmp_path, TWO)
+    reason = blocked(run_py(NAME, SCRIPT, stop(path, "two"), tmp_path))
+    assert reason.count("\n- (\"") == 3
+    assert reason.endswith("(handback-gate)")

@@ -1,5 +1,28 @@
 # Changelog
 
+## handback-gate 0.3.0, 2026-10-28
+
+- **The refusal names the exact fix.** Two sessions of one user were each refused five times or
+  more in a week. In the one that could be read (an apostille and a consulate file, seven
+  refusals), five refused texts told a process or a calendar with the user as the subject ("si tu
+  deposes le 28/10", "une fois paye, tu telecharges le PDF"), each re-answer reworded only the
+  one phrase the refusal quoted, and the reasons the re-answers gave were the refusal's own
+  examples ("second facteur", "un paiement", "c'est ta preference"), which the gate did not read.
+  The refusal now lists every hand-back of the closing with its sentence (the first phrase still
+  first, as `("...")`), says that a description with the user as its subject is read like an
+  order and how to write who does it, and names the exact words it reads as a reason and the
+  ones it does not. A test reads those lists against `CLASS_RE` and `HUMAN_ONLY_RE`.
+- **"second factor" is read as the human-only check it is.** The refusal named "a second factor"
+  as a reason and `HUMAN_ONLY_RE` read only "2fa" and "two-factor": "second factor", "second
+  facteur", "deuxieme facteur" and "double authentification" now lift it like "2fa" does. The
+  eval grader is rebuilt from the gate.
+- **"avec toi-meme" describes**, like "vers toi-meme": "ta discussion avec toi-meme" is the name
+  of a messenger's chat with oneself.
+- Measured on 1,636 turn-final messages of the user's sessions on one machine (8 days): 56
+  refusals before, 54 after; the two lifted are the login paragraph that named its second factor
+  and the chat named "avec toi-meme", none added. 8 of the 54 refusals hold a second hand-back
+  the old refusal never named.
+
 ## 0.10.1, 2026-10-27
 
 - **`trimwrit map --name` reaches the static `<title>`.** The page still said `Harness map` in

@@ -28,6 +28,14 @@ biometric, a site whose terms forbid automation). A physical gesture is NOT such
 correction that taught it was "je vais pas faire l'ethernet c'est pas une option". Nothing else
 lifts it: no configuration key adds an exemption.
 
+What the refusal says, so that the re-answer passes: every hand-back of the closing with the
+sentence it sits in (up to LISTED_MAX), the first phrase as ("...") first; that a description
+with the user as its subject is read like an order, and how to write who does it; and the exact
+words the gate reads as a reason (CLASS_WORDS, HUMAN_ONLY_WORDS), with the ones it does not
+(NOT_A_CLASS). A test reads those lists against CLASS_RE and HUMAN_ONLY_RE. Taught 2026-10-28 by
+two sessions refused five times or more in a week: the re-answers reworded only the one phrase
+quoted, and the reasons they gave were the refusal's own examples, which the gate did not read.
+
 Measured before it shipped, on 34,665 turn-final messages of the user's own transcripts (all
 projects, 50 days): all 10 messages his corrections answered are refused, and 384 messages (1.1
 percent) in all. In two hand-labelled random samples, about one in ten refusals was not a hand-back
@@ -152,9 +160,12 @@ HANDBACK_SRC = (r"""
 # English and French.
 CLASS_RE = re.compile(r"\b(?:knowledge|connaissance|irr[ée]versible|external|externe"
                       r"|absente?s?)\b", re.I)
-# A check only a human may pass.
+# A check only a human may pass. "second factor" is the refusal's own example of one: until
+# 2026-10-28 the refusal named it and this did not read it, so a re-answer that wrote "c'est ton
+# second facteur" was refused again.
 HUMAN_ONLY_RE = re.compile(
-    r"\b(?:h?captcha|recaptcha|2fa|two[\s-]factor|otp|one[\s-]time\s+(?:code|password)"
+    r"\b(?:h?captcha|recaptcha|2fa|two[\s-]factor|second[\s-]fact(?:or|eur)s?"
+    r"|deuxi[eè]me\s+facteur|double\s+authentification|otp|one[\s-]time\s+(?:code|password)"
     r"|verification\s+code|code\s+de\s+v[ée]rification|code\s+(?:par\s+)?sms|sms\s+code"
     r"|face\s*id|touch\s*id|passkey|biometric|biom[ée]tri\w*|security\s+key"
     r"|cl[ée]\s+de\s+s[ée]curit[ée]|yubikey)(?!\w)"
@@ -167,10 +178,32 @@ NEGATED = re.compile(r"(?:\b(?:pas|plus|rien|jamais|aucun|aucune|sans|ni|no|not|
                      r"|none|without|nobody|personne)\b|n'|n\u2019|\b(?:don|doesn|won|didn|isn"
                      r"|aren)'?t\b)[^.:;!?\n]{0,25}$", re.I)
 # "toi-meme" after a past tense, a relative clause or a preposition reports or describes:
-# "tu l'as toi-meme retire", "un texte que tu as choisi toi-meme", "un message vers toi-meme".
+# "tu l'as toi-meme retire", "un texte que tu as choisi toi-meme", "un message vers toi-meme",
+# "ta discussion avec toi-meme" (the name of a messenger's chat with oneself).
 REPORTED = re.compile(r"(?:\btu\s+(?:l'|les\s+|la\s+|y\s+)?(?:as|avais|avait|es|[ée]tais)"
                       r"(?:\s+\w+)?|\bl'as-tu(?:\s+\w+)?|\bas-tu(?:\s+\w+)?|\bque\s+tu\s+\w+"
-                      r"|\bviens\s+d'\w+|\bvers|\b[àa]|\bpour|\bde)\s*$", re.I)
+                      r"|\bviens\s+d'\w+|\bvers|\bavec|\b[àa]|\bpour|\bde)\s*$", re.I)
+
+# What the refusal tells the model, kept in lists a test reads against the regexes above: every
+# word the refusal says lifts a hand-back must be one CLASS_RE or HUMAN_ONLY_RE reads, and every
+# word it says does not must be one neither reads (2026-10-28: the refusal named "a second factor",
+# "a payment", "a preference" and "a commitment" as reasons, the gate read none of them, and
+# sessions were refused again on the re-answer that used them).
+CLASS_WORDS = ("knowledge", "connaissance", "irreversible", "irréversible", "external", "externe",
+               "absent", "absente")
+HUMAN_ONLY_WORDS = ("captcha", "2FA", "two-factor", "second factor", "second facteur",
+                    "one-time code", "code de vérification", "code SMS", "Face ID", "Touch ID",
+                    "passkey", "biometric", "security key", "clé de sécurité")
+NOT_A_CLASS = ("a payment", "un paiement", "a preference", "ta préférence", "a commitment",
+               "un engagement", "your password", "ton mot de passe")
+# A description with the user as its subject is read like an order: the shapes of the session
+# that taught it (2026-10-27, an apostille and a consulate file, seven refusals, five of them a
+# process or a calendar told with "tu" as the subject).
+DESCRIPTIONS = ("si tu déposes le 28/10", "une fois payé, tu télécharges le PDF",
+                "tu fais la demande en ligne")
+SENTENCE_MAX = 240
+LISTED_MAX = 4
+SENTENCE_END = re.compile(r"[.!?](?=\s|$)|\n")
 
 CODE = re.compile(r"```.*?```|`[^`\n]{0,300}`", re.S)
 BLOCKQUOTE = re.compile(r"^\s*>.*$", re.M)
@@ -218,13 +251,28 @@ def prose(text):
     return QUOTED.sub(" QUOTE ", t)
 
 
-def handback_in(text, cfg=None):
-    """(the hand-back phrase, its paragraph) for the first paragraph of the tail of `text` that
-    hands the user a gesture without naming why only the user can, else None. Pure."""
+def sentence_of(para, start, end):
+    """The sentence of `para` holding [start, end): from the stop or line break before it to the
+    one after it, cut to SENTENCE_MAX characters around the span."""
+    head = max((m.end() for m in SENTENCE_END.finditer(para[:start])), default=0)
+    after = SENTENCE_END.search(para, end)
+    stop = after.end() if after else len(para)
+    if stop - head > SENTENCE_MAX:
+        room = max(0, (SENTENCE_MAX - (end - start)) // 2)
+        lo, hi = max(head, start - room), min(stop, end + room)
+        return ("..." if lo > head else "") + " ".join(para[lo:hi].split()) + \
+            ("..." if hi < stop else "")
+    return " ".join(para[head:stop].split())
+
+
+def handbacks_in(text, cfg=None):
+    """Every hand-back of the tail of `text` whose paragraph does not name why only the user
+    can, in reading order: a list of (the phrase, its paragraph, its sentence). Pure."""
     tail = (text or "")[-TAIL_CHARS:]
     if tail.lstrip().startswith(("{", "[")):
-        return None
+        return []
     rx = pattern(_settings(cfg))
+    found = []
     for para in re.split(r"\n\s*\n", prose(tail)):
         if CLASS_RE.search(para) or HUMAN_ONLY_RE.search(para):
             continue
@@ -240,22 +288,59 @@ def handback_in(text, cfg=None):
             if re.match(r"toi[\s-]m", m.group(0), re.I) \
                     and REPORTED.search(para[max(0, m.start() - 30):m.start()]):
                 continue
-            return " ".join(m.group(0).split()), para.strip()
-    return None
+            lead = len(m.group(0)) - len(m.group(0).lstrip(".:;!?* \t\n"))
+            found.append((" ".join(m.group(0).split()), para.strip(),
+                          sentence_of(para, m.start() + lead, m.end())))
+    return found
 
 
-def reason_text(phrase, cfg):
-    text = ("The final message hands the user a gesture or an input (\"{}\"). Do it yourself "
-            "first whenever your tools can: fill the form (a placeholder value where a field is "
-            "not the user's to give, a throwaway phone number for instance), run the test or the "
-            "command, tick the boxes, read the page or the mailbox, create the account, paste the "
-            "link. Hand back only what the user alone holds, and say why in the same paragraph: "
-            "KNOWLEDGE (a fact or a preference only the user has), an IRREVERSIBLE or EXTERNAL "
-            "gesture that needs the user's go (a send, a payment, a public post, a commitment), "
-            "a fact ABSENT from every store, file and page you can read, or a check only a human "
-            "may pass (a captcha, a second factor, a biometric, a site whose terms forbid "
-            "automation). A physical gesture is not a reason: find the path that does not need "
-            "it. (handback-gate)".format(phrase[:160]))
+def handback_in(text, cfg=None):
+    """(the hand-back phrase, its paragraph) for the first paragraph of the tail of `text` that
+    hands the user a gesture without naming why only the user can, else None. Pure."""
+    found = handbacks_in(text, cfg)
+    return found[0][:2] if found else None
+
+
+def reason_text(found, cfg):
+    """The block reason. `found` is what handbacks_in returned (a bare phrase is read as one
+    hand-back with no sentence). It quotes the first phrase as ("..."), the shape a retraction
+    gate reads, then each sentence the gate read, so that one re-answer rewrites them all, and
+    names the exact words the gate reads as a reason."""
+    if isinstance(found, str):
+        found = [(found, "", "")]
+    where = "".join("\n- (\"{}\") in: {}".format(p[:160], s.lstrip("-*• "))
+                    for p, _, s in found[:LISTED_MAX] if s)
+    if len(found) > LISTED_MAX:
+        where += "\n- and {} more in the same closing.".format(len(found) - LISTED_MAX)
+    text = ("The final message hands the user a gesture or an input (\"{}\")."
+            .format(found[0][0][:160]))
+    if where:
+        text += (" Where the gate read it:" if len(found) == 1 else
+                 " The gate read {} of them, rewrite them all in the same answer:"
+                 .format(len(found))) + where + "\n"
+    else:
+        text += " "
+    text += ("Do it yourself "
+             "first whenever your tools can: fill the form (a placeholder value where a field is "
+             "not the user's to give, a throwaway phone number for instance), run the test or the "
+             "command, tick the boxes, read the page or the mailbox, create the account, paste the "
+             "link. Hand back only what the user alone holds, and say why in the same paragraph: "
+             "KNOWLEDGE (a fact or a preference only the user has), an IRREVERSIBLE or EXTERNAL "
+             "gesture that needs the user's go (a send, a payment, a public post, a commitment), "
+             "a fact ABSENT from every store, file and page you can read, or a check only a human "
+             "may pass (a captcha, a second factor, a biometric, a site whose terms forbid "
+             "automation). A physical gesture is not a reason: find the path that does not need "
+             "it. A description is read like an order: a step with the user as its subject ({}) "
+             "hands it over even when it only tells a process or a calendar. Write who does it: "
+             "you (\"je télécharge le PDF\"), the third party (\"le centre renvoie les "
+             "originaux\"), no one when it is a date (\"après le dépôt du 28/10\"), or the user "
+             "with the reason named when it is truly the user's. The gate reads the reason from "
+             "these words only, in the same paragraph as the hand-back (a paragraph ends at a "
+             "blank line): {}; or a check by its name: {}; or terms, conditions or CGU that "
+             "forbid automation. {} alone are not read. (handback-gate)").format(
+                 ", ".join("\"{}\"".format(d) for d in DESCRIPTIONS),
+                 ", ".join(CLASS_WORDS), ", ".join(HUMAN_ONLY_WORDS),
+                 ", ".join("\"{}\"".format(w) for w in NOT_A_CLASS))
     suffix = cfg.get("reason_suffix")
     return text + " " + suffix if suffix else text
 
@@ -266,16 +351,16 @@ def on_stop():
         return 0
     cfg = trace.plugin_settings(payload, root=PLUGIN_ROOT)
     pattern(cfg)  # a bad name list or extra is a loud crash even on a clean message
-    found = handback_in(transcript.final_text(payload), cfg)
+    found = handbacks_in(transcript.final_text(payload), cfg)
     if not found:
         trace.chain_clear(HOOK, payload)
         return 0
-    phrase = found[0]
+    phrase = found[0][0]
     if not trace.chain_should_block(HOOK, payload, "handback: " + phrase):
         print(trace.cap_message(HOOK, "handback: " + phrase))
         return 0
     trace.witness("handback_gate", "Stop", "handback_no_class", payload)
-    print(json.dumps({"decision": "block", "reason": reason_text(phrase, cfg)},
+    print(json.dumps({"decision": "block", "reason": reason_text(found, cfg)},
                      ensure_ascii=False))
     return 0
 

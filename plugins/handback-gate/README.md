@@ -38,6 +38,14 @@ site whose terms forbid automation). A physical gesture is not such a reason: th
 taught it was "I won't do the ethernet, it's not an option". Nothing else lifts it, and no
 configuration key adds an exemption.
 
+What the refusal says, so that the re-answer passes: every hand-back of the closing with the
+sentence it sits in, so one re-answer rewrites them all; that a description with the user as its
+subject ("si tu deposes le 28/10", "une fois paye, tu telecharges le PDF") is read like an order,
+and how to write who does it instead (the agent, the third party, no one for a date, or the user
+with the reason named); and the exact words the gate reads as a reason, with the ones it does not
+("a payment", "a preference", "a commitment", "your password" alone). A test reads those lists
+against the gate's own regexes, so the refusal never names a reason the gate would refuse again.
+
 A re-answer in the same stop chain is checked like the first one; after three blocks in a row the
 turn ends, with a visible message and a `cap` row in the ledger. A `SubagentStop` is ignored. A
 crash or a timeout lets the turn end and says so; there is no switch, enable or disable the
