@@ -1,5 +1,11 @@
 # Changelog
 
+## handback-gate 0.4.1, 2026-10-30
+
+- **"tu reponds ?" stays a question.** A card asking whether the user answers a person who wrote
+  to him ("... veut un echange, tu reponds ?") is the user's own inbound, and a project's card bank
+  holds it as a good card. "tu reponds" is read only when no question mark closes it.
+
 ## handback-gate 0.4.0, 2026-10-30
 
 - **Who a gesture belongs to is a hand-back, with or without a verb.** The gate read the user as

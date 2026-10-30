@@ -140,6 +140,7 @@ NOT_HANDED_BACK = [
     "**À toi seul :** le code, un second facteur que personne d'autre ne valide.",
     "That part is yours: a fact absent from every store, only your memory holds it.",
     # The same words saying something else.
+    "Sam Doe te relance pour un poste et veut un échange, tu réponds ?",
     "Ce n'est pas à toi de le faire, la ligne repart seule.",
     "Le domaine est à toi depuis hier.",
     "La page est privée, toi seul peux lire et écrire le brouillon.",

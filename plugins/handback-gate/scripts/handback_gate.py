@@ -97,7 +97,7 @@ FR_PRES = r"""(?:remplis|colles|copies|coches|cliques|imprimes|branches|tapes|cr
   |lances|installes|actives|t[ée]l[ée]charges|d[ée]poses|scannes|signes|r[ée]essaies|r[ée]essayes
   |testes|v[ée]rifies|saisis|renseignes|envoies|stockes|enregistres|te\s+connectes
   |te\s+reconnectes|configures|r[ée]gles|ex[ée]cutes|relances
-  |ach[eè]tes|commandes|acceptes|r[ée]ponds
+  |ach[eè]tes|commandes|acceptes|r[ée]ponds(?!\s*\?)
   |fais\s+(?:le|la|les|un|une|ce|cette|ces|cmd|ctrl)\b)"""
 FR_IMP = r"""(?:remplis|colle|copie|coche|clique|imprime|branche|tape|cr[ée]e|ajoute|lance
   |installe|active|t[ée]l[ée]charge|d[ée]pose|scanne|signe|r[ée]essaie|r[ée]essaye|teste
