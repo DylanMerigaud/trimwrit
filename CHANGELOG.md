@@ -1,5 +1,26 @@
 # Changelog
 
+## handback-gate 0.4.0, 2026-10-30
+
+- **Who a gesture belongs to is a hand-back, with or without a verb.** The gate read the user as
+  the subject of a gesture. A closing that said whose the gesture was, and gave its own reason,
+  passed: "C'est a toi, parce qu'accepter des conditions engage le compte a ton nom" drew "sur
+  l'acceptation des conditions du revendeur => fait le toi meme", and "**A toi seul :** l'achat,
+  parce que c'est ton argent. Dis-moi quand c'est paye" drew "tu peux le faire toi meme via token
+  ?". Now read: "c'est a toi", "a toi seul", a line opening on "A toi :", "ton geste", "ton clic",
+  "de ta main", "te revient", "depend de toi", "il n'y a que toi", "c'est toi qui", "il te suffit",
+  "un tap suffit", "dis-moi quand", an open or coming "POUR TOI" item, "is yours", "yours alone",
+  "stays with you", "only you can", "you call", "tell me when".
+- **More gestures.** Pay, buy, order, accept, confirm, approve, reply: the verbs of the hand-backs
+  above, which the verb lists did not hold.
+- **The refusal says a go is not a hand-over.** Before calling a gesture the user's, check what the
+  tools can reach (a provider's API, a token held); an irreversible gesture they can perform is
+  asked as a go and then performed by the agent. "your money" and "under your name" join the
+  reasons the refusal says are not read.
+- Measured on 897 turn-final messages of the user's sessions on one machine (9 days): 2 refusals
+  before, 83 after, none lost. Read by hand, about 1 in 15 of the new ones is not a hand-back (a
+  rule explained with "c'est toi qui", a mechanism); the eval grader is rebuilt from the gate.
+
 ## handback-gate 0.3.0, 2026-10-28
 
 - **The refusal names the exact fix.** Two sessions of one user were each refused five times or

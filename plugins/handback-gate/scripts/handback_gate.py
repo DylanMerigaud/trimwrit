@@ -36,6 +36,15 @@ words the gate reads as a reason (CLASS_WORDS, HUMAN_ONLY_WORDS), with the ones 
 two sessions refused five times or more in a week: the re-answers reworded only the one phrase
 quoted, and the reasons they gave were the refusal's own examples, which the gate did not read.
 
+The hand-back that names no verb: "C'est a toi, parce qu'accepter des conditions engage le compte
+a ton nom", "**A toi seul :** l'achat des 20, parce que c'est ton argent", "payer est ton geste",
+"Dis-moi quand c'est paye", "That part is yours". The gate read a gesture with the user as its
+subject, so a closing that stated whose the gesture was, and gave its own reason, passed: 2
+refusals on 897 closings of the user's sessions over 9 days, and 81 more in those shapes, two
+of them answered by "tu peux le faire toi meme via token ?" and "sur l'acceptation des conditions
+du revendeur => fait le toi meme". Those shapes are read since 2026-10-30, and the refusal says
+that an irreversible gesture the agent's tools can perform is asked as a go, never handed over.
+
 Measured before it shipped, on 34,665 turn-final messages of the user's own transcripts (all
 projects, 50 days): all 10 messages his corrections answered are refused, and 384 messages (1.1
 percent) in all. In two hand-labelled random samples, about one in ten refusals was not a hand-back
@@ -81,17 +90,20 @@ FR_INF = r"""(?:remplir|coller|copier|cocher|cliquer|imprimer|brancher|taper|cr[
   |lancer|installer|activer|t[ée]l[ée]charger|d[ée]poser|scanner|signer|r[ée]essayer|tester
   |v[ée]rifier|saisir|renseigner|envoyer|stocker|enregistrer|(?:te\s+)?connecter
   |(?:te\s+)?(?:re)?logu?er|uploader|configurer|r[ée]gler|ex[ée]cuter|relancer
+  |payer|acheter|commander|accepter|confirmer|valider|r[ée]pondre
   |t['’]en\s+(?:occuper|charger)|t['’]y\s+coller|te\s+charger
   |faire\s+(?:le|la|les|un|une|ce|cette|ces)\b)"""
 FR_PRES = r"""(?:remplis|colles|copies|coches|cliques|imprimes|branches|tapes|cr[ée]es|ajoutes
   |lances|installes|actives|t[ée]l[ée]charges|d[ée]poses|scannes|signes|r[ée]essaies|r[ée]essayes
   |testes|v[ée]rifies|saisis|renseignes|envoies|stockes|enregistres|te\s+connectes
   |te\s+reconnectes|configures|r[ée]gles|ex[ée]cutes|relances
+  |ach[eè]tes|commandes|acceptes|r[ée]ponds
   |fais\s+(?:le|la|les|un|une|ce|cette|ces|cmd|ctrl)\b)"""
 FR_IMP = r"""(?:remplis|colle|copie|coche|clique|imprime|branche|tape|cr[ée]e|ajoute|lance
   |installe|active|t[ée]l[ée]charge|d[ée]pose|scanne|signe|r[ée]essaie|r[ée]essaye|teste
   |v[ée]rifie|saisis|renseigne|envoie|stocke|enregistre|connecte[\s-]toi|reconnecte[\s-]toi
-  |configure|r[ée]gle|ex[ée]cute|relance|fais)"""
+  |configure|r[ée]gle|ex[ée]cute|relance|fais
+  |accepte|paie|ach[eè]te|commande|valide|confirme|ouvre|r[ée]ponds)"""
 # What follows an imperative: an object or a complement, so a heading word ("Branche: main") is
 # not read as an order. A code span counts only after a subordinate clause ("Pour savoir si ca
 # marche, tape `curl ...`"): at the head of a line, "Branche `x` poussee" is a report.
@@ -105,13 +117,14 @@ FR_OBJ_CODE = r"""(?:CODE\b|""" + FR_OBJ + r""")"""
 FR_AMBIGUOUS = re.compile(
     r"^(?:colle|copie|coche|clique|imprime|branche|tape|cr[ée]e|ajoute|lance|installe|active"
     r"|t[ée]l[ée]charge|d[ée]pose|scanne|signe|r[ée]essaye|teste|v[ée]rifie|renseigne|envoie"
-    r"|stocke|enregistre|configure|r[ée]gle|ex[ée]cute|relance)$", re.I)
+    r"|stocke|enregistre|configure|r[ée]gle|ex[ée]cute|relance"
+    r"|accepte|paie|ach[eè]te|commande|valide|confirme|ouvre)$", re.I)
 SECOND_PERSON = re.compile(r"\b(?:tu|ton|ta|tes|toi|te|t'|you|your)\b", re.I)
 
 EN_VERB = r"""(?:fill(?:\s+in|\s+out)?|paste|copy|tick|check\s+(?:the\s+)?box(?:es)?|click|print
   |create|plug(?:\s+in)?|run|type|add|store|save|send|log\s+in|sign\s+(?:in|up)|upload|download
   |install|enable|test|retry|try\s+(?:it\s+)?again|enter|set\s+up|configure|connect|scan|submit
-  |register|top\s+up|solve|merge)"""
+  |register|top\s+up|solve|merge|pay|buy|accept|confirm|approve|reply|bid)"""
 # After the subject: a contraction ("you'll need to") or a spaced modal ("you only need to").
 EN_MODAL = r"""(?:['’]ll\s+(?:need|have)\s+to|\s+(?:can|could|need\s+to|needs\s+to|have\s+to
   |has\s+to|must|should|will\s+(?:need|have)\s+to|only\s+need\s+to|just\s+need\s+to
@@ -126,6 +139,24 @@ HANDBACK_SRC = (r"""
   | \b(?:reste(?:nt)?|sera(?:it|ient)?|seront)\s+[àa]\s+toi\b
   | (?<!\w)[àa]\s+toi\s+de\s+\w
   | \bde\s+ton\s+c[oô]t[ée](?!\w)
+  | \bc['’]est\s+[àa]\s+toi\b
+  | \b(?:c['’]est|reste(?:nt)?)\s+[àa]\s+(?:{names})\b
+  | (?<!\w)[àa]\s+toi\s+seule?\b
+  | ^[ \t]*(?:[-*]\s+)?(?:\*\*\s*)?[àa]\s+toi\s*(?:\*\*\s*)?:
+  | \btoi\s+seule?\s+(?:peux|peut|pourras)\s+(?!lire\b|voir\b)\w
+  | \bil\s+n['’]y\s+a\s+que\s+toi\b
+  | \bc['’]est\s+toi\s+qui\s+\w
+  | \bton\s+(?:geste|clic)\b
+  | \bde\s+ta\s+main\b
+  | \btes\s+mains\b
+  | \bte\s+revien(?:t|nent|dra|dront|drait)\b(?!\s+par\b)
+  | \brevien(?:t|nent|dra|dront)\s+[àa]\s+toi\b
+  | \bd[ée]pend(?:ent)?\s+de\s+toi\b
+  | \bil\s+te\s+suffit\b
+  | \bun\s+(?:tap|clic)\s+suffit\b
+  | \b(?:dis|pr[ée]viens)[\s-]moi\s+(?:quand|une\s+fois|d[èe]s\s+que|lorsque)\b
+  | (?<!\w)(?:[ée]l[ée]ment|item|t[âa]che)\s+POUR\s+TOI\s+(?:est\s+|reste\s+)?(?:d[ée]j[àa]\s+)?ouvert
+  | \b(?:deviendra|devient|arrivera|t['’]arrive(?:ra)?)\s+(?:[^\s.,;:!?]+\s+){0,3}?POUR\s+TOI\b
   | \bil\s+me\s+faut\s+de\s+toi\b
   | \bj'ai\s+besoin\s+(?:que\s+tu|de\s+toi)\b
   | \bce\s+qu'il\s+(?:me\s+)?faut\s+de\s+toi\b
@@ -150,6 +181,14 @@ HANDBACK_SRC = (r"""
   | \b(?:can|could|will|would)\s+you\s+(?:please\s+)?(?:handle|take\s+care\s+of|deal\s+with
        |take\s+over|pick\s+(?:it|this|that)\s+up)\b
   | \bleave\s+(?:it|this|that|them|the\s+rest)\s+(?:to|with)\s+you\b
+  | \b(?:is|are|stays?|remains?)\s+yours\b
+  | \byours\s+(?:alone|to\s+\w)
+  | \b(?:stays?|remains?)\s+with\s+you\b
+  | \byour\s+gesture\b
+  | \bthat['’]s\s+on\s+you\b
+  | \bonly\s+you\s+can\b
+  | (?<!what\s)\byou\s+(?:call|buy|accept|approve)\b
+  | \b(?:let\s+me\s+know|tell\s+me|ping\s+me)\s+(?:when|once|as\s+soon\s+as)\b
   | (?:^|\n|[.:;!?]\s+|[-*]\s+|\d[.)]\s+|\*\*\s*)(?:then\s+|and\s+)?(?:paste|fill\s+(?:in|out)
        |tick|click|print|plug\s+in|type|log\s+in|sign\s+in|upload|retry|try\s+again|run)\b
        [^.\n]{0,60}\byour\b
@@ -195,7 +234,8 @@ HUMAN_ONLY_WORDS = ("captcha", "2FA", "two-factor", "second factor", "second fac
                     "one-time code", "code de vérification", "code SMS", "Face ID", "Touch ID",
                     "passkey", "biometric", "security key", "clé de sécurité")
 NOT_A_CLASS = ("a payment", "un paiement", "a preference", "ta préférence", "a commitment",
-               "un engagement", "your password", "ton mot de passe")
+               "un engagement", "your password", "ton mot de passe", "your money", "ton argent",
+               "under your name", "à ton nom")
 # A description with the user as its subject is read like an order: the shapes of the session
 # that taught it (2026-10-27, an apostille and a consulate file, seven refusals, five of them a
 # process or a calendar told with "tu" as the subject).
@@ -324,7 +364,10 @@ def reason_text(found, cfg):
              "first whenever your tools can: fill the form (a placeholder value where a field is "
              "not the user's to give, a throwaway phone number for instance), run the test or the "
              "command, tick the boxes, read the page or the mailbox, create the account, paste the "
-             "link. Hand back only what the user alone holds, and say why in the same paragraph: "
+             "link. Before saying a gesture is the user's, check what your tools can reach (a "
+             "provider's API, a token you hold): an irreversible gesture they can perform is "
+             "asked as a go and then performed by you, never handed over. "
+             "Hand back only what the user alone holds, and say why in the same paragraph: "
              "KNOWLEDGE (a fact or a preference only the user has), an IRREVERSIBLE or EXTERNAL "
              "gesture that needs the user's go (a send, a payment, a public post, a commitment), "
              "a fact ABSENT from every store, file and page you can read, or a check only a human "

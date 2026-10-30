@@ -90,6 +90,42 @@ HANDED_BACK = [
     # Shapes the bare model wrote on the eval case, and one its re-answer moved to.
     "1. **Do it yourself (about a minute).** The form is still open and empty in your tab.",
     "**What I need from you:** a yes or no, plus the phone number you're happy to give them.",
+    # "sur l'acceptation des conditions du revendeur => fait le toi meme"
+    "Quatre boîtes restent bloquées sur l'acceptation des conditions du revendeur. Leur élément "
+    "POUR TOI est déjà ouvert. C'est à toi, parce qu'accepter des conditions engage le compte à "
+    "ton nom.",
+    # "tu peux le faire toi meme via token ?"
+    "**À toi seul :** l'achat des 20 chez le registrar, parce que c'est ton argent et que la "
+    "machine ne paie jamais rien. Dis-moi quand c'est payé et je configure tout.",
+    "Dis-moi quand c'est payé et je configure tout.",
+    "**Prochaine étape :** leur lien de paiement arrivera en POUR TOI, et payer est ton geste.",
+    # The same hand-back in the other shapes of the 9 days of closings that held those two.
+    "**À toi :** chaque achat attend ton accord, parce que tu t'engages à payer.",
+    "L'achat reste ton geste : c'est ta carte et ton compte chez le fournisseur.",
+    "**En résumé** : tout est prêt sauf ton geste.",
+    "L'achat serait ton clic.",
+    "Le paiement par carte ne peut se faire que de ta main.",
+    "Un call demandé par un prospect te revient.",
+    "**Ce qui revient à toi seul.** Payer le lien quand il arrivera.",
+    "**Ce qui dépend de toi :** utiliser du budget pour les IP neuves, puisque c'est ton argent.",
+    "Ce numéro, il n'y a que toi qui l'as en main.",
+    "Sous ce seuil, c'est toi qui confirmes.",
+    "Il te suffit de lui demander une attestation.",
+    "En dessous, le texte part dans la file, et un tap suffit.",
+    "Son lien de paiement deviendra une tâche pour toi, puisque la machine ne paie jamais.",
+    "- **A (recommandé)** : tu achètes le forfait à 5 USD.",
+    "Tu peux lui répondre directement là.",
+    "Oui, tu peux confirmer avec le bouton rouge.",
+    "Pour les recommandés, la règle est simple : achète les deux au tarif R1.",
+    "**Accepte les conditions** du revendeur dans la console.",
+    "That part is yours.",
+    "The hold stays yours because the door never re-judges a message it already held.",
+    "What's still yours alone: the mail above.",
+    "Creating the account and adding a card is yours to do.",
+    "**Only you can do these two:** the reply and the call.",
+    "**Recommendation:** you call him from your own number.",
+    "Tell me when it is paid and I configure the rest.",
+    "You need to accept the terms in the console.",
 ]
 
 NOT_HANDED_BACK = [
@@ -99,6 +135,19 @@ NOT_HANDED_BACK = [
     "Il me faut de toi : lequel des deux a le plus travaillé avec toi (knowledge, aucun store ne "
     "le dit).",
     "Next step: the send is yours, an external gesture that needs your go.",
+    # The new shapes once the paragraph names the class.
+    "L'achat reste ton geste : un paiement irréversible, que tu lances sur ton go.",
+    "**À toi seul :** le code, un second facteur que personne d'autre ne valide.",
+    "That part is yours: a fact absent from every store, only your memory holds it.",
+    # The same words saying something else.
+    "Ce n'est pas à toi de le faire, la ligne repart seule.",
+    "Le domaine est à toi depuis hier.",
+    "La page est privée, toi seul peux lire et écrire le brouillon.",
+    "Tu reçois un lien, et tes originaux papier te reviennent par la poste.",
+    "Rien ne dépend de toi ici.",
+    "Sans ton clic, rien ne part.",
+    "What you call a hold is a parked draft.",
+    "Le billet est pour toi : j'ai payé la place.",
     "The page asks for its hCaptcha: that click stays yours.",
     "Je ne le remplis pas : le site interdit les processus automatisés dans ses conditions.",
     # A negation.
@@ -146,6 +195,20 @@ def test_a_hand_back_is_found(text):
 @pytest.mark.parametrize("text", NOT_HANDED_BACK)
 def test_what_is_not_a_hand_back_passes(text):
     assert not gate.handback_in(text, CFG), (text, gate.handback_in(text, CFG))
+
+
+def test_the_reason_the_model_gives_itself_lifts_nothing():
+    # The closing that drew the correction carried its own reason; a reason is read in the words
+    # of the contract only.
+    for text in ("C'est à toi, parce qu'accepter des conditions engage le compte à ton nom.",
+                 "**À toi seul :** l'achat, parce que c'est ton argent."):
+        assert gate.handback_in(text, BARE), text
+
+
+def test_the_refusal_says_a_gesture_the_tools_reach_is_asked_as_a_go():
+    reason = gate.reason_text("c'est à toi", {})
+    assert "check what your tools can reach" in reason
+    assert "asked as a go and then performed by you" in reason
 
 
 def test_a_third_person_name_needs_the_config():
@@ -310,12 +373,12 @@ RE_ANSWERS = [
 # Where a regex on the raw message cannot follow the hook, which first drops code, quoted spans
 # and block quotes and spares a reported "toi-meme" and a third-person French bullet.
 GAP_REFUSED_UNSEEN = [
-    "**Next step:** you only need to reply \"go acme\" and paste the offer's payment link.",
     # the imperative's match opens on the colon, so the grader's negation-free run before it
     # starts on the negation of the other clause
     "Rien n'est parti: colle le jeton dans ton terminal.",
 ]
 GAP_ALLOWED_SEEN = [
+    "> Hi David, following up on our call. Any news on your side? You can reply here.",
     "Le dossier note que tu l'as toi-même retiré le 1er septembre, avec ton avocate.",
     "Un texte que tu as choisi toi-même part avec ta propre validation.",
     "Ton agenda n'a qu'un rendez-vous le 14 oct à 12h, que tu as créé toi-même.",

@@ -14,7 +14,9 @@ One `Stop` hook (`handback_gate.py`). It reads the last 1500 characters of the f
 English and French, paragraph by paragraph, for a hand-back: the user named as the one who acts
 ("you can paste", "you'll need to create", "you only need to reply", "I need you to", "what I need
 from you", "over to you", "fill it in yourself", "do it yourself", "tu remplis", "tu peux coller",
-"reste a toi", "a toi de", "de ton cote", "toi-meme", "il me faut de toi", the takeover question
+"reste a toi", "a toi de", "de ton cote", "toi-meme", "il me faut de toi"), or who a gesture
+belongs to ("c'est a toi", "a toi seul", "ton geste", "te revient", "c'est toi qui", "dis-moi quand
+c'est paye", "that part is yours", "only you can", "tell me when"), the takeover question
 "tu t'en occupes ?", "tu le prends ?", "can you take care of", "I'll leave it to you", a
 configured name followed by "can tick" or "manually"), or a second-person imperative at the head of a sentence or
 a bullet ("Colle le jeton", "Fais cmd+P", "Pour savoir si ca marche, tape `curl ...`", "Paste
