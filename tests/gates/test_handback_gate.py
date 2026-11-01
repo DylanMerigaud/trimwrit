@@ -625,3 +625,150 @@ def test_the_hook_lists_every_hand_back_in_its_block_reason(tmp_path):
     reason = blocked(run_py(NAME, SCRIPT, stop(path, "two"), tmp_path))
     assert reason.count("\n- (\"") == 3
     assert reason.endswith("(handback-gate)")
+
+
+# ---- the prime: the rule reaches the producer before the next closing is drafted --------------
+# One session (2026-10-30, a company dissolution) was refused 7 times in 7 different turns; every
+# re-answer passed at its first try, and 6 compactions erased each refusal from the context. The
+# refused sentences, cut and neutralised: each stays refused, the prime lifts nothing.
+RELAPSE = [
+    "**Your decision (go on an outside mail):** I need three answers from the agent.\n"
+    "- **Go (recommended):** I send those questions from your pro box.\n"
+    "- **No:** you call the registry yourself, with the file number.",
+    "- **Le jour où le montant arrive,** tout peut se faire d'affilée : tu paies sur le portail, "
+    "tu signes le consentement et le certificat, j'envoie le dépôt et tu tapes ta carte.",
+    "**Le test le plus rapide est à toi :** ouvre le portail et entre le numéro.\n"
+    "- **Si un montant s'affiche,** paie-le tout de suite : c'est le calcul de l'État.\n\n"
+    "Ce test te revient pour deux raisons. Les conditions du portail interdisent "
+    "l'automatisation. Et le paiement est irréversible.",
+    "Elle lance aussi les contrôles que la page exécute elle-même quand tu cliques sur « Continue "
+    "Filing », sans rien soumettre.",
+    "Ils ne ferment un compte qu'à solde nul, et c'est toi qui le fermes depuis le tableau de bord "
+    "web.",
+    "**Une hypothèse que toi seul peux corriger** : j'ai traité le code comme distribué à 0 USD.",
+    "**Reco** : quand ils arrivent, tu fais le geste 1 et je mets à jour l'étape.",
+]
+
+
+@pytest.mark.parametrize("text", RELAPSE)
+def test_the_relapse_closings_are_still_refused(text):
+    assert gate.handback_in(text, CFG), text
+
+
+def test_a_reason_in_the_next_paragraph_still_lifts_nothing():
+    found = gate.handbacks_in(RELAPSE[2], CFG)
+    assert [p for p, _, _ in found] == ["** ouvre le", "** paie-le"]
+
+
+@pytest.mark.parametrize("text", gate.PRIME_SHAPES)
+def test_the_shapes_the_prime_names_are_refused(text):
+    assert gate.handback_in(text, CFG), text
+
+
+@pytest.mark.parametrize("text", gate.PRIME_REWRITES)
+def test_the_rewrites_the_prime_names_pass(text):
+    assert not gate.handback_in(text, CFG), text
+
+
+def test_every_word_the_prime_names_as_a_reason_lifts_a_hand_back():
+    for word in gate.CLASS_WORDS + gate.PRIME_CHECKS:
+        assert gate.CLASS_RE.search(word) or gate.HUMAN_ONLY_RE.search(word), word
+        assert not gate.handback_in("Le reste est à toi de faire, " + word + ".", CFG), word
+
+
+def prompt(session, event="UserPromptSubmit", source=None):
+    p = {"hook_event_name": event, "session_id": session, "prompt": "go"}
+    if source is not None:
+        p["source"] = source
+    return p
+
+
+def primed(r, event="UserPromptSubmit"):
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout.strip())["hookSpecificOutput"]
+    assert out["hookEventName"] == event
+    return out["additionalContext"]
+
+
+def test_the_prime_is_silent_in_a_session_never_refused(tmp_path):
+    r = run_py(NAME, SCRIPT, prompt("never"), tmp_path, "--prime")
+    assert (r.returncode, r.stdout.strip()) == (0, "")
+    path = make_transcript(tmp_path, "J'ai rempli le formulaire. Fait.")
+    run_py(NAME, SCRIPT, stop(path, "clean"), tmp_path)
+    r = run_py(NAME, SCRIPT, prompt("clean"), tmp_path, "--prime")
+    assert (r.returncode, r.stdout.strip()) == (0, "")
+
+
+def test_a_refusal_primes_the_next_prompts_of_its_session_only(tmp_path):
+    path = make_transcript(tmp_path, RELAPSE[6])
+    blocked(run_py(NAME, SCRIPT, stop(path, "dissolve"), tmp_path))
+    text = primed(run_py(NAME, SCRIPT, prompt("dissolve"), tmp_path, "--prime"))
+    assert text.startswith("handback-gate refused 1 closing of this session")
+    assert "\"Reco** : quand ils arrivent, tu fais le geste 1 et je mets à jour l'étape\"" in text
+    assert "IN THAT SAME PARAGRAPH" in text and "a paragraph ends at a blank line" in text
+    assert all(w in text for w in gate.CLASS_WORDS + gate.PRIME_CHECKS)
+    assert all(s in text for s in gate.PRIME_SHAPES + gate.PRIME_REWRITES)
+    assert LONG_DASH not in text and EN_DASH not in text
+    other = run_py(NAME, SCRIPT, prompt("another-session"), tmp_path, "--prime")
+    assert other.stdout.strip() == ""
+
+
+def test_the_prime_counts_refusals_and_keeps_the_last_sentences(tmp_path):
+    for i, text in enumerate(RELAPSE[4:7]):
+        path = make_transcript(tmp_path, text, name="t{}.jsonl".format(i))
+        blocked(run_py(NAME, SCRIPT, stop(path, "many"), tmp_path))
+    text = primed(run_py(NAME, SCRIPT, prompt("many"), tmp_path, "--prime"))
+    assert text.startswith("handback-gate refused 3 closings of this session")
+    assert "toi seul peux corriger" in text and "tu fais le geste 1" in text
+    assert "c'est toi qui le fermes depuis le tableau de bord web" not in text.split(
+        "Before you end")[0]
+
+
+def test_the_prime_comes_back_after_a_compaction_and_a_resume(tmp_path):
+    path = make_transcript(tmp_path, RELAPSE[3])
+    blocked(run_py(NAME, SCRIPT, stop(path, "compacted"), tmp_path))
+    for source in ("compact", "resume"):
+        text = primed(run_py(NAME, SCRIPT, prompt("compacted", "SessionStart", source), tmp_path,
+                             "--prime"), "SessionStart")
+        assert "quand tu cliques sur QUOTE" in text
+    startup = run_py(NAME, SCRIPT, prompt("compacted", "SessionStart", "startup"), tmp_path,
+                     "--prime")
+    assert startup.stdout.strip() == ""
+
+
+def test_the_prime_stops_after_its_window_and_a_new_refusal_restarts_it(tmp_path):
+    path = make_transcript(tmp_path, RELAPSE[1])
+    blocked(run_py(NAME, SCRIPT, stop(path, "window"), tmp_path))
+    outs = [run_py(NAME, SCRIPT, prompt("window"), tmp_path, "--prime").stdout.strip()
+            for _ in range(gate.PRIME_PROMPTS + 1)]
+    assert all(outs[:gate.PRIME_PROMPTS]) and outs[-1] == ""
+    late = run_py(NAME, SCRIPT, prompt("window", "SessionStart", "compact"), tmp_path, "--prime")
+    assert late.stdout.strip() == ""
+    blocked(run_py(NAME, SCRIPT, stop(path, "window"), tmp_path))
+    assert "refused 2 closings" in primed(run_py(NAME, SCRIPT, prompt("window"), tmp_path,
+                                                 "--prime"))
+
+
+def test_the_prime_never_blocks_and_a_cap_is_not_counted(tmp_path):
+    path = make_transcript(tmp_path, FORM)
+    for i in range(4):  # three blocks, then the cap lets the turn end
+        run_py(NAME, SCRIPT, stop(path, "capped", active=i > 0), tmp_path)
+    r = run_py(NAME, SCRIPT, prompt("capped"), tmp_path, "--prime")
+    assert "decision" not in json.loads(r.stdout)
+    assert "refused 3 closings" in primed(r)
+
+
+def test_the_hooks_wire_the_prime_before_a_prompt_and_after_a_compaction():
+    with open(os.path.join(plugin(NAME), "hooks", "hooks.json"), encoding="utf-8") as fh:
+        hooks = json.load(fh)["hooks"]
+    want = 'python3 "${CLAUDE_PLUGIN_ROOT}/scripts/handback_gate.py" --prime'
+    assert [h["command"] for g in hooks["UserPromptSubmit"] for h in g["hooks"]] == [want]
+    assert [(g.get("matcher"), h["command"]) for g in hooks["SessionStart"]
+            for h in g["hooks"]] == [("compact|resume", want)]
+    assert [h["command"] for g in hooks["Stop"] for h in g["hooks"]] == \
+        ['python3 "${CLAUDE_PLUGIN_ROOT}/scripts/handback_gate.py"']
+
+
+def test_the_refusal_says_later_closings_are_read_the_same_way():
+    assert "Every later closing of this session is read the same way" in \
+        gate.reason_text(gate.handbacks_in(RELAPSE[6], CFG), CFG)

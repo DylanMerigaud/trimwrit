@@ -48,6 +48,31 @@ with the reason named); and the exact words the gate reads as a reason, with the
 ("a payment", "a preference", "a commitment", "your password" alone). A test reads those lists
 against the gate's own regexes, so the refusal never names a reason the gate would refuse again.
 
+## The prime: the rule before the next closing, not only after it
+
+A refusal teaches the re-answer; the next closing of the same session is drafted without it once
+the turn is over or the context compacted. One session (a company dissolution, 2026-10-30) was
+refused 7 times in 7 different turns: every re-answer passed at its first try, and 6 compactions
+erased each refusal. The refused shapes were an option ("No: you call the registry yourself"), a
+process ("tu signes le consentement et le certificat"), a mechanism ("quand tu cliques sur
+Continue"), a reco pointing at a gesture classified higher up ("tu fais le geste 1") and a reason
+written in the next paragraph.
+
+So a refusal also writes the session's state, and the same script runs as a `UserPromptSubmit`
+hook and as a `SessionStart` hook after a compaction or a resume (`--prime`): for 12 prompts after
+the last refusal it hands the model, as context, the count, the last two sentences refused, the
+shapes above with their rewrites, and the words the gate reads, with the reminder that a reason
+counts only in the same paragraph. In a session the gate never refused it prints nothing. It lifts
+nothing: the `Stop` hook reads every closing exactly as before, and a test reads each shape the
+prime names against the gate (refused) and each rewrite (passes).
+
+Measured before it shipped (`claude -p`, `claude-opus-5-5` at medium effort, hooks off, no tools,
+the user's own global CLAUDE.md loaded, three situations of that session, two runs per arm): the
+first draft of the closing was refused in 5 of 6 runs without the prime and 0 of 6 with it. The
+primed closings kept every gesture that was the user's and named its class in its paragraph
+("externe, irréversible", "ta passkey"); none dropped a step. Six runs per arm is a direction,
+not a rate.
+
 A re-answer in the same stop chain is checked like the first one; after three blocks in a row the
 turn ends, with a visible message and a `cap` row in the ledger. A `SubagentStop` is ignored. A
 crash or a timeout lets the turn end and says so; there is no switch, enable or disable the

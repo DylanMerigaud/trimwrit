@@ -53,6 +53,21 @@ something back, and the legitimate ones (a send only his go starts, a call in hi
 class on the re-answer. "Do it yourself" was learned from the eval case, where the bare model
 wrote it as an option: one more refusal on the same corpus, 385.
 
+THE PRIME. A refusal teaches the re-answer, and the re-answer passed; but the lesson lived only
+in the context of the turn, and the next closing of the same session was drafted without it. The
+session that taught it (2026-10-30, a company dissolution: signatures, payments, a bank closed
+by the user's own passkey) was refused 7 times in 7 different turns, every re-answer passing at
+its first try, while 6 compactions erased each refusal from the context: an option ("No: you call
+Delaware yourself"), a process ("tu signes le consentement et le certificat"), a mechanism
+("quand tu cliques sur Continue Filing"), a reco pointing at a gesture classified higher up ("tu
+fais le geste 1"), a reason written in the NEXT paragraph. So a refusal also writes the session's
+state, and the same script, run as a UserPromptSubmit hook and as a SessionStart hook after a
+compaction or a resume (`--prime`), hands the producer the rule BEFORE it drafts: the count, the
+last sentences refused, the shapes, the words the gate reads. It runs for PRIME_PROMPTS prompts
+after the last refusal (that session's longest gap between two refusals was 6 prompts), says
+nothing in a session the gate never refused, and lifts nothing: the Stop gate reads every closing
+exactly as before.
+
 The bounds: the re-answer of a stop chain is checked like the first answer; the gate lets go after
 CHAIN_CAP blocks in a row (a `cap` row in the ledger and a systemMessage). A crash or a timeout
 lets the turn end and is reported loudly. No environment variable and no configuration key turns
@@ -67,6 +82,9 @@ alternatives (compiled case-insensitive and verbose, so a space inside an extra 
 Outputs:
     exit 0 with nothing on stdout                       the session ends normally
     exit 0 with {"decision": "block", "reason": ...}    the session continues with this message
+
+    exit 0 with {"hookSpecificOutput": {..., "additionalContext": ...}}   (--prime) the rule,
+                                                        before a closing of a refused session
 
 Utilities:
     python3 handback_gate.py --print       what it would say on the last message, blocking nothing
@@ -243,6 +261,22 @@ DESCRIPTIONS = ("si tu déposes le 28/10", "une fois payé, tu télécharges le 
                 "tu fais la demande en ligne")
 SENTENCE_MAX = 240
 LISTED_MAX = 4
+
+# The prime: what a refused session is told before each later closing is drafted. The shapes are
+# the ones the 2026-10-30 session was refused on, cut and neutralised; a test reads each against
+# the gate (refused) and each rewrite (passes), so the prime never names a shape the gate allows
+# or a rewrite it refuses.
+PRIME_SUFFIX = ".handback_gate.prime"
+PRIME_PROMPTS = 12
+PRIME_KEPT = 2
+PRIME_SHAPES = ("No: you call the registry yourself", "quand ils arrivent, tu fais le geste 1",
+                "tu signes le consentement et le certificat", "quand tu cliques sur Continue",
+                "c'est toi qui le fermes depuis le tableau de bord")
+PRIME_REWRITES = ("au clic sur Continue, la page lance ses contrôles",
+                  "le compte se ferme depuis le tableau de bord, à solde nul",
+                  "quand ils arrivent, le geste 1 : ta signature, irréversible")
+PRIME_CHECKS = ("captcha", "2FA", "second factor", "passkey")
+PRIME_EVENTS = ("UserPromptSubmit", "SessionStart")
 SENTENCE_END = re.compile(r"[.!?](?=\s|$)|\n")
 
 CODE = re.compile(r"```.*?```|`[^`\n]{0,300}`", re.S)
@@ -380,12 +414,90 @@ def reason_text(found, cfg):
              "with the reason named when it is truly the user's. The gate reads the reason from "
              "these words only, in the same paragraph as the hand-back (a paragraph ends at a "
              "blank line): {}; or a check by its name: {}; or terms, conditions or CGU that "
-             "forbid automation. {} alone are not read. (handback-gate)").format(
+             "forbid automation. {} alone are not read. Every later closing of this session is "
+             "read the same way, a gesture mentioned again included. (handback-gate)").format(
                  ", ".join("\"{}\"".format(d) for d in DESCRIPTIONS),
                  ", ".join(CLASS_WORDS), ", ".join(HUMAN_ONLY_WORDS),
                  ", ".join("\"{}\"".format(w) for w in NOT_A_CLASS))
     suffix = cfg.get("reason_suffix")
     return text + " " + suffix if suffix else text
+
+
+def prime_path(payload):
+    return trace.session_file(trace.session_key(payload), PRIME_SUFFIX)
+
+
+def prime_state(payload):
+    """The session's refusal state: {"count", "sentences", "since"} (since = prompts submitted
+    after the last refusal), or None in a session the gate never refused."""
+    try:
+        with open(prime_path(payload), encoding="utf-8") as fh:
+            state = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    return state if isinstance(state, dict) and state.get("count") else None
+
+
+def _write_prime(payload, state):
+    with open(prime_path(payload), "w", encoding="utf-8") as fh:
+        json.dump(state, fh, ensure_ascii=False)
+
+
+def record_refusal(payload, found):
+    """One more refusal of this session: the count, the sentences it read, the prompt counter
+    back to 0."""
+    state = prime_state(payload) or {"count": 0, "sentences": []}
+    kept = [s for s in state.get("sentences") or [] if isinstance(s, str)]
+    for _, _, sentence in found:
+        sentence = sentence.lstrip("-*• ")
+        if sentence and sentence not in kept:
+            kept.append(sentence)
+    _write_prime(payload, {"count": int(state.get("count") or 0) + 1,
+                           "sentences": kept[-PRIME_KEPT:], "since": 0})
+
+
+def prime_text(state):
+    """What the producer reads before it drafts a closing in a session the gate refused. Pure."""
+    n = int(state.get("count") or 0)
+    last = [s for s in state.get("sentences") or [] if isinstance(s, str)][-PRIME_KEPT:]
+    quoted = "; ".join("\"{}\"".format(s[:SENTENCE_MAX].rstrip(".!? ")) for s in last)
+    return ("handback-gate refused {} closing{} of this session: a gesture with the user as its "
+            "subject and no reason in its paragraph.{} Before you end a turn here, read each "
+            "paragraph of your closing where the user does something: a step, an option, a reco, "
+            "a process or a mechanism told in the second person ({}). Each one names its real "
+            "actor instead (I, the third party, nobody: {}), or carries IN THAT SAME PARAGRAPH "
+            "a word the gate reads: {}; or a check by its name: {}. A gesture already classified "
+            "higher up needs its word again where it is mentioned again, and a reason in the "
+            "next paragraph is not read: a paragraph ends at a blank line. (handback-gate)"
+            ).format(
+                n, "" if n == 1 else "s",
+                " Last refused: {}.".format(quoted) if quoted else "",
+                ", ".join("\"{}\"".format(s) for s in PRIME_SHAPES),
+                ", ".join("\"{}\"".format(s) for s in PRIME_REWRITES),
+                ", ".join(CLASS_WORDS), ", ".join(PRIME_CHECKS))
+
+
+def on_prime():
+    """UserPromptSubmit, and SessionStart after a compaction or a resume: in a session the gate
+    refused within the last PRIME_PROMPTS prompts, hand the rule to the producer as context."""
+    payload = trace.read_payload()
+    event = payload.get("hook_event_name")
+    if event not in PRIME_EVENTS:
+        return 0
+    if event == "SessionStart" and payload.get("source") not in ("compact", "resume"):
+        return 0
+    state = prime_state(payload)
+    if not state:
+        return 0
+    if event == "UserPromptSubmit":
+        state["since"] = int(state.get("since") or 0) + 1
+        _write_prime(payload, state)
+    if int(state.get("since") or 0) > PRIME_PROMPTS:
+        return 0
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": event,
+                                             "additionalContext": prime_text(state)}},
+                     ensure_ascii=False))
+    return 0
 
 
 def on_stop():
@@ -403,6 +515,7 @@ def on_stop():
         print(trace.cap_message(HOOK, "handback: " + phrase))
         return 0
     trace.witness("handback_gate", "Stop", "handback_no_class", payload)
+    record_refusal(payload, found)
     print(json.dumps({"decision": "block", "reason": reason_text(found, cfg)},
                      ensure_ascii=False))
     return 0
@@ -410,6 +523,8 @@ def on_stop():
 
 def main():
     trace.configure(sys.argv)
+    if "--prime" in sys.argv:
+        return trace.run(HOOK, "UserPromptSubmit", on_prime, TIMEOUT_S)
     if "--print" in sys.argv:
         payload = trace.read_payload() if not sys.stdin.isatty() else {}
         found = handback_in(transcript.final_text(payload), None)
