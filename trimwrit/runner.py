@@ -71,6 +71,9 @@ SUPPORTED = ("regex", "file_exists", "tool_used", "tool_order", "llm")
 # it), which would have killed the ablation along with the leak. A case that needs a tool
 # declares `allowed_tools` in its front matter and gets exactly that list (see run_once).
 ISOLATE_ARGS = ("--setting-sources", "project,local", "--strict-mcp-config", "--tools", "")
+# The judge's arguments: a replay keeps the seeded CLAUDE.md it measures, a judge loads nothing
+# (make_judge says why and what it cost).
+JUDGE_ARGS = ("--safe-mode",) + ISOLATE_ARGS
 
 # Opt in, per case (`sandbox_note: true`) or per run (`--sandbox-note`). Two dig-0004 runs were
 # lost to an honest "there is no repo here, I will not fabricate a report": the model hunted
@@ -386,6 +389,11 @@ def envelope_error(env):
             subtype, " ".join(str(env.get("result") or "").split())[:200])
     if subtype is not None and subtype != SUCCESS_SUBTYPE:
         return "result subtype {}".format(subtype)
+    # A prompt a UserPromptSubmit hook refused comes back as a SUCCESS with zero turns and the
+    # hook's text as its result: the model never ran, so no verdict can be read from it.
+    if env.get("num_turns") == 0:
+        return "the model never ran (0 turns): {}".format(
+            " ".join(str(env.get("result") or "").split())[:200])
     return None
 
 
@@ -506,7 +514,14 @@ def make_judge(claude="claude", model=DEFAULT_JUDGE_MODEL):
     """A judge built on `claude -p`. Returns None when the binary is missing, and the caller
     turns that into a failing grader rather than a silent pass. `model` is a full id, checked
     first, so a bad id fails even where the binary is absent. The judge answers
-    (verdict, modelUsage of its json envelope), the verdict None when it did not answer."""
+    (verdict, modelUsage of its json envelope), the verdict None when it did not answer.
+
+    The call runs under JUDGE_ARGS: `--safe-mode` before ISOLATE_ARGS. A judge reads one rule and
+    one output; it needs no CLAUDE.md, memory, skill, plugin or hook. Without the flag every call
+    loaded the caller's whole harness: on 2026-11-02 two cohort runs of a library harness made
+    2270 judge calls from a repository whose harness weighed about 55k tokens, 72 percent of one
+    night's usage of two accounts. Measured the next day from the same repository: 4.8k tokens
+    of context with `--safe-mode`, the OAuth login kept (`--bare` would need an API key)."""
     require_full_id(model)
     if not shutil.which(claude):
         return None
@@ -515,7 +530,7 @@ def make_judge(claude="claude", model=DEFAULT_JUDGE_MODEL):
         prompt = ("You are grading one output against one rule. Answer with exactly PASS or "
                   "FAIL and nothing else.\n\nRULE:\n{}\n\nOUTPUT:\n{}".format(criteria, text))
         cmd = [claude, "-p", prompt, "--model", model, "--output-format", "json"]
-        cmd.extend(ISOLATE_ARGS)
+        cmd.extend(JUDGE_ARGS)
         # (None, usage) when the judge did not answer: grade_llm makes the run unmeasured.
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180)

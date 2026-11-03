@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.11.0 and oneshot-gate 0.1.0, 2026-11-03
+
+- **The judge loads no harness.** `make_judge` passes `--safe-mode` (`runner.JUDGE_ARGS`). Without
+  it each judge call carried the caller's CLAUDE.md, memory, skills and hook payloads: on
+  2026-11-02 a library harness made 2270 judge calls from a repository whose harness weighed about
+  55k tokens, 72 percent of one night's usage of two accounts. Measured from the same repository:
+  4.8k tokens with the flag, the OAuth login kept. Replays keep `ISOLATE_ARGS` unchanged: they
+  measure the seeded CLAUDE.md.
+- **A run the model never saw is never a verdict.** A prompt a `UserPromptSubmit` hook refused
+  comes back as a SUCCESS envelope with `num_turns: 0`; `envelope_error` now names it, so the judge
+  answers None and the run is unmeasured instead of graded FAIL.
+- **New plugin: oneshot-gate.** A `UserPromptSubmit` hook that refuses, before the first request
+  and at no cost, a `claude -p` session with every tool disabled that still loaded the harness. It
+  reads the session's argv from its claude ancestor (`/proc`, else `ps`). Agents, interactive
+  sessions and `--bare` or `--safe-mode` calls pass.
+
 ## handback-gate 0.4.1, 2026-10-30
 
 - **"tu reponds ?" stays a question.** A card asking whether the user answers a person who wrote

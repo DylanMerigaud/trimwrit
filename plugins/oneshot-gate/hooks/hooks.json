@@ -1,0 +1,17 @@
+{
+  "description": "oneshot-gate: a claude -p that can use no tool never runs with the whole harness loaded",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/oneshot_gate.py\"",
+            "timeout": 10,
+            "statusMessage": "A one-shot call carrying the harness?"
+          }
+        ]
+      }
+    ]
+  }
+}

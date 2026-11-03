@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "oneshot-gate",
+  "displayName": "oneshot-gate",
+  "description": "Refuses, before its first request and at no cost, a claude -p session that disables every tool but still loads the whole harness (CLAUDE.md, memory, skills, hooks): a one-shot answer runs with --safe-mode or --bare.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Dylan Merigaud",
+    "url": "https://github.com/DylanMerigaud"
+  },
+  "homepage": "https://github.com/DylanMerigaud/trimwrit/tree/main/plugins/oneshot-gate",
+  "repository": "https://github.com/DylanMerigaud/trimwrit",
+  "license": "MIT",
+  "keywords": [
+    "cost",
+    "headless",
+    "user-prompt-submit-hook",
+    "gate"
+  ]
+}

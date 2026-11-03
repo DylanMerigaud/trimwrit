@@ -598,3 +598,43 @@ def test_a_judge_that_did_not_answer_leaves_the_run_unmeasured(tmp_path):
     res = runner.apply_graders(case, _result("a real answer"), judge=judge)
     assert res.unmeasured
     assert "judge" in res.error
+
+
+# The envelope `claude -p --output-format json` printed on 2026-11-03 when a UserPromptSubmit hook
+# refused the prompt (usage trimmed): a SUCCESS, zero turns, the hook's text as the result.
+BLOCKED_BY_HOOK = {"type": "result", "subtype": "success", "is_error": False, "num_turns": 0,
+                   "duration_api_ms": 0, "total_cost_usd": 0,
+                   "result": "UserPromptSubmit operation blocked by hook:\n[python3 gate.py]: "
+                             "{\"refused\": \"oneshot-not-lean\"}\n\n\nOriginal prompt: grade"}
+
+
+def test_a_judge_loads_no_harness(tmp_path):
+    # 2026-11-02: without --safe-mode each judge call loaded the caller's CLAUDE.md, memory,
+    # skills and hooks (about 55k tokens from one repository), 2270 times in one night.
+    seen = tmp_path / "argv.json"
+    path = tmp_path / "judge-claude.py"
+    path.write_text(
+        "#!/usr/bin/env python3\nimport json, sys\n"
+        "open({!r}, 'w').write(json.dumps(sys.argv[1:]))\n"
+        "print(json.dumps({{'type': 'result', 'subtype': 'success', 'num_turns': 1, "
+        "'result': 'PASS'}}))\n".format(str(seen)), encoding="utf-8")
+    os.chmod(path, 0o755)
+    judge = runner.make_judge(str(path))
+    assert judge("says hi", "hi")[0] is True
+    import json
+    argv = json.loads(seen.read_text(encoding="utf-8"))
+    assert "--safe-mode" in argv
+    assert argv[argv.index("--tools") + 1] == ""
+    assert "--safe-mode" not in runner.ISOLATE_ARGS, "a replay keeps the CLAUDE.md it measures"
+
+
+def test_a_prompt_a_hook_refused_is_never_a_verdict(tmp_path):
+    assert "never ran" in runner.envelope_error(BLOCKED_BY_HOOK)
+    judge = runner.make_judge(_envelope_claude(tmp_path, BLOCKED_BY_HOOK))
+    assert judge("is it good", "text")[0] is None
+    case = _case([{"type": "llm", "name": "j", "criteria": "is it good"}])
+    res = runner.apply_graders(case, _result("a real answer"), judge=judge)
+    assert res.unmeasured
+    replay = runner.run_once(_plain_case(), runner.ARM_WITH, 0, {},
+                             claude=_envelope_claude(tmp_path, BLOCKED_BY_HOOK))
+    assert replay.unmeasured

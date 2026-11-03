@@ -10,7 +10,7 @@
       "name": "trimwrit",
       "source": "./",
       "description": "A harness rule enters with a test and leaves when the test passes without it.",
-      "version": "0.10.1",
+      "version": "0.11.0",
       "author": { "name": "Dylan Merigaud" },
       "license": "MIT",
       "category": "productivity",
@@ -95,6 +95,16 @@
       "license": "MIT",
       "category": "productivity",
       "tags": ["readability", "identifiers", "stop-hook", "writing", "gate"]
+    },
+    {
+      "name": "oneshot-gate",
+      "source": "./plugins/oneshot-gate",
+      "description": "Refuses, before its first request and at no cost, a claude -p session that disables every tool but still loads the whole harness (CLAUDE.md, memory, skills, hooks): a one-shot answer runs with --safe-mode or --bare.",
+      "version": "0.1.0",
+      "author": { "name": "Dylan Merigaud" },
+      "license": "MIT",
+      "category": "productivity",
+      "tags": ["cost", "headless", "user-prompt-submit-hook", "gate"]
     },
     {
       "name": "main-checkout-guard",
