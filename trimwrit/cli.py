@@ -13,6 +13,7 @@ shows the whole loop as a canvas, plus the one that reads what a rule did after 
   viz        serialize the pipeline into a payload and open it as a local canvas
   stats      aggregate a ledger of rule evaluations and flag runtime candidates
   map        every harness of every repo as a coverage tree, in one self contained page
+  bank       lay out an eval bank on the shared kit (new), or read every RELEASE.json (check)
 
 The CLI is the only writer. Skills call it, they never edit the ledger or a case by hand, and
 that is deliberate: a ledger that a model can edit in prose is a ledger that will disagree with
@@ -28,6 +29,7 @@ import webbrowser
 
 from . import adopt as adopt_mod
 from . import audit as audit_mod
+from . import bank as bank_mod
 from . import cases as cases_mod
 from . import check as check_mod
 from . import decide as decide_mod
@@ -1156,6 +1158,30 @@ def cmd_map(args):
 # ------------------------------------------------------------------ adopt
 
 
+def cmd_bank(args):
+    """`bank new`: a bank laid out on trimwrit/bank.py; `bank check`: every RELEASE.json under a
+    directory read against the envelope (exit 1 on a problem)."""
+    root = os.path.abspath(args.root)
+    if args.bank_cmd == "check":
+        rows = bank_mod.check_tree(os.path.join(root, args.dir))
+        bad = [(b, p) for b, p in rows if p]
+        for b, problems in rows:
+            print("{}  {}".format("ok  " if not problems else "FAIL", b))
+            for problem in problems:
+                print("      " + problem)
+        print("{} release(s), {} without the envelope".format(len(rows), len(bad)))
+        return 1 if bad else 0
+    bank_rel = (args.dir or os.path.join("banks", args.slug)).rstrip("/")
+    files = bank_mod.plan(args.slug, args.judges, args.bar, bank_rel, model=args.model,
+                          producer=args.producer)
+    for rel in bank_mod.lay_out(root, files):
+        print("wrote", rel)
+    print("next: fill CODEBOOK.md section 0 and CORPUS.jsonl with real cases, write answer() "
+          "and grade() in {0}/run.py, then `python3 {0}/run.py --offline` must pass before the "
+          "first real run.".format(bank_rel))
+    return 0
+
+
 def cmd_adopt(args):
     result = adopt_mod.compute(args.root, roots=args.roots, laptop=args.laptop,
                                dry_run=args.dry_run)
@@ -1385,11 +1411,26 @@ def main(argv=None):
     ad.add_argument("--json", action="store_true")
     ad.set_defaults(func=cmd_adopt)
 
+    bk = sub.add_parser("bank", help="an eval bank on the shared kit: lay one out, or read "
+                                     "every RELEASE.json against the envelope")
+    bsub = bk.add_subparsers(dest="bank_cmd", required=True)
+    bn = bsub.add_parser("new", help="lay out CODEBOOK.md, CORPUS.jsonl, run.py and its test")
+    bn.add_argument("slug", help="lowercase words joined by '-'")
+    bn.add_argument("--judges", required=True, help="what the bank judges, one line")
+    bn.add_argument("--bar", required=True, help="'<metric> >= <value>', e.g. 'accuracy >= 0.9'")
+    bn.add_argument("--model", default=None, help="the model id graded (none: deterministic)")
+    bn.add_argument("--producer", default=None, help="the file and function making the call")
+    bn.add_argument("--dir", default=None, help="the bank directory (default: banks/<slug>)")
+    bn.set_defaults(func=cmd_bank)
+    bc = bsub.add_parser("check", help="every RELEASE.json under --dir against the envelope")
+    bc.add_argument("--dir", default=".", help="directory to read (default: the root)")
+    bc.set_defaults(func=cmd_bank)
+
     args = p.parse_args(argv)
     try:
         return args.func(args)
     except (ledger_mod.LedgerError, cases_mod.CaseError, integrate_mod.IntegrateError,
-            RefusedWrite) as exc:
+            bank_mod.BankError, RefusedWrite) as exc:
         print("refused: {}".format(exc), file=sys.stderr)
         return 2
 

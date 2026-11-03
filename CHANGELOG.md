@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.12.0, 2026-11-03
+
+- **Eval banks get one kit.** `trimwrit/bank.py` (standard library only): `load` names the bad
+  line of a JSONL file, `sha` and `bank_sha` fingerprint prompts and a bank's inputs, `run_path`
+  and `latest_run` name runs by UTC stamp, `write_release` writes `RELEASE.json` atomically with
+  an eight key envelope (`schema`, `passed`, `at`, `n`, `bar`, `model`, `bank_sha`, `run`) and the
+  bank's own keys beside it, `released` is the one reading a producer's door makes.
+- **`trimwrit bank new <slug>`** lays out `CODEBOOK.md`, `CORPUS.jsonl`, `run.py` and its offline
+  test on the kit, never over an existing directory; an empty bank fails its own test.
+  **`trimwrit bank check`** reads every `RELEASE.json` under a directory against the envelope.
+
 ## 0.11.0 and oneshot-gate 0.1.0, 2026-11-03
 
 - **The judge loads no harness.** `make_judge` passes `--safe-mode` (`runner.JUDGE_ARGS`). Without

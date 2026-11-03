@@ -858,6 +858,28 @@ summary bucket, `N adopted rule(s) with no case across M repo(s)`, the number th
 exists to make visible. A repo `adopt` has never touched prints `-` in that column, not `0`, so
 a machine nobody has run this on is never mistaken for one with nothing to adopt.
 
+## Eval banks: one kit, not a blank page each time
+
+A rule case replays a correction. A **bank** measures a judgment the machine repeats (a
+classifier, a judge, a drafter) on many labeled inputs. `trimwrit bank new` lays one out:
+
+```
+trimwrit bank new ticket-route --judges "Does the router send a ticket to the right queue" \
+    --bar "accuracy >= 0.9" --model claude-sonnet-5-5 --producer router.py:route
+```
+
+It writes `CODEBOOK.md` (why the judgment, the cases, the bar declared before the first run, dated
+changes), an empty `CORPUS.jsonl`, a `run.py` and its offline test, all on `trimwrit/bank.py`. An
+empty bank fails its own test, so a bank with no cases cannot pass for one. `run.py --offline`
+checks the grader against the expected answers; a real run writes `RUNS/<stamp>.jsonl` and a
+`RELEASE.json` with the same eight keys in every bank (`schema`, `passed`, `at`, `n`, `bar`,
+`model`, `bank_sha`, `run`), the bank's own keys beside them. The producer's door reads
+`bank.released(path)`: true only for that envelope with `passed: true`.
+
+`trimwrit bank check --dir <path>` reads every `RELEASE.json` under a directory and exits 1 on one
+without the envelope. The repository this came from held 15 of them in 15 shapes, and its door
+read `passed` while one bank wrote `released: false`.
+
 ## What this is not
 
 **Not a memory.** Claude Code has had automatic `feedback` memories since v2.1.59. This tool
@@ -915,6 +937,7 @@ instead of passing.
 | `trimwrit audit` | one table for every harness on the machine, and which ones have no case |
 | `trimwrit adopt` | bring the rules written before trimwrit existed into its registry, with no case |
 | `trimwrit map` | every harness of every repo as a coverage tree, in one self contained page |
+| `trimwrit bank` | `new` lays out an eval bank on the shared kit, `check` reads every RELEASE.json against its envelope |
 
 ## See it
 
