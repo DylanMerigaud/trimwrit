@@ -68,6 +68,35 @@ after the last refusal (that session's longest gap between two refusals was 6 pr
 nothing in a session the gate never refused, and lifts nothing: the Stop gate reads every closing
 exactly as before.
 
+THE INPUT ASKED AS A QUESTION (2026-11-04). A closing (an application form, 2,696 characters)
+asked the user, under a header naming the user's knowledge and "absent de tous mes fichiers",
+for the name, date and format of a Paris event, and for "une phrase de toi pour dire si c'est
+bien comme ca que tu le vois" on a reading the agent had already written. Answer: "1. cherche
+toi meme pour l'event paris qui etait sur luma 2. la partie guardrail .... vasi putin brode
+tout". Three paths
+went around the gate, each closed here:
+  1. The window. The asks sat 1,572 characters from the end ("tu reponds" in "Le relecteur pose
+     ensuite ses questions, tu reponds, je resserre" included), and the closing only pointed at them
+     ("tes reponses aux 4 questions"). A closing that points at asks higher up (POINTER_RE) is
+     read whole.
+  2. The class word on a fact a page holds. An event's name, date or link is on its page, its
+     platform, its confirmation mail: neither the user's knowledge nor absent until a search came
+     back empty. A question asking the user for one (LOOKUP_A, LOOKUP_B) is read in the whole
+     message and lifted only by the search said in its paragraph (SEARCHED_RE) or a check only a
+     human may pass; "knowledge" and "absent" do not lift it. An absence claimed over the agent's
+     own files (NARROW_ABSENT: "absent de mes fichiers") is not the class absent anywhere: the
+     contract's absent is absent from every store AND page.
+  3. The confirmation of a reading the agent wrote (CONFIRM_RE: "dis-moi si c'est bien ca",
+     "is that how you see it"): the reading is in hand, so it is used as the agent's and the user
+     corrects it. Lifted by a go on an irreversible or external gesture or a human-only check,
+     never by knowledge.
+Measured on gc-hub, 9,023 turn-final messages of every project over 30 days (pops and headless
+runs included): 16 closings point at asks higher up and the whole read refuses 1 more, the
+incident; the lookup read fires on 1, the incident; the confirmation read on 1, the incident;
+the narrow absence sits in 4 paragraphs and changes no outcome (each names another class).
+"j'attends de toi" and "expect from you" are read with the gesture shapes, the French form of
+"what I need from you".
+
 The bounds: the re-answer of a stop chain is checked like the first answer; the gate lets go after
 CHAIN_CAP blocks in a row (a `cap` row in the ledger and a systemMessage). A crash or a timeout
 lets the turn end and is reported loudly. No environment variable and no configuration key turns
@@ -176,6 +205,8 @@ HANDBACK_SRC = (r"""
   | (?<!\w)(?:[ée]l[ée]ment|item|t[âa]che)\s+POUR\s+TOI\s+(?:est\s+|reste\s+)?(?:d[ée]j[àa]\s+)?ouvert
   | \b(?:deviendra|devient|arrivera|t['’]arrive(?:ra)?)\s+(?:[^\s.,;:!?]+\s+){0,3}?POUR\s+TOI\b
   | \bil\s+me\s+faut\s+de\s+toi\b
+  | \bj['’]attends\s+de\s+toi\b
+  | \bexpect\s+from\s+you\b
   | \bj'ai\s+besoin\s+(?:que\s+tu|de\s+toi)\b
   | \bce\s+qu'il\s+(?:me\s+)?faut\s+de\s+toi\b
   | \btu\s+(?:dois|devras|devrais|peux|pourras|pourrais|n'as\s+qu'[àa]|as\s+juste\s+[àa]
@@ -241,6 +272,67 @@ REPORTED = re.compile(r"(?:\btu\s+(?:l'|les\s+|la\s+|y\s+)?(?:as|avais|avait|es|
                       r"(?:\s+\w+)?|\bl'as-tu(?:\s+\w+)?|\bas-tu(?:\s+\w+)?|\bque\s+tu\s+\w+"
                       r"|\bviens\s+d'\w+|\bvers|\bavec|\b[àa]|\bpour|\bde)\s*$", re.I)
 
+# 2026-11-04, the input asked as a question (see the docstring). The closing points at asks made
+# higher up in the message: "tes reponses aux 4 questions", "les deux questions", "the questions
+# above". The gate then reads the whole message, not only its tail.
+POINTER_RE = re.compile(
+    r"\btes\s+(?:\d+\s+|deux\s+|trois\s+|quatre\s+|cinq\s+)?r[ée]ponses\b"
+    r"|\b(?:les|ces|mes)\s+(?:\d+|deux|trois|quatre|cinq)\s+(?:r[ée]ponses|questions)\b"
+    r"|\bquestions\s+ci-dessus\b"
+    r"|\byour\s+(?:\d+\s+)?answers\b|\b(?:the|these|my)\s+(?:\d+|two|three|four|five)\s+questions\b"
+    r"|\bquestions\s+above\b|\babove\s+questions\b", re.I)
+# A fact a public page holds: the name, date, place, link or format of an event, a company, a
+# page. Asked of the user as a question, it is searched first.
+LOOKUP_THING = (r"(?:[ée]v[ée]nements?|[ée]v[èe]nements?|events?|conf[ée]rences?|confs?|meetups?"
+                r"|salons?|hackathons?|webinaires?|webinars?|ateliers?|workshops?|soir[ée]es?"
+                r"|[ée]ditions?|sommets?|summits?|forums?|keynotes?|talks?|journ[ée]es?|pages?"
+                r"|sites?|websites?|articles?|vid[ée]os?|podcasts?|repos?|entreprises?|bo[îi]tes?"
+                r"|soci[ée]t[ée]s?|startups?|companies|company|cabinets?|offres?|annonces?"
+                r"|postings?|listings?|papers?|livres?|books?|programmes?|programs?|formations?"
+                r"|courses?|cours|concours|awards?)")
+LOOKUP_ATTR = (r"(?:nom(?:\s+exact)?|intitul[ée]|titre|dates?|lieu|adresse|lien|url|format"
+               r"|organisat\w+|h[ôo]tes?|tarifs?|horaires?|ville|(?:exact\s+)?names?|titles?"
+               r"|venue|location|address|links?|urls?|organi[sz]ers?|hosts?|city"
+               r"|when\s+(?:it|this|that)\s+(?:was|is|took)"
+               r"|quand\s+(?:c['’][ée]tait|(?:il|elle|[çc]a)\s+a\s+eu\s+lieu))")
+LOOKUP_A = re.compile(r"\b" + LOOKUP_THING + r"\b[^?\n]{0,80}?\b" + LOOKUP_ATTR + r"\b", re.I)
+LOOKUP_B = re.compile(r"\b" + LOOKUP_ATTR + r"\b[^?\n]{0,40}?\b" + LOOKUP_THING + r"\b", re.I)
+QUESTION = re.compile(r"[^.!?\n]*\?")
+YOU = re.compile(r"\b(?:tu|ton|ta|tes|toi|te|you|your)\b|\bt['’]", re.I)
+# A question about what the user wants is a preference, his to give: "quelle date veux-tu ?"
+CHOICE = re.compile(r"\b(?:veux|voudrais|pr[ée]f[èe]res?|choisis|choisir|souhaites?|want|prefer"
+                    r"|would\s+you\s+like|pick|choose)\b", re.I)
+# The search said done, in the paragraph of the question: what lifts it.
+SEARCHED_RE = re.compile(
+    r"\bj['’]ai\s+(?:d[ée]j[àa]\s+|bien\s+)?(?:cherch[ée]|recherch[ée]|fouill[ée]|trouv[ée])"
+    r"|\bje\s+n['’]ai\s+(?:rien\s+)?trouv[ée]|\bintrouvables?\b"
+    r"|\baucune?\s+(?:page|r[ée]sultat|trace|annonce|mention)s?\b|\brien\s+(?:sur|dans)\s"
+    r"|\bI\s+(?:already\s+)?(?:searched|looked\s+(?:it\s+)?up|looked\s+for|found)\b"
+    r"|\b(?:couldn['’]t|could\s+not|didn['’]t|did\s+not)\s+find\b"
+    r"|\bno\s+(?:page|result|listing|trace|mention)s?\b|\bnot\s+found\s+(?:on|in)\b"
+    r"|\bnothing\s+(?:on|in)\s", re.I)
+# Asking the user to confirm a reading the agent already wrote.
+CONFIRM_RE = re.compile(
+    r"\b(?:dis|dites)(?:[\s-]moi)?\s+si\s+c['’]est\s+(?:bien\s+)?(?:[çc]a\b|comme\s+[çc]a\b|juste\b"
+    r"|correct\b|ce\s+que\b)"
+    r"|\bpour\s+(?:me\s+)?dire\s+si\s+c['’]est\s+(?:bien\s+)?(?:[çc]a\b|comme\s+[çc]a\b|juste\b"
+    r"|correct\b)"
+    r"|\bc['’]est\s+bien\s+comme\s+[çc]a\s+que\s+tu\s+(?:le\s+)?vois\b"
+    r"|\bis\s+(?:that|this)\s+how\s+you\s+see\s+it\b"
+    r"|\btell\s+me\s+(?:if|whether)\s+(?:that|this)\s+(?:is|reads)\s+(?:right|correct|how\s+you)",
+    re.I)
+# The two classes that still lift a confirmation: a go on an irreversible or external gesture.
+GO_CLASS_RE = re.compile(r"\b(?:irr[ée]versible|external|externe)\b", re.I)
+# An absence claimed over the agent's own files only is not the contract's absent (every store,
+# ledger AND page): blanked before the class is read.
+NARROW_ABSENT = re.compile(
+    r"\babsente?s?\s+(?:de|d['’]|from|in|dans)\s+(?:tous\s+|toutes\s+|all\s+"
+    r"|any\s+of\s+)?(?:mes|nos|my|our)\s+(?:propres\s+|own\s+)?(?:fichiers|files|notes|stores?"
+    r"|ledgers?|docs?|documents?|donn[ée]es|data|repos?|d[ée]p[ôo]ts?|m[ée]moires?|memory"
+    r"|sources)\b", re.I)
+NARROW_ABSENT_WORDS = ("absent de tous mes fichiers", "absente de mes fichiers",
+                       "absent from my files", "absent from our notes")
+
 # What the refusal tells the model, kept in lists a test reads against the regexes above: every
 # word the refusal says lifts a hand-back must be one CLASS_RE or HUMAN_ONLY_RE reads, and every
 # word it says does not must be one neither reads (2026-10-28: the refusal named "a second factor",
@@ -259,6 +351,22 @@ NOT_A_CLASS = ("a payment", "un paiement", "a preference", "ta préférence", "a
 # process or a calendar told with "tu" as the subject).
 DESCRIPTIONS = ("si tu déposes le 28/10", "une fois payé, tu télécharges le PDF",
                 "tu fais la demande en ligne")
+# What the refusal adds for a question asking a fact a page holds, and for a reading put to the
+# user to confirm (2026-11-04).
+LOOKUP_TEXT = ("A question that asks the user for a fact a public page holds (the name, date, "
+               "place, link or format of an event, a company, a page) is searched first: the web, "
+               "the event's platform (Luma, Eventbrite, Meetup), the mailbox (its invitation or "
+               "confirmation), the calendar. Use what you find and say where you found it. "
+               "Knowledge or absent does not lift that question: what a page holds is neither "
+               "the user's knowledge nor absent until a search came back empty, and only that "
+               "search, said in its paragraph (\"j'ai cherché sur Luma, Eventbrite et dans la "
+               "boîte : aucune trace\"), lifts it. What only the user's memory holds (what they "
+               "did there, what struck them) stays theirs to give, with its class.")
+CONFIRM_TEXT = ("Asking the user to confirm a reading you already wrote (\"dis-moi si c'est bien "
+                "ça\", \"is that how you see it\") hands back a judgment that is in hand: write "
+                "the sentence, the framing or the choice as yours, use it, and say the user "
+                "can correct it. Knowledge does not lift it; a go on an irreversible or external "
+                "gesture or a check only a human may pass still does.")
 SENTENCE_MAX = 240
 LISTED_MAX = 4
 
@@ -339,16 +447,80 @@ def sentence_of(para, start, end):
     return " ".join(para[head:stop].split())
 
 
+class Held(tuple):
+    """One hand-back: (the phrase, its paragraph, its sentence), unpacked like a tuple, with its
+    `kind`: "gesture" (HANDBACK_SRC), "lookup" (a fact a page holds, asked as a question) or
+    "confirm" (a reading of the agent's put to the user to confirm)."""
+    kind = "gesture"
+
+
+def _held(kind, phrase, para, sentence):
+    found = Held((phrase, para, sentence))
+    found.kind = kind
+    return found
+
+
+def window(text):
+    """What the gesture shapes are read on: the tail of `text`, or the whole message when that
+    tail points at asks made higher up in it (POINTER_RE)."""
+    text = text or ""
+    tail = text[-TAIL_CHARS:]
+    return text if POINTER_RE.search(prose(tail)) else tail
+
+
+def has_class(para):
+    """The paragraph names a word of the asking contract, an absence claimed over the agent's
+    own files not counted (NARROW_ABSENT)."""
+    return bool(CLASS_RE.search(NARROW_ABSENT.sub(" ", para)))
+
+
+def lookups_in(text):
+    """Every question of `text` that asks the user for a fact a public page holds (an event's,
+    a company's or a page's name, date, place, link or format), its paragraph saying no search
+    and no human-only check: a list of Held of kind "lookup". The whole message is read: a
+    question is put to the user wherever it sits. Pure."""
+    found = []
+    for para in re.split(r"\n\s*\n", prose(text or "")):
+        if SEARCHED_RE.search(para) or HUMAN_ONLY_RE.search(para):
+            continue
+        for q in QUESTION.finditer(para):
+            asked = q.group(0)
+            if not (LOOKUP_A.search(asked) or LOOKUP_B.search(asked)):
+                continue
+            if CHOICE.search(asked) or not (YOU.search(asked) or YOU.search(para)):
+                continue
+            sentence = " ".join(asked.split()).lstrip("-*•0123456789.) ")
+            found.append(_held("lookup", sentence[:160], para.strip(), sentence))
+    return found
+
+
+def confirms_in(text):
+    """Every ask of `text` that the user confirm a reading the agent already wrote, its
+    paragraph naming no go on an irreversible or external gesture and no human-only check: a
+    list of Held of kind "confirm". Read on the whole message. Pure."""
+    found = []
+    for para in re.split(r"\n\s*\n", prose(text or "")):
+        if GO_CLASS_RE.search(para) or HUMAN_ONLY_RE.search(para):
+            continue
+        for m in CONFIRM_RE.finditer(para):
+            found.append(_held("confirm", " ".join(m.group(0).split()), para.strip(),
+                               sentence_of(para, m.start(), m.end())))
+    return found
+
+
 def handbacks_in(text, cfg=None):
-    """Every hand-back of the tail of `text` whose paragraph does not name why only the user
-    can, in reading order: a list of (the phrase, its paragraph, its sentence). Pure."""
-    tail = (text or "")[-TAIL_CHARS:]
-    if tail.lstrip().startswith(("{", "[")):
+    """Every hand-back of `text` whose paragraph does not name why only the user can, in
+    reading order: a list of Held, each (the phrase, its paragraph, its sentence). The gesture
+    shapes are read on window(text), then the questions for a fact a page holds and the asks to
+    confirm a reading, on the whole message. Pure."""
+    text = text or ""
+    tail = text[-TAIL_CHARS:]
+    if tail.lstrip().startswith(("{", "[")) or text.lstrip().startswith(("{", "[")):
         return []
     rx = pattern(_settings(cfg))
     found = []
-    for para in re.split(r"\n\s*\n", prose(tail)):
-        if CLASS_RE.search(para) or HUMAN_ONLY_RE.search(para):
+    for para in re.split(r"\n\s*\n", prose(window(text))):
+        if has_class(para) or HUMAN_ONLY_RE.search(para):
             continue
         for m in rx.finditer(para):
             # an imperative's match opens on the stop before it ("Rien n'est parti. Colle le
@@ -363,14 +535,14 @@ def handbacks_in(text, cfg=None):
                     and REPORTED.search(para[max(0, m.start() - 30):m.start()]):
                 continue
             lead = len(m.group(0)) - len(m.group(0).lstrip(".:;!?* \t\n"))
-            found.append((" ".join(m.group(0).split()), para.strip(),
-                          sentence_of(para, m.start() + lead, m.end())))
-    return found
+            found.append(_held("gesture", " ".join(m.group(0).split()), para.strip(),
+                               sentence_of(para, m.start() + lead, m.end())))
+    return found + lookups_in(text) + confirms_in(text)
 
 
 def handback_in(text, cfg=None):
-    """(the hand-back phrase, its paragraph) for the first paragraph of the tail of `text` that
-    hands the user a gesture without naming why only the user can, else None. Pure."""
+    """(the hand-back phrase, its paragraph) for the first hand-back of `text` (handbacks_in)
+    whose paragraph does not name why only the user can, else None. Pure."""
     found = handbacks_in(text, cfg)
     return found[0][:2] if found else None
 
@@ -394,6 +566,11 @@ def reason_text(found, cfg):
                  .format(len(found))) + where + "\n"
     else:
         text += " "
+    kinds = {getattr(f, "kind", "gesture") for f in found}
+    if "lookup" in kinds:
+        text += LOOKUP_TEXT + " "
+    if "confirm" in kinds:
+        text += CONFIRM_TEXT + " "
     text += ("Do it yourself "
              "first whenever your tools can: fill the form (a placeholder value where a field is "
              "not the user's to give, a throwaway phone number for instance), run the test or the "
@@ -414,11 +591,15 @@ def reason_text(found, cfg):
              "with the reason named when it is truly the user's. The gate reads the reason from "
              "these words only, in the same paragraph as the hand-back (a paragraph ends at a "
              "blank line): {}; or a check by its name: {}; or terms, conditions or CGU that "
-             "forbid automation. {} alone are not read. Every later closing of this session is "
-             "read the same way, a gesture mentioned again included. (handback-gate)").format(
+             "forbid automation. {} alone are not read, and an absence claimed over your own "
+             "files ({}) is not the class absent: absent means from every store AND every page. "
+             "A closing that points at asks higher up (\"tes réponses aux 4 questions\") is read "
+             "whole. Every later closing of this session is read the same way, a gesture "
+             "mentioned again included. (handback-gate)").format(
                  ", ".join("\"{}\"".format(d) for d in DESCRIPTIONS),
                  ", ".join(CLASS_WORDS), ", ".join(HUMAN_ONLY_WORDS),
-                 ", ".join("\"{}\"".format(w) for w in NOT_A_CLASS))
+                 ", ".join("\"{}\"".format(w) for w in NOT_A_CLASS),
+                 ", ".join("\"{}\"".format(w) for w in NARROW_ABSENT_WORDS[:2]))
     suffix = cfg.get("reason_suffix")
     return text + " " + suffix if suffix else text
 
@@ -468,7 +649,10 @@ def prime_text(state):
             "actor instead (I, the third party, nobody: {}), or carries IN THAT SAME PARAGRAPH "
             "a word the gate reads: {}; or a check by its name: {}. A gesture already classified "
             "higher up needs its word again where it is mentioned again, and a reason in the "
-            "next paragraph is not read: a paragraph ends at a blank line. (handback-gate)"
+            "next paragraph is not read: a paragraph ends at a blank line. A question for a fact "
+            "a page holds (an event's name, date or link) is searched first, and no class word "
+            "lifts it, only the search said in its paragraph; a reading you wrote is used as "
+            "yours, never put to the user to confirm. (handback-gate)"
             ).format(
                 n, "" if n == 1 else "s",
                 " Last refused: {}.".format(quoted) if quoted else "",

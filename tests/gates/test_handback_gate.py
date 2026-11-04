@@ -126,6 +126,10 @@ HANDED_BACK = [
     "**Recommendation:** you call him from your own number.",
     "Tell me when it is paid and I configure the rest.",
     "You need to accept the terms in the console.",
+    # "1. cherche toi meme pour l'event paris qui etait sur luma 2. la partie guardrail ....
+    # vasi putin brode tout": the French form of "what I need from you", and its English twin.
+    "**Ce que j'attends de toi** (rien de plus) : les 4 réponses du formulaire, en vrac.",
+    "Here is what I expect from you: the signed page, before Friday.",
 ]
 
 NOT_HANDED_BACK = [
@@ -772,3 +776,168 @@ def test_the_hooks_wire_the_prime_before_a_prompt_and_after_a_compaction():
 def test_the_refusal_says_later_closings_are_read_the_same_way():
     assert "Every later closing of this session is read the same way" in \
         gate.reason_text(gate.handbacks_in(RELAPSE[6], CFG), CFG)
+
+
+# ---- the input asked as a question (2026-11-04) -----------------------------------------------
+# The closing the correction answered, names and identifiers neutralised, its length and the
+# place of each ask kept: the asks sit more than TAIL_CHARS from the end, the closing only points
+# at them ("tes réponses aux 4 questions"), the header names the user's knowledge and an absence
+# over the agent's own files, and the event and the reading are both in reach. The correction,
+# verbatim: "1. cherche toi meme pour l'event paris qui etait sur luma 2. la partie guardrail ....
+# vasi putin brode tout".
+ASKED = (
+    "Ton texte compte comme premier jet du « Why us ». Le relecteur lui donne 1 sur 5 : 62 mots, "
+    "il en faut entre 200 et 400, et il pose 4 questions. Le laundering, je ne le ferai pas sur "
+    "ce dossier.\n\n"
+    "**Pourquoi pas le laundering :** passer un texte dans un outil anti-détection avant de "
+    "l'envoyer au labo, c'est leur cacher comment il a été produit, alors qu'ils demandent d'être "
+    "transparent sur l'usage de l'IA. Ce n'est pas un pas que je fais. Il ne sert à rien non plus "
+    ": un texte ne sonne pas IA s'il reste fait de tes mots. C'est ce que vérifient les gates (au "
+    "moins la moitié de tes mots gardés, pas de tournures IA).\n\n"
+    "**Ce que j'attends de toi** (rien de plus) : les 4 réponses du formulaire, écrites comme "
+    "celle-ci, en français et en vrac. Je les traduis mot à mot en anglais, et cette traduction "
+    "reste ton premier jet. Le relecteur pose ensuite ses questions, tu réponds, je resserre. Il "
+    "reste `research`, `work tool` et `timeline`.\n\n"
+    "**Les questions du relecteur sur ton « why »** (les réponses relèvent de ta connaissance, et "
+    "l'événement est absent de tous mes fichiers) :\n"
+    "1. L'événement de Paris : son nom exact, sa date, son format, et ce que tu y as fait ?\n"
+    "2. Qu'est-ce qu'un intervenant a dit ou montré qui t'a marqué ? « Le sérieux » seul ne se "
+    "vérifie pas.\n"
+    "3. « Le plus edge possible », « des personnes brillantes », « ma pierre à l'édifice » se "
+    "lisent comme une motivation de carrière. Sur quelle question de sécurité veux-tu bosser, et "
+    "pourquoi chez eux ?\n"
+    "4. Le lien entre ton usage de l'assistant et leur recherche. Dans tes données : écrire une "
+    "règle dans les instructions n'a pas bougé ton taux de corrections (4,6 % puis 4,7 %). Une "
+    "gate qui bloque l'action, si : les fins de tour qui te renvoyaient une question sont passées "
+    "de 44 sur 844 à 0 sur 352. C'est la question que posent deux bancs d'essai publics : un "
+    "monitor voit-il un agent qui ne fait pas ce qu'on lui a dit ? Une phrase de toi pour dire si "
+    "c'est bien comme ça que tu le vois.\n\n"
+    "Ton texte est rangé dans `career/drafts/candidature/` (le français tel quel, plus la "
+    "traduction littérale).\n\n"
+    "---\n"
+    "**Conclusion :** le premier jet du « why » est là. Il est trop court et trop générique, mais "
+    "tes réponses aux 4 questions suffisent à le passer à 4 ou 5 sur 5. Pas de laundering de ma "
+    "part.\n"
+    "- **Répondre aux 4 questions en vrac (recommandé) :** 5 minutes, et le « why » est complet.\n"
+    "- **Passer d'abord à `research` :** c'est le champ le plus fort, mais le « why » reste à 1 "
+    "sur 5 en attendant.\n\n"
+    "**Suite :** tes réponses aux 4 questions, en français comme ce message ; elles relèvent de "
+    "ta connaissance. Dès que je les ai, je traduis, je relance le relecteur et la gate, et je te "
+    "renvoie le texte.")
+
+
+def kinds(found):
+    return [(f.kind, f[0]) for f in found]
+
+
+def test_the_closing_of_2026_11_04_is_refused_on_each_path():
+    assert len(ASKED) - ASKED.index("tu réponds") > gate.TAIL_CHARS
+    assert kinds(gate.handbacks_in(ASKED, CFG)) == [
+        ("gesture", "j'attends de toi"),
+        ("gesture", "tu réponds"),
+        ("lookup", "L'événement de Paris : son nom exact, sa date, son format, et ce que tu y as "
+                   "fait ?"),
+        ("confirm", "pour dire si c'est bien comme ça"),
+    ]
+
+
+def test_a_closing_that_points_at_asks_above_is_read_whole():
+    unpointed = ASKED.replace("tes réponses aux 4 questions", "la suite")
+    assert [f.kind for f in gate.handbacks_in(unpointed, CFG)] == ["lookup", "confirm"]
+    far = "Colle le jeton dans ton terminal.\n\n" + "x " * 1000
+    assert not gate.handback_in(far + "\n\nFait, rien en vol.", CFG)
+    for pointer in ("**Suite :** tes réponses aux 2 questions.", "Next: your answers, then I ship.",
+                    "J'attends les deux réponses.", "Answer the three questions above."):
+        assert gate.handback_in(far + "\n\n" + pointer, CFG), pointer
+
+
+LOOKUPS = [
+    "Les questions (ta connaissance, absent de tous mes fichiers) :\n1. L'événement de Paris : "
+    "son nom exact, sa date, son format ?",
+    "What was the name and the date of the meetup you spoke at? That is your knowledge.",
+    "Tu as le lien de la page de l'offre ? C'est absent de tout ce que je lis.",
+    "C'était quand, le hackathon, et quel était son nom ? Une connaissance à toi.",
+    "Il me manque une chose (knowledge) : the venue of the conference you went to?",
+]
+NOT_LOOKUPS = [
+    "J'ai cherché sur Luma, Eventbrite et dans ta boîte : aucune trace. Son nom exact et sa date "
+    "pour l'événement ?",
+    "I searched the event platforms and your mailbox and found nothing: what was the name of the "
+    "event you went to?",
+    "Quelle date veux-tu pour l'événement ?",
+    "Which event does your history screen read for each step, and what does it show?",
+    "Le nom de l'événement est Paris AI Day, le 12 juin : je l'ai trouvé sur Luma.",
+    "Ce que tu y as fait ce jour-là, et ce qui t'a marqué ? C'est ta connaissance.",
+    "Pouvez-vous me confirmer la date de l'événement et le lieu ?",
+    "La page de l'événement demande un captcha : son nom exact et sa date, tu les as ?",
+]
+
+
+@pytest.mark.parametrize("text", LOOKUPS)
+def test_a_fact_a_page_holds_is_searched_whatever_class_is_named(text):
+    found = gate.handbacks_in(text, CFG)
+    assert [f.kind for f in found] == ["lookup"], (text, found)
+    assert gate.LOOKUP_TEXT in gate.reason_text(found, CFG)
+
+
+@pytest.mark.parametrize("text", NOT_LOOKUPS)
+def test_a_search_said_a_choice_or_a_memory_is_no_lookup(text):
+    assert not gate.handback_in(text, CFG), (text, gate.handbacks_in(text, CFG))
+
+
+CONFIRMS = [
+    "Une phrase de toi pour dire si c'est bien comme ça que tu le vois. C'est ta connaissance.",
+    "Dis-moi si c'est bien ça, ta connaissance seule le dit.",
+    "That is the framing I wrote from your data. Is that how you see it? Your knowledge.",
+    "C'est bien comme ça que tu le vois ?",
+]
+NOT_CONFIRMS = [
+    "Dis-moi si c'est bien ça avant l'envoi : un envoi externe et irréversible.",
+    "Il m'a demandé si c'est bien comme ça qu'il faut le voir, je lui ai répondu.",
+    "Je l'ai écrit comme je le lis, tu peux le corriger si ce n'est pas ça.",
+]
+
+
+@pytest.mark.parametrize("text", CONFIRMS)
+def test_a_reading_in_hand_is_not_put_to_the_user_to_confirm(text):
+    found = gate.handbacks_in(text, CFG)
+    assert [f.kind for f in found] == ["confirm"], (text, found)
+    assert gate.CONFIRM_TEXT in gate.reason_text(found, CFG)
+
+
+@pytest.mark.parametrize("text", NOT_CONFIRMS)
+def test_a_go_or_a_report_is_no_confirmation(text):
+    assert not gate.handback_in(text, CFG), (text, gate.handbacks_in(text, CFG))
+
+
+def test_an_absence_over_the_agents_own_files_is_not_the_class():
+    for words in gate.NARROW_ABSENT_WORDS:
+        assert gate.CLASS_RE.search(words) and gate.NARROW_ABSENT.search(words), words
+        assert gate.handback_in("Le reste est à toi de faire, " + words + ".", CFG), words
+    assert not gate.handback_in("Le reste est à toi de faire : un fait absent de tous les "
+                                "stores et de toutes les pages que je lis.", CFG)
+    assert not gate.handback_in("Le reste est à toi de faire, " + gate.NARROW_ABSENT_WORDS[0]
+                                + ", et c'est ta connaissance.", CFG)
+
+
+def test_the_refusal_names_the_new_paths_and_carries_no_dash():
+    found = gate.handbacks_in(ASKED, CFG)
+    reason = gate.reason_text(found, CFG)
+    assert reason.startswith("The final message hands the user a gesture or an input "
+                             "(\"j'attends de toi\").")
+    assert gate.LOOKUP_TEXT in reason and gate.CONFIRM_TEXT in reason
+    assert all(w in reason for w in gate.NARROW_ABSENT_WORDS[:2])
+    assert "is read whole" in reason
+    for text in (reason, gate.LOOKUP_TEXT, gate.CONFIRM_TEXT, gate.prime_text({"count": 1})):
+        assert LONG_DASH not in text and EN_DASH not in text
+    plain = gate.reason_text(gate.handbacks_in("Colle le jeton dans ton terminal.", CFG), CFG)
+    assert gate.LOOKUP_TEXT not in plain and gate.CONFIRM_TEXT not in plain
+
+
+def test_the_hook_blocks_the_closing_of_2026_11_04(tmp_path):
+    path = make_transcript(tmp_path, ASKED)
+    reason = blocked(run_py(NAME, SCRIPT, stop(path, "asked"), tmp_path))
+    assert reason.count("\n- (\"") == 4
+    assert "searched first" in reason and "use it" in reason
+    text = primed(run_py(NAME, SCRIPT, prompt("asked"), tmp_path, "--prime"))
+    assert "A question for a fact a page holds" in text

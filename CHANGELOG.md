@@ -1,5 +1,27 @@
 # Changelog
 
+## handback-gate 0.6.0, 2026-11-04
+
+- **An input asked as a question is held too.** A closing asked the user, under a header naming
+  their knowledge and "absent de tous mes fichiers", for the name, date and format of an event,
+  and to confirm a reading the agent had already written; the answer was "cherche toi meme pour
+  l'event paris qui etait sur luma ... brode tout". Three paths went around the gate:
+  - **The window.** The asks sat 1,572 characters from the end and the closing only pointed at
+    them ("tes reponses aux 4 questions"). A closing that points at asks higher up is read whole.
+  - **The class word on a fact a page holds.** A question asking the user for the name, date,
+    place, link or format of an event, a company or a page is read in the whole message and
+    lifted only by the search said in its paragraph ("j'ai cherche sur Luma ... aucune trace") or
+    a human-only check, never by "knowledge" or "absent". An absence claimed over the agent's own
+    files ("absent de mes fichiers") is no longer read as the class absent anywhere.
+  - **The confirmation of a reading in hand** ("dis-moi si c'est bien ca", "is that how you see
+    it") is refused unless its paragraph names a go on an irreversible or external gesture or a
+    human-only check.
+  - "j'attends de toi" and "expect from you" are read with the gesture shapes.
+- Measured on 9,023 turn-final messages of every project over 30 days: 167 refused before, 171
+  now, none lost; the 4 new ones are the incident and three asks of one session that named no
+  class word ("J'attends de toi : le nombre de domaines"). The refusal and the prime name each
+  new path. Each hand-back found is a `Held` tuple with a `kind`: gesture, lookup or confirm.
+
 ## resume-on-api-error 0.2.0, 2026-11-04
 
 - **A safeguards flag is never resumed.** On 2026-11-04 a session flagged by the API's safeguards

@@ -73,6 +73,32 @@ primed closings kept every gesture that was the user's and named its class in it
 ("externe, irréversible", "ta passkey"); none dropped a step. Six runs per arm is a direction,
 not a rate.
 
+## The input asked as a question
+
+A closing (2,696 characters, an application form) asked the user, under a header naming their
+knowledge and "absent de tous mes fichiers", for the name, date and format of a Paris event, and
+for "une phrase de toi pour dire si c'est bien comme ca que tu le vois" on a reading the agent had
+already written. The answer: "cherche toi meme pour l'event paris qui etait sur luma ... la partie
+guardrail .... vasi putin brode tout". Three paths went around the gate, each closed in 0.6.0:
+
+- **The window.** The asks sat 1,572 characters from the end, and the closing only pointed at
+  them ("tes reponses aux 4 questions"). A closing that points at asks made higher up ("tes
+  reponses", "les deux questions", "your answers", "the questions above") is read whole.
+- **The class word on a fact a page holds.** An event's, a company's or a page's name, date,
+  place, link or format is on its page, its platform, its confirmation mail. A question asking the
+  user for one is read in the whole message and lifted only by the search said in its paragraph
+  ("j'ai cherche sur Luma, Eventbrite et dans la boite : aucune trace") or a human-only check;
+  "knowledge" and "absent" do not lift it. A question about what the user wants ("quelle date
+  veux-tu ?") and what only their memory holds stay theirs. An absence claimed over the agent's
+  own files ("absent de mes fichiers") is not the class absent anywhere: the contract's absent is
+  absent from every store and every page.
+- **The confirmation of a reading in hand** ("dis-moi si c'est bien ca", "is that how you see
+  it"): the agent writes the sentence as its own and the user corrects it. Lifted by a go on an
+  irreversible or external gesture or a human-only check, never by knowledge.
+
+On 9,023 turn-final messages of every project over 30 days: 167 refused before, 171 now, none
+lost; the 4 new ones are the incident and three asks of one session that named no class word.
+
 A re-answer in the same stop chain is checked like the first one; after three blocks in a row the
 turn ends, with a visible message and a `cap` row in the ledger. A `SubagentStop` is ignored. A
 crash or a timeout lets the turn end and says so; there is no switch, enable or disable the
@@ -134,8 +160,11 @@ end of that extra. Each extra is wrapped in `(?:...)` and added as one more alte
 ## Python API
 
 `handback_gate.handback_in(text, cfg=None) -> (phrase, paragraph) | None` returns the first
-hand-back in the closing 1500 characters of `text` whose paragraph names no reason only the user
-can, else None. With no `cfg` it loads the settings of the current directory.
+hand-back of `text` whose paragraph names no reason only the user can, else None: the gesture
+shapes in the closing 1500 characters (the whole message when they point at asks above), then
+the questions for a fact a page holds and the asks to confirm a reading, anywhere in it.
+`handbacks_in` returns them all, each a `Held` tuple (phrase, paragraph, sentence) with its
+`kind`. With no `cfg` it loads the settings of the current directory.
 
 Utility for a hand run: `python3 scripts/handback_gate.py --print` reads a Stop payload on stdin
 and says what it would refuse, blocking nothing.
