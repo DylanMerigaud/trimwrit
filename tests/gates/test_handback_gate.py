@@ -7,13 +7,14 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 
 import pytest
 
-from gates._hook import ROOT, eval_cases, plugin, rows, run_py, write_config
+from gates._hook import ROOT, clean_env, eval_cases, plugin, rows, run_py, write_config
 
 NAME = "handback-gate"
 SCRIPT = "handback_gate.py"
@@ -125,6 +126,14 @@ HANDED_BACK = [
     "**Only you can do these two:** the reply and the call.",
     "**Recommendation:** you call him from your own number.",
     "Tell me when it is paid and I configure the rest.",
+    # The same shapes next to the three subjects that are not the user (2026-11-04): each one
+    # stays a hand-back with the user as its subject.
+    "You can tell me when it is signed, and I file it.",
+    "You'll let me know once the transfer is done.",
+    "Tell me as soon as the code arrives and I finish the form.",
+    "**Recommandé :** envoie les noms des références en vrac, en français.",
+    "**Colle le jeton** dans ton terminal.",
+    "Tu paies toi-même sur le portail, puis je télécharge le reçu.",
     "You need to accept the terms in the console.",
     # "1. cherche toi meme pour l'event paris qui etait sur luma 2. la partie guardrail ....
     # vasi putin brode tout": the French form of "what I need from you", and its English twin.
@@ -189,6 +198,13 @@ NOT_HANDED_BACK = [
     # A finished report.
     "DONE: 3 rows merged, sha abc123. Nothing waits on you.",
     "J'ai rempli les 4 champs avec un numéro factice et lu le récapitulatif : 16 euros par mois.",
+    # Subjects that are not the user, refused in primed sessions after 2026-11-01, where no prime
+    # could help: a watcher, a bold code span, a wish the user had.
+    "The disk is paid for but not attached yet. A watch will tell me as soon as the host "
+    "delivers it, and I'll mount it then.",
+    "- **`tests/test_game_facts.py`** vérifie dans le code client les faits que le doc en tire.",
+    "Le paiement se fait en espèces, versé à l'hôte avant l'arrivée, alors que tu voulais payer "
+    "toi-même à distance.",
 ]
 
 
@@ -383,6 +399,8 @@ GAP_REFUSED_UNSEEN = [
     "Rien n'est parti: colle le jeton dans ton terminal.",
 ]
 GAP_ALLOWED_SEEN = [
+    "Le paiement se fait en espèces, versé à l'hôte avant l'arrivée, alors que tu voulais payer "
+    "toi-même à distance.",
     "> Hi David, following up on our call. Any news on your side? You can reply here.",
     "Le dossier note que tu l'as toi-même retiré le 1er septembre, avec ton avocate.",
     "Un texte que tu as choisi toi-même part avec ta propre validation.",
@@ -443,9 +461,10 @@ def unverbose(src):
 
 def for_javascript(src):
     """No named group, the apostrophes as escapes (the pattern sits in single quotes), and the
-    placeholder the hook puts where a code span was read as the backtick that opens one."""
+    placeholder the hook puts where a code span was read as the backtick that opens one, or,
+    before a closing bold marker, as the backtick that closes one."""
     return (src.replace("(?P<bullet>", "(?:").replace("'", r"\x27").replace("\u2019", r"\u2019")
-            .replace(r"CODE\b", "`"))
+            .replace(r"CODE\b", "`").replace(r"(?<!CODE\s)", "(?<!`)"))
 
 
 def grader_pattern():
@@ -941,3 +960,144 @@ def test_the_hook_blocks_the_closing_of_2026_11_04(tmp_path):
     assert "searched first" in reason and "use it" in reason
     text = primed(run_py(NAME, SCRIPT, prompt("asked"), tmp_path, "--prime"))
     assert "A question for a fact a page holds" in text
+
+
+# ---- the check: the gate handed to the producer as a command (2026-11-04) ----------------------
+# A session primed before every closing (2026-11-03, a job application: forms, references, a
+# submit click) was still refused 4 more times. The refused sentences, cut and neutralised: a
+# reason in other words, an argument with the user as subject, a reco repeating a gesture
+# classified in a table above it (the re-answer to another Stop hook's refusal), a page to open.
+PRIMED_RELAPSE = [
+    "**What only you can do**\n- **The written answers:** the lab's policy asks for your own first "
+    "draft.\n- **References and length:** the length depends on dates only you know.",
+    "Laver le texte, ce serait masquer un usage d'IA au lecteur qui a fixé la règle, alors que tu "
+    "coches Yes sur leur politique IA dans le formulaire.",
+    "**Still empty, since only you can fill them:**\n- **References (required):** none of my files "
+    "names any, and choosing them is your call.\n- **Start date (optional):** I don't have that "
+    "information.",
+    "| Point | État |\n|---|---|\n| References | **À toi (connaissance) :** 2 ou 3 noms |\n\n"
+    "**Recommandé :** envoie les noms des références en vrac, en français.",
+    "Pour les voir, ouvre l'écran du serveur dans n'importe quel navigateur de ton réseau privé : "
+    "https://hub.example.ts.net.",
+]
+# What the same session wrote once the refusal had named the fix: each one passes.
+PRIMED_REWRITES = [
+    "**Recommandé : 2 ou 3 noms en vrac, en français.** Pour chacun, son poste actuel et ce que "
+    "vous avez fait ensemble. Ces noms relèvent de ta connaissance et n'apparaissent dans aucun de "
+    "mes fichiers.",
+    "Correction : la case de la politique IA, c'est moi qui la coche quand je remplis le formulaire.",
+    "Correction : je te montre moi-même les deux formulaires sur une page, il n'y a rien à ouvrir.",
+]
+
+
+@pytest.mark.parametrize("text", PRIMED_RELAPSE)
+def test_the_primed_relapse_closings_are_refused(text):
+    assert gate.handback_in(text, CFG), text
+    code, report = gate.check_report(text, CFG)
+    assert code == 1 and report.count("\n- (\"") == len(gate.handbacks_in(text, CFG)), report
+
+
+@pytest.mark.parametrize("text", PRIMED_REWRITES)
+def test_the_primed_rewrites_pass(text):
+    assert gate.check_report(text, CFG) == (
+        0, "handback-gate --check: passes, the Stop hook would let this text end the turn.")
+
+
+def test_the_check_is_the_stop_hooks_own_reading():
+    for text in HANDED_BACK + NOT_HANDED_BACK + RELAPSE + DESCRIBED + PRIMED_RELAPSE + [TWO]:
+        found = gate.handbacks_in(text, CFG)
+        code, report = gate.check_report(text, CFG)
+        assert code == (1 if found else 0), text
+        for _, _, sentence in found:
+            assert sentence.lstrip("-*• ") in report, (sentence, report)
+
+
+def test_the_check_names_the_words_it_reads_and_the_ones_it_does_not():
+    _, report = gate.check_report(PRIMED_RELAPSE[2], CFG)
+    assert all(w in report for w in gate.CLASS_WORDS + gate.HUMAN_ONLY_WORDS + gate.PRIME_NOT_READ)
+    assert LONG_DASH not in report and EN_DASH not in report
+    for word in gate.PRIME_NOT_READ:
+        assert word in gate.NOT_A_CLASS, word
+
+
+def test_the_check_reads_a_file_or_stdin_with_the_configured_names(tmp_path):
+    write_config(tmp_path, {"handback-gate": {"user_names": ["Dylan"]}})
+    draft = tmp_path / "draft.md"
+    draft.write_text("Le formulaire est prêt.\n\nDylan can tick the 23 boxes if needed.\n",
+                     encoding="utf-8")
+    r = run_py(NAME, SCRIPT, "", tmp_path, "--check", str(draft))
+    assert r.returncode == 1 and "(\"Dylan can tick\") in: Dylan can tick" in r.stdout, r
+    r = run_py(NAME, SCRIPT, PRIMED_REWRITES[0], tmp_path, "--check")
+    assert (r.returncode, r.stdout.strip()) == (
+        0, "handback-gate --check: passes, the Stop hook would let this text end the turn.")
+    assert rows(os.path.join(str(tmp_path), "door-refusals.jsonl")) == []
+
+
+def test_the_check_never_passes_what_it_could_not_read(tmp_path):
+    r = run_py(NAME, SCRIPT, "", tmp_path, "--check", str(tmp_path / "missing.md"))
+    assert r.returncode == 2 and "missing.md" in r.stderr and r.stdout == ""
+    write_config(tmp_path, {"handback-gate": {"user_names": "Dylan"}})
+    r = run_py(NAME, SCRIPT, "Fait.", tmp_path, "--check")
+    assert r.returncode == 2 and "user_names" in r.stderr
+
+
+def test_the_check_command_runs_as_written(tmp_path):
+    # the exact heredoc the prime and the refusal hand the model, run by bash from a project
+    os.makedirs(str(tmp_path / ".claude"))
+    with open(str(tmp_path / ".claude" / "trimwrit-gates.json"), "w", encoding="utf-8") as fh:
+        json.dump({"handback-gate": {"user_names": ["Dylan"]}}, fh)
+    def run(text):
+        return subprocess.run(["bash", "-c", gate.check_command() + "\n" + text + "\nEOF\n"],
+                              capture_output=True, text=True, timeout=60, cwd=str(tmp_path),
+                              env=clean_env({"HOME": str(tmp_path)}))
+    r = run(PRIMED_RELAPSE[3])
+    assert r.returncode == 1 and "(\"** envoie les\")" in r.stdout, (r.stdout, r.stderr)
+    r = run("The review is submitted. Dylan can tick the boxes manually.")
+    assert r.returncode == 1 and "Dylan can tick" in r.stdout, (r.stdout, r.stderr)
+    r = run(PRIMED_REWRITES[0] + "\n\nCode: `tu colles le jeton`, \"don't\" and $HOME stay text.")
+    assert r.returncode == 0, (r.stdout, r.stderr)
+
+
+def test_the_prime_and_the_refusal_hand_over_the_check_of_this_very_script():
+    command = gate.check_command()
+    argv = shlex.split(command.split("<<")[0])
+    assert argv[0] == "python3" and argv[2] == "--check"
+    assert os.path.samefile(argv[1], os.path.join(plugin(NAME), "scripts", SCRIPT))
+    prime = gate.prime_text({"count": 2, "sentences": ["x", "y"]})
+    reason = gate.reason_text(gate.handbacks_in(PRIMED_RELAPSE[3], CFG), CFG)
+    for text in (prime, reason):
+        assert command in text and "exit 0: it passes" in text
+        assert "a table is one paragraph" in text and "another hook's refusal" in text
+        assert LONG_DASH not in text and EN_DASH not in text
+    assert all("\"{}\"".format(w) in prime for w in gate.PRIME_NOT_READ)
+    assert prime.index(command) < prime.index("IN THAT SAME PARAGRAPH")
+
+
+def test_the_replay_situations_hold_out_lessons_the_prime_really_names():
+    sys.path.insert(0, os.path.join(plugin(NAME), "replay"))
+    try:
+        import prime_replay
+    finally:
+        sys.path.pop(0)
+    with open(os.path.join(plugin(NAME), "replay", "situations.json"), encoding="utf-8") as fh:
+        situations = json.load(fh)
+    named = set(gate.PRIME_SHAPES + gate.PRIME_REWRITES + gate.PRIME_NOT_READ)
+    for s in situations:
+        assert s["holdout"] and set(s["holdout"]) <= named, s["id"]
+        prime = prime_replay.prime_for(gate, s["state"], set(s["holdout"]))
+        assert prime and not any("\"{}\"".format(h) in prime for h in s["holdout"]), s["id"]
+        assert prime_replay.prime_for(None, s["state"], set()) == ""
+        assert s["message"] in prime_replay.prompt_for(s, prime)
+    # holding out never leaks into the module: the next situation sees the full lists
+    assert set(gate.PRIME_SHAPES + gate.PRIME_REWRITES + gate.PRIME_NOT_READ) == named
+
+
+def test_the_check_says_what_lifts_each_kind_like_the_refusal():
+    # a lookup and a confirmation are lifted by other words than a gesture: the check says so
+    for text, said in ((ASKED, gate.LOOKUP_TEXT), (LOOKUPS[0], gate.LOOKUP_TEXT),
+                       (CONFIRMS[0], gate.CONFIRM_TEXT)):
+        code, report = gate.check_report(text, CFG)
+        assert code == 1 and said in report, (text, report)
+    _, report = gate.check_report(PRIMED_RELAPSE[2], CFG)
+    assert gate.LOOKUP_TEXT not in report and gate.CONFIRM_TEXT not in report
+    assert all("\"{}\"".format(w) in report for w in gate.NARROW_ABSENT_WORDS[:2])

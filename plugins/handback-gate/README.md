@@ -99,6 +99,55 @@ guardrail .... vasi putin brode tout". Three paths went around the gate, each cl
 On 9,023 turn-final messages of every project over 30 days: 167 refused before, 171 now, none
 lost; the 4 new ones are the incident and three asks of one session that named no class word.
 
+## The check: the gate itself, before the closing is shown (0.7.0)
+
+The prime described the gate and asked the model to read its own closing like it. The model could
+not. One session (a job application with forms, references and a submit click, 2026-11-03) got
+the prime before every closing and was still refused 4 more times: a reason written in other
+words ("None of my files names any", "I don't have that information"), an argument with the user
+as its subject ("alors que tu coches Yes sur leur politique IA"), a way to look at a page ("Pour
+les voir, ouvre l'écran du serveur"), and a reco repeating a gesture already classified in a
+table above it. That last one was the re-answer to another Stop hook's refusal, and no prompt
+hook reaches such a re-answer.
+
+So the gate is handed over as a command. `--check` reads a draft on stdin (or a file), through
+the same reading and the same settings as the `Stop` hook, and prints each sentence the hook would
+refuse (exit 1) or that it passes (exit 0); a file it cannot read or a bad configuration is exit
+2, never a pass. The prime and the refusal both carry the exact command, this script's own
+installed path in a heredoc, so a closing and a re-answer can be checked before they are shown:
+
+```
+python3 /path/to/handback-gate/scripts/handback_gate.py --check <<'EOF'
+<the closing>
+EOF
+```
+
+The prime now leads with it and names the 2026-11-03 shapes, the reasons written in other words
+that the gate does not read, that a table is one paragraph, and that a re-answer to another hook
+is read the same way; the refusal names the same check, the same table rule and the same
+re-answer rule. It lifts nothing: the `Stop` hook reads every closing exactly as before.
+
+Measured before it shipped with `replay/prime_replay.py`: three situations of that session, cut
+and neutralised (`replay/situations.json`), each with the shapes it taught held out of every
+prime; `claude -p --safe-mode`, `claude-opus-5-5` at medium effort, the user's own global
+CLAUDE.md appended, Bash allowed for `python3` only, two batches of three runs per situation and
+arm. Under the 0.5.0 prime, 5 of 18 first drafts would have been refused ("Pour les voir, ouvre
+la page noVNC", "envoie ton jet brut", "de ton côté", "te revient", "fais défiler les
+formulaires toi-même"); under the prime with the check, 0 of 18, the check run in 17 of 18.
+One more batch once 0.6.0 had landed (its prime, with lookups and confirmations, against
+the merged prime): 2 of 9 against 0 of 9, the check run in 9 of 9. In all, 7 of 27 first drafts
+refused without the check, 0 of 27 with it. A few dozen runs per arm is a direction, not a
+rate. The check reads words, it does not choose the
+gesture: in the page situation the checked closings still pointed to the page, as information
+("la page noVNC affiche l'écran du serveur"), rather than sending screenshots.
+
+Three subjects that are not the user are no longer read as one (they had been refused in primed
+sessions, where no prime could help): a bold code span ("**`tests/x.py`** vérifie dans le code
+client"), a watcher that will tell the agent ("A watch will tell me as soon as the host delivers
+it"), and a wish the user had ("alors que tu voulais payer toi-même"). On the 4,561 distinct
+turn-final messages of the user's transcripts on one machine, the change flips exactly those 3
+against 0.6.0 and no other; "Tell me when", "you can tell me when" and "**Recommandé :** envoie" stay refused.
+
 A re-answer in the same stop chain is checked like the first one; after three blocks in a row the
 turn ends, with a visible message and a `cap` row in the ledger. A `SubagentStop` is ignored. A
 crash or a timeout lets the turn end and says so; there is no switch, enable or disable the
@@ -169,6 +218,9 @@ the questions for a fact a page holds and the asks to confirm a reading, anywher
 Utility for a hand run: `python3 scripts/handback_gate.py --print` reads a Stop payload on stdin
 and says what it would refuse, blocking nothing.
 
+`handback_gate.check_report(text, cfg=None) -> (exit code, report)` is what `--check` prints: 0
+when the hook would let `text` end the turn, 1 with each hand-back and its sentence.
+
 ## Where the ledgers land
 
 Crashes, timeouts and chain caps are appended to `hook-health.jsonl`; every refusal is counted in
@@ -190,4 +242,6 @@ one. The case's grader is rebuilt from the hook's own patterns by the test and c
 on the bare answers and the re-answers, and read by node the way the native runner reads it.
 Where a regex on the raw message cannot follow the hook (a quoted hand-back, a reported
 "toi-meme", a third-person bullet), the test pins the gap; on 3,381 closing messages of real
-sessions the grader agreed with the hook on all but 8.
+sessions the grader agreed with the hook on all but 8. The check is proven the same way: it reads
+every fixture exactly like the hook, the heredoc the prime hands over is run by bash from a
+project directory, and it never passes a file it could not read.

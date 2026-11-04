@@ -97,6 +97,19 @@ the narrow absence sits in 4 paragraphs and changes no outcome (each names anoth
 "j'attends de toi" and "expect from you" are read with the gesture shapes, the French form of
 "what I need from you".
 
+THE CHECK. The prime described the gate and asked the producer to read its own closing like it;
+the producer could not. On 2026-11-03 a session (a job application: forms, references, a submit
+click) was primed before every closing and still refused 4 more times: a reason written in other
+words ("None of my files names any", "I don't have that information"), an argument with the user
+as its subject ("alors que tu coches Yes sur leur politique IA"), a way to look at a page ("Pour
+les voir, ouvre l'écran du serveur"), and a reco repeating a gesture classified in a table above
+it, drafted as the re-answer to ANOTHER Stop hook's refusal, which no prompt hook reaches. So the
+gate is handed over as a command: `--check` reads a draft on stdin (or a file) through the same
+handbacks_in, with the same configuration, and prints each sentence the Stop hook would refuse
+(exit 1) or that it passes (exit 0). The prime and the refusal name the exact command, this
+script's own path, so a closing and a re-answer are checked before they are shown. It lifts
+nothing either: the Stop gate still reads every closing.
+
 The bounds: the re-answer of a stop chain is checked like the first answer; the gate lets go after
 CHAIN_CAP blocks in a row (a `cap` row in the ledger and a systemMessage). A crash or a timeout
 lets the turn end and is reported loudly. No environment variable and no configuration key turns
@@ -115,12 +128,18 @@ Outputs:
     exit 0 with {"hookSpecificOutput": {..., "additionalContext": ...}}   (--prime) the rule,
                                                         before a closing of a refused session
 
+    exit 0 / 1, a report on stdout                    (--check) the draft passes / would be
+                                                        refused, each sentence listed
+    exit 2, the error on stderr                        (--check) a bad configuration or file
+
 Utilities:
     python3 handback_gate.py --print       what it would say on the last message, blocking nothing
+    python3 handback_gate.py --check [FILE] what it would refuse in a draft (stdin when no FILE)
 """
 import json
 import os
 import re
+import shlex
 import sys
 
 PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -181,6 +200,11 @@ EN_MODAL = r"""(?:['’]ll\s+(?:need|have)\s+to|\s+(?:can|could|need\s+to|needs\
 # config, the third person the agent uses for the user. The eval case's grader is built from this
 # source and compiled as a JavaScript RegExp, whose \w is ASCII: a word ending on an accented
 # letter is closed with (?!\w), which Python reads exactly like \b there.
+# Three subjects that are not the user, read as one in primed sessions after 2026-11-01 and so
+# refused where no prime could help: a bold code span ("**`tests/x.py`** verifie dans le code"),
+# a watcher that will tell the agent ("A watch will tell me as soon as OVH delivers it"), and, in
+# REPORTED below, a wish the user had ("alors que tu voulais payer toi-meme"). "Tell me when",
+# "you can tell me when" and "**Recommande :** envoie" stay refused.
 HANDBACK_SRC = (r"""
     \btoi[\s-]m[eê]me\b
   | \b(?:reste(?:nt)?|sera(?:it|ient)?|seront)\s+[àa]\s+toi\b
@@ -217,7 +241,7 @@ HANDBACK_SRC = (r"""
   | \bje\s+te\s+(?:le|la|les)\s+laisse\b
   | \bje\s+te\s+laisse\s+(?:faire|g[ée]rer|d[ée]cider|trancher|juger|choisir|t['’]en\s+occuper
        |la\s+main|le\s+soin)\b
-  | (?:^[ \t]*|[.:;!?]\s+|\*\*\s*)""" + FR_IMP + r"""\s*""" + FR_OBJ + r"""
+  | (?:^[ \t]*|[.:;!?]\s+|(?<!CODE\s)\*\*\s*)""" + FR_IMP + r"""\s*""" + FR_OBJ + r"""
   | (?:^[ \t]*(?:[-*]|\d[.)])\s+)(?P<bullet>""" + FR_IMP + r""")\s*""" + FR_OBJ + r"""
   | \b(?:pour|si|quand|une\s+fois|d[èe]s\s+que|apr[èe]s|ensuite|sinon|alors)\b[^,.\n]{0,80},\s*"""
     + FR_IMP + r"""\s*""" + FR_OBJ_CODE + r"""
@@ -237,7 +261,10 @@ HANDBACK_SRC = (r"""
   | \bthat['’]s\s+on\s+you\b
   | \bonly\s+you\s+can\b
   | (?<!what\s)\byou\s+(?:call|buy|accept|approve)\b
-  | \b(?:let\s+me\s+know|tell\s+me|ping\s+me)\s+(?:when|once|as\s+soon\s+as)\b
+  | \b(?<!will\s)(?<!would\s)(?<!can\s)(?<!could\s)(?<!shall\s)(?<!['’]ll\s)
+    (?:let\s+me\s+know|tell\s+me|ping\s+me)\s+(?:when|once|as\s+soon\s+as)\b
+  | \byou(?:\s+(?:will|would|can|could)|['’]ll)\s+(?:let\s+me\s+know|tell\s+me|ping\s+me)
+    \s+(?:when|once|as\s+soon\s+as)\b
   | (?:^|\n|[.:;!?]\s+|[-*]\s+|\d[.)]\s+|\*\*\s*)(?:then\s+|and\s+)?(?:paste|fill\s+(?:in|out)
        |tick|click|print|plug\s+in|type|log\s+in|sign\s+in|upload|retry|try\s+again|run)\b
        [^.\n]{0,60}\byour\b
@@ -267,8 +294,10 @@ NEGATED = re.compile(r"(?:\b(?:pas|plus|rien|jamais|aucun|aucune|sans|ni|no|not|
                      r"|aren)'?t\b)[^.:;!?\n]{0,25}$", re.I)
 # "toi-meme" after a past tense, a relative clause or a preposition reports or describes:
 # "tu l'as toi-meme retire", "un texte que tu as choisi toi-meme", "un message vers toi-meme",
-# "ta discussion avec toi-meme" (the name of a messenger's chat with oneself).
-REPORTED = re.compile(r"(?:\btu\s+(?:l'|les\s+|la\s+|y\s+)?(?:as|avais|avait|es|[ée]tais)"
+# "ta discussion avec toi-meme" (the name of a messenger's chat with oneself), "alors que tu
+# voulais payer toi-meme" (a wish of the user's, told in the imperfect).
+REPORTED = re.compile(r"(?:\btu\s+(?:l'|les\s+|la\s+|y\s+)?(?:as|avais|avait|es|[ée]tais"
+                      r"|voulais|souhaitais|comptais|pensais|pr[ée]f[ée]rais)"
                       r"(?:\s+\w+)?|\bl'as-tu(?:\s+\w+)?|\bas-tu(?:\s+\w+)?|\bque\s+tu\s+\w+"
                       r"|\bviens\s+d'\w+|\bvers|\bavec|\b[àa]|\bpour|\bde)\s*$", re.I)
 
@@ -345,7 +374,8 @@ HUMAN_ONLY_WORDS = ("captcha", "2FA", "two-factor", "second factor", "second fac
                     "passkey", "biometric", "security key", "clé de sécurité")
 NOT_A_CLASS = ("a payment", "un paiement", "a preference", "ta préférence", "a commitment",
                "un engagement", "your password", "ton mot de passe", "your money", "ton argent",
-               "under your name", "à ton nom")
+               "under your name", "à ton nom", "only you know", "toi seul le sais",
+               "none of my files names any", "aucun de mes fichiers ne le dit")
 # A description with the user as its subject is read like an order: the shapes of the session
 # that taught it (2026-10-27, an apostille and a consulate file, seven refusals, five of them a
 # process or a calendar told with "tu" as the subject).
@@ -371,21 +401,32 @@ SENTENCE_MAX = 240
 LISTED_MAX = 4
 
 # The prime: what a refused session is told before each later closing is drafted. The shapes are
-# the ones the 2026-10-30 session was refused on, cut and neutralised; a test reads each against
-# the gate (refused) and each rewrite (passes), so the prime never names a shape the gate allows
-# or a rewrite it refuses.
+# the ones the 2026-10-30 and 2026-11-03 sessions were refused on, cut and neutralised; a test
+# reads each against the gate (refused) and each rewrite (passes), so the prime never names a
+# shape the gate allows or a rewrite it refuses. PRIME_NOT_READ are reasons the 2026-11-03
+# session wrote in its own words, each one in NOT_A_CLASS.
 PRIME_SUFFIX = ".handback_gate.prime"
 PRIME_PROMPTS = 12
 PRIME_KEPT = 2
 PRIME_SHAPES = ("No: you call the registry yourself", "quand ils arrivent, tu fais le geste 1",
                 "tu signes le consentement et le certificat", "quand tu cliques sur Continue",
-                "c'est toi qui le fermes depuis le tableau de bord")
+                "c'est toi qui le fermes depuis le tableau de bord",
+                "alors que tu coches Yes sur leur politique IA",
+                "Pour les voir, ouvre l'écran du serveur")
 PRIME_REWRITES = ("au clic sur Continue, la page lance ses contrôles",
                   "le compte se ferme depuis le tableau de bord, à solde nul",
-                  "quand ils arrivent, le geste 1 : ta signature, irréversible")
+                  "quand ils arrivent, le geste 1 : ta signature, irréversible",
+                  "le formulaire déclare Yes sur leur politique IA",
+                  "je t'envoie les deux formulaires en captures")
+PRIME_NOT_READ = ("none of my files names any", "only you know")
 PRIME_CHECKS = ("captcha", "2FA", "second factor", "passkey")
 PRIME_EVENTS = ("UserPromptSubmit", "SessionStart")
 SENTENCE_END = re.compile(r"[.!?](?=\s|$)|\n")
+
+# The check: the gate handed to the producer as a command, this very script, so that a closing
+# or a re-answer is read before it is shown (2026-11-03).
+CHECK_FLAG = "--check"
+SCRIPT_PATH = os.path.abspath(__file__)
 
 CODE = re.compile(r"```.*?```|`[^`\n]{0,300}`", re.S)
 BLOCKQUOTE = re.compile(r"^\s*>.*$", re.M)
@@ -594,14 +635,79 @@ def reason_text(found, cfg):
              "forbid automation. {} alone are not read, and an absence claimed over your own "
              "files ({}) is not the class absent: absent means from every store AND every page. "
              "A closing that points at asks higher up (\"tes réponses aux 4 questions\") is read "
-             "whole. Every later closing of this session is read the same way, a gesture "
-             "mentioned again included. (handback-gate)").format(
+             "whole. A gesture already classified higher up needs its word again where it is "
+             "mentioned again (a reco, an option, a next step; a table is one paragraph). Before "
+             "the re-answer is shown, {}. Every later closing of this session is read the same "
+             "way, a gesture mentioned again included, and so is a re-answer written for another "
+             "hook's refusal. (handback-gate)").format(
                  ", ".join("\"{}\"".format(d) for d in DESCRIPTIONS),
                  ", ".join(CLASS_WORDS), ", ".join(HUMAN_ONLY_WORDS),
                  ", ".join("\"{}\"".format(w) for w in NOT_A_CLASS),
-                 ", ".join("\"{}\"".format(w) for w in NARROW_ABSENT_WORDS[:2]))
+                 ", ".join("\"{}\"".format(w) for w in NARROW_ABSENT_WORDS[:2]), check_how())
     suffix = cfg.get("reason_suffix")
     return text + " " + suffix if suffix else text
+
+
+def check_command():
+    """The heredoc that opens a --check of this very script, ready to paste in a Bash call."""
+    return "python3 {} {} <<'EOF'".format(shlex.quote(SCRIPT_PATH), CHECK_FLAG)
+
+
+def check_how():
+    """How to run the check, the words the prime and the refusal both use."""
+    return ("pass it through the gate itself, the Stop hook's own reading with its settings: "
+            "`{}`, then the text, then a line EOF (exit 0: it passes; exit 1: it lists each "
+            "sentence the Stop hook would refuse, so rewrite them and check again)"
+            ).format(check_command())
+
+
+def check_report(text, cfg=None):
+    """(exit code, report) for a draft: 0 when the Stop hook would let it end the turn, 1 with
+    every hand-back it would refuse and its sentence, and what lifts each kind. The same
+    handbacks_in, so the same window, lookups and confirmations. Pure."""
+    found = handbacks_in(text, cfg)
+    if not found:
+        return 0, ("handback-gate --check: passes, the Stop hook would let this text end the "
+                   "turn.")
+    n = len(found)
+    lines = ["handback-gate --check: the Stop hook would refuse this text, {} hand-back{} with "
+             "no reason in {} paragraph:".format(n, "" if n == 1 else "s",
+                                                 "its" if n == 1 else "their")]
+    lines += ["- (\"{}\") in: {}".format(p[:160], s.lstrip("-*• ")) for p, _, s in found]
+    kinds = {getattr(f, "kind", "gesture") for f in found}
+    if "lookup" in kinds:
+        lines.append(LOOKUP_TEXT)
+    if "confirm" in kinds:
+        lines.append(CONFIRM_TEXT)
+    lines.append("Name the real actor (I, the third party, nobody), or keep it the user's and "
+                 "write in that same paragraph one of: {}; or a check by its name: {}. A reason "
+                 "in other words ({}) is not read, nor an absence claimed over your own files "
+                 "({}). Then check again.".format(
+                     ", ".join(CLASS_WORDS), ", ".join(HUMAN_ONLY_WORDS),
+                     ", ".join("\"{}\"".format(w) for w in PRIME_NOT_READ),
+                     ", ".join("\"{}\"".format(w) for w in NARROW_ABSENT_WORDS[:2])))
+    return 1, "\n".join(lines)
+
+
+def on_check(argv):
+    """--check [FILE]: the report on stdout and its exit code; a file that cannot be read or a
+    bad configuration is exit 2 on stderr, never a pass."""
+    i = argv.index(CHECK_FLAG)
+    path = argv[i + 1] if len(argv) > i + 1 else None
+    try:
+        if path:
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+        else:
+            text = sys.stdin.read()
+        cfg = _settings(None)
+        pattern(cfg)
+    except (OSError, UnicodeDecodeError, config.ConfigError) as e:
+        print("handback-gate --check: {}".format(e), file=sys.stderr)
+        return 2
+    code, report = check_report(text, cfg)
+    print(report)
+    return code
 
 
 def prime_path(payload):
@@ -643,19 +749,25 @@ def prime_text(state):
     last = [s for s in state.get("sentences") or [] if isinstance(s, str)][-PRIME_KEPT:]
     quoted = "; ".join("\"{}\"".format(s[:SENTENCE_MAX].rstrip(".!? ")) for s in last)
     return ("handback-gate refused {} closing{} of this session: a gesture with the user as its "
-            "subject and no reason in its paragraph.{} Before you end a turn here, read each "
-            "paragraph of your closing where the user does something: a step, an option, a reco, "
-            "a process or a mechanism told in the second person ({}). Each one names its real "
-            "actor instead (I, the third party, nobody: {}), or carries IN THAT SAME PARAGRAPH "
-            "a word the gate reads: {}; or a check by its name: {}. A gesture already classified "
-            "higher up needs its word again where it is mentioned again, and a reason in the "
-            "next paragraph is not read: a paragraph ends at a blank line. A question for a fact "
-            "a page holds (an event's name, date or link) is searched first, and no class word "
-            "lifts it, only the search said in its paragraph; a reading you wrote is used as "
-            "yours, never put to the user to confirm. (handback-gate)"
+            "subject and no reason in its paragraph.{} Before you end a turn here, write the "
+            "closing, then {}; send it only once it passes. Your own reading misses what the "
+            "gate reads: sessions primed with this rule were refused again on a reason written "
+            "in other words ({}), on a step, an option, a reco, an argument, a process or a way "
+            "to look at a page told with the user as the one who acts ({}), and on a reco "
+            "repeating a gesture classified higher up. Each one names its real actor instead (I, "
+            "the third party, nobody: {}), or carries IN THAT SAME PARAGRAPH a word the gate "
+            "reads: {}; or a check by its name: {}. A gesture already classified higher up needs "
+            "its word again where it is mentioned again, and a reason in the next paragraph is "
+            "not read: a paragraph ends at a blank line, a table is one paragraph. A re-answer "
+            "to another hook's refusal is read the same way. A question for a fact a page holds "
+            "(an event's name, date or link) is searched first, and no class word lifts it, only "
+            "the search said in its paragraph; a reading you wrote is used as yours, never put "
+            "to the user to confirm. (handback-gate)"
             ).format(
                 n, "" if n == 1 else "s",
                 " Last refused: {}.".format(quoted) if quoted else "",
+                check_how(),
+                ", ".join("\"{}\"".format(s) for s in PRIME_NOT_READ),
                 ", ".join("\"{}\"".format(s) for s in PRIME_SHAPES),
                 ", ".join("\"{}\"".format(s) for s in PRIME_REWRITES),
                 ", ".join(CLASS_WORDS), ", ".join(PRIME_CHECKS))
@@ -707,6 +819,8 @@ def on_stop():
 
 def main():
     trace.configure(sys.argv)
+    if CHECK_FLAG in sys.argv:
+        return on_check(sys.argv)
     if "--prime" in sys.argv:
         return trace.run(HOOK, "UserPromptSubmit", on_prime, TIMEOUT_S)
     if "--print" in sys.argv:

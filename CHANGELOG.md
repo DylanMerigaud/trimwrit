@@ -1,5 +1,32 @@
 # Changelog
 
+## handback-gate 0.7.0, 2026-11-04
+
+- **The gate is handed over as a command.** `handback_gate.py --check` reads a draft on stdin (or
+  a file) through the Stop hook's own reading and settings, and prints each sentence the hook
+  would refuse (exit 1) or that it passes (exit 0); an unreadable file or a bad configuration is
+  exit 2, never a pass. The prime leads with the exact command (the installed script's own path in
+  a heredoc) and the refusal carries it too, so a closing and a re-answer are checked before they
+  are shown. Taught by a session primed before every closing (2026-11-03) and still refused 4 more
+  times: reasons written in other words, an argument with the user as its subject, a page to
+  open, and a reco repeating a gesture classified in a table, written as the re-answer to another
+  Stop hook's refusal. Measured with `replay/prime_replay.py` (three situations of that session,
+  each holding its own lesson out of the prime, Opus at medium effort, six runs per situation and
+  arm): first drafts refused 5 of 18 under the 0.5.0 prime, 0 of 18 under the new one, the check
+  run in 17 of 18; against the 0.6.0 prime that landed in between, 2 of 9 against 0 of 9, the
+  check run in 9 of 9.
+- **The prime and the refusal name what that session missed:** a reason in other words ("none of
+  my files names any", "only you know", now in the words the refusal says are not read), a table
+  is one paragraph, a gesture classified higher up needs its word again in the reco that repeats
+  it, a re-answer to another hook's refusal is read the same way.
+- **Three subjects that are not the user** are no longer read as one: a bold code span, a watcher
+  that will tell the agent, a wish the user had in the imperfect. On 4,561 turn-final messages
+  the change flips exactly those 3 against 0.6.0; "tell me when", "you can tell me when" and
+  "**Recommandé :** envoie" stay refused. The eval grader is rebuilt from the gate.
+- **`replay/prime_replay.py`** keeps the measurement: situations of a refused session, cut and
+  neutralised, each holding its own lesson out of every prime, replayed with `claude -p
+  --safe-mode` arm by arm and read by the gate.
+
 ## handback-gate 0.6.0, 2026-11-04
 
 - **An input asked as a question is held too.** A closing asked the user, under a header naming
