@@ -1,15 +1,31 @@
 # resume-on-api-error
 
 When a turn ends on an API error, types a continue message into the GNU screen or tmux pane
-hosting the session, after a delay; never on an authentication or billing error.
+hosting the session, after a delay; never on an authentication, billing or safeguards error.
 
 - **StopFailure hook** (`resume_on_api_error.sh`, async): logs the failure, then a detached
   sleeper types the configured `text` plus ` (<category>)` into the screen window (`$STY`) or the
   tmux pane (`$TMUX` and `$TMUX_PANE`) hosting the session. A network still down fails again,
   fires the hook again and gets the next keystroke. `rate_limit` and `overloaded` wait
   `rate_limit_delay_s`, everything else `delay_s`.
-- **Never resumed**: `authentication_failed`, `billing*`, `insufficient*`, `invalid_api_key*`.
-  Those are logged as `not resumed`. With neither screen nor tmux the failure is logged and the
+- **What is resumed** is decided by `scripts/resume_policy.py`, which reads the error text from
+  the session's transcript (the payload's `transcript_path`, else
+  `~/.claude/projects/<cwd slug>/<session>.jsonl`): the payload's `error_details` comes in empty.
+  - **Never**: `authentication_failed`, `billing*`, `insufficient*`, `invalid_api_key*`; a
+    safeguards or usage-policy flag (`safeguards flagged`, `anthropic.com/legal/aup`, `Usage
+    Policy`, reported as plain `invalid_request`); a request too large to send (`Prompt is too
+    long`).
+  - **Any other `invalid_request`**: once in a row per session.
+  - **Transient** (`rate_limit`, `overloaded`, `server_error`, `unknown`, network): without end,
+    the delay doubling per failure past five in a row, capped at one hour.
+  - **Any other category**: loop breaker, at most three in a row. "In a row" means failures with
+    no successful assistant row between them; without a readable transcript a per-session counter
+    stands in.
+  Every refusal is logged as `not resumed: <reason>`.
+- **One pending sleeper per target**: a pidfile per screen window or tmux pane under
+  `$CLAUDE_PLUGIN_DATA/resume-on-api-error/` (else `~/.claude/trimwrit-gates/resume-on-api-error/`),
+  claimed atomically. While its sleeper lives, the next failure is logged as `not resumed: a
+  sleeper is already pending` and left: keystrokes never stack. With neither screen nor tmux the failure is logged and the
   hook exits 0.
 - A bad config file is reported on stderr and in the log, and the defaults apply. The hook never
   exits 2.
@@ -39,4 +55,6 @@ Section `resume-on-api-error` of `~/.claude/trimwrit-gates.json` (user) and
 ## Proof
 
 `tests/gates/test_resume_on_api_error.py` runs the script with `--dry-run`, which prints the
-detached command instead of running it. No model-run eval: the hook is deterministic.
+detached command instead of running it, plus one real run with a fake `tmux` on `PATH` for the
+pidfile. 2026-11-04: a safeguards flag got 991 resumes in one session and four sleepers stacked on
+one pane; both are replayed there. No model-run eval: the hook is deterministic.

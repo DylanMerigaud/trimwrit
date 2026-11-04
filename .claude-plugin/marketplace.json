@@ -39,8 +39,8 @@
     {
       "name": "resume-on-api-error",
       "source": "./plugins/resume-on-api-error",
-      "description": "When a turn ends on an API error, types a continue message into the GNU screen or tmux pane hosting the session, after a delay; never on an authentication or billing error.",
-      "version": "0.1.0",
+      "description": "When a turn ends on an API error, types a continue message into the GNU screen or tmux pane hosting the session, after a delay; never on an authentication, billing or safeguards error, at most one pending keystroke per pane, and a loop breaker on failures a retry cannot fix.",
+      "version": "0.2.0",
       "author": { "name": "Dylan Merigaud" },
       "license": "MIT",
       "category": "productivity",

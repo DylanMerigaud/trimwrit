@@ -1,5 +1,20 @@
 # Changelog
 
+## resume-on-api-error 0.2.0, 2026-11-04
+
+- **A safeguards flag is never resumed.** On 2026-11-04 a session flagged by the API's safeguards
+  reached the StopFailure hook as plain `invalid_request` with an empty `error_details`, and got
+  991 "continue" keystrokes, each refused again three seconds later. `scripts/resume_policy.py`
+  now reads the last API error from the session's transcript and refuses a safeguards or
+  usage-policy flag and a request too large to send. Any other `invalid_request` is resumed once
+  in a row.
+- **Loop breaker.** A category that is neither transient nor named above stops after three
+  failures in a row with no successful turn between them. Transient failures (rate limit,
+  overload, server error, network) stay retried without end, the delay doubling past five in a
+  row up to one hour.
+- **Sleepers never stack.** One pidfile per screen window or tmux pane, claimed atomically; a
+  failure while a sleeper is pending is logged and left (four were pending on one pane).
+
 ## 0.12.0, 2026-11-03
 
 - **Eval banks get one kit.** `trimwrit/bank.py` (standard library only): `load` names the bad
