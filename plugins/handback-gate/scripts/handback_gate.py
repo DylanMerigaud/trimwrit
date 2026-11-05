@@ -328,6 +328,18 @@ LOOKUP_A = re.compile(r"\b" + LOOKUP_THING + r"\b[^?\n]{0,80}?\b" + LOOKUP_ATTR 
 LOOKUP_B = re.compile(r"\b" + LOOKUP_ATTR + r"\b[^?\n]{0,40}?\b" + LOOKUP_THING + r"\b", re.I)
 QUESTION = re.compile(r"[^.!?\n]*\?")
 YOU = re.compile(r"\b(?:tu|ton|ta|tes|toi|te|you|your)\b|\bt['’]", re.I)
+# A question whose ask is a go on the agent's own next gesture ("..., je le lui donne ?", "je
+# l'envoie ?", "j'y vais ?", "shall I send it?"): its last clause is a short first-person yes or
+# no with no question word. A page attribute in the clauses before it is the context of the go
+# ("L'organisatrice du hackathon demande ton numero, je le lui donne ?"), not a fact asked of
+# the user. A last clause that asks for content ("je mets quoi ?") is no go.
+GO_QUESTION = re.compile(
+    r"(?:^|[,;:\u2026]|\bet\s|\balors\s|\bdonc\s|\bso\s|\band\s)\s*"
+    r"(?:(?:je|on)\s+|j['’])(?:[\w-]+['’]?\s*){1,4}\?\s*$"
+    r"|(?:^|[,;:]|\bso\s|\band\s)\s*(?:shall|should|can|may)\s+(?:I|we)\s+(?:[\w-]+['’]?\s*){1,5}\?\s*$",
+    re.I)
+GO_ASKS_FOR = re.compile(r"\b(?:quoi|quel(?:le)?s?|comment|o[uù]|quand|combien|lequel|laquelle"
+                         r"|what|which|where|when|how|who)\b", re.I)
 # A question about what the user wants is a preference, his to give: "quelle date veux-tu ?"
 CHOICE = re.compile(r"\b(?:veux|voudrais|pr[ée]f[èe]res?|choisis|choisir|souhaites?|want|prefer"
                     r"|would\s+you\s+like|pick|choose)\b", re.I)
@@ -529,6 +541,9 @@ def lookups_in(text):
             if not (LOOKUP_A.search(asked) or LOOKUP_B.search(asked)):
                 continue
             if CHOICE.search(asked) or not (YOU.search(asked) or YOU.search(para)):
+                continue
+            go = GO_QUESTION.search(asked)
+            if go and not GO_ASKS_FOR.search(go.group(0)):
                 continue
             sentence = " ".join(asked.split()).lstrip("-*•0123456789.) ")
             found.append(_held("lookup", sentence[:160], para.strip(), sentence))

@@ -1,5 +1,16 @@
 # Changelog
 
+## handback-gate 0.7.1, 2026-11-05
+
+- **A go asked as a question is no lookup.** growth-cockpit's card bank lost a send since 0.6.0:
+  card-052, "L'organisatrice du hackathon de Berlin demande ton numero pour le groupe du jury, je
+  le lui donne ?", was read as asking the user for an event's organizer. The organizer is the
+  subject; the ask is a go on giving out his number. A question whose last clause is a short
+  first-person yes or no with no question word ("je le lui donne ?", "je l'envoie ?", "shall I
+  give it?") is no longer read as a lookup; "je le mets comment ?" and "je mets quoi comme nom ?"
+  stay held, and every case of the 2026-11-04 incident still is. On 596 assistant messages with a
+  question over 30 days of this machine's transcripts, 0 lookups flip against 0.7.0.
+
 ## handback-gate 0.7.0, 2026-11-04
 
 - **The gate is handed over as a command.** `handback_gate.py --check` reads a draft on stdin (or

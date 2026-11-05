@@ -92,6 +92,11 @@ guardrail .... vasi putin brode tout". Three paths went around the gate, each cl
   veux-tu ?") and what only their memory holds stay theirs. An absence claimed over the agent's
   own files ("absent de mes fichiers") is not the class absent anywhere: the contract's absent is
   absent from every store and every page.
+  A question whose ask is a go on the agent's own next gesture is not one either (0.7.1): its
+  last clause is a short first-person yes or no ("..., je le lui donne ?", "je l'envoie ?",
+  "shall I send it?"), and an event's organizer named before it is the subject of the sentence,
+  not a fact asked of the user. A last clause that still asks for content ("je le mets comment
+  ?", "je mets quoi ?") stays held.
 - **The confirmation of a reading in hand** ("dis-moi si c'est bien ca", "is that how you see
   it"): the agent writes the sentence as its own and the user corrects it. Lifted by a go on an
   irreversible or external gesture or a human-only check, never by knowledge.

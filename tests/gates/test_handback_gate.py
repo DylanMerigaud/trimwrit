@@ -877,6 +877,9 @@ LOOKUPS = [
     "Tu as le lien de la page de l'offre ? C'est absent de tout ce que je lis.",
     "C'était quand, le hackathon, et quel était son nom ? Une connaissance à toi.",
     "Il me manque une chose (knowledge) : the venue of the conference you went to?",
+    # A first-person last clause that still asks for content is no go (0.7.1).
+    "Le nom de l'evenement, je le mets comment ? C'est ta connaissance.",
+    "L'organisatrice du hackathon demande ton numero, et je mets quoi comme nom pour l'evenement ?",
 ]
 NOT_LOOKUPS = [
     "J'ai cherché sur Luma, Eventbrite et dans ta boîte : aucune trace. Son nom exact et sa date "
@@ -889,6 +892,11 @@ NOT_LOOKUPS = [
     "Ce que tu y as fait ce jour-là, et ce qui t'a marqué ? C'est ta connaissance.",
     "Pouvez-vous me confirmer la date de l'événement et le lieu ?",
     "La page de l'événement demande un captcha : son nom exact et sa date, tu les as ?",
+    # card-052 of growth-cockpit's card bank (gold send): the organizer is the subject, the ask
+    # is a go on giving out his number, not a fact a page holds (0.7.1).
+    "L'organisatrice du hackathon de Berlin demande ton numero pour le groupe du jury, je le lui "
+    "donne ?",
+    "The organizer of the meetup asks for your phone number, shall I give it to her?",
 ]
 
 
