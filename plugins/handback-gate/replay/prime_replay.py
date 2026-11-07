@@ -9,8 +9,9 @@ the check the same way, and this file keeps the way so the next prime is measure
 
 Each situation (situations.json) is a cut, neutralised moment of a real session: the context a
 compaction summary would hold, the user's message, and the session's refusal state at that
-moment. Each arm is a handback_gate.py whose prime_text renders that state (or `none`: no prime).
-A situation never sees its own lesson: the shapes, rewrites and unread reasons it taught
+moment. Each arm is a handback_gate.py that renders that state the way its --prime would (or
+`none`: no prime): a state whose `since` is past the arm's window gets the short prime, or nothing
+in an arm older than 0.8.0. A situation never sees its own lesson: the shapes, rewrites and unread reasons it taught
 (`holdout`) are removed from every arm's prime before it is rendered.
 
 Each run is one `claude -p --safe-mode` call (no CLAUDE.md, plugin, hook or MCP of the machine;
@@ -62,7 +63,10 @@ def prime_for(gate, state, holdout):
     try:
         for key, value in kept.items():
             setattr(gate, key, tuple(v for v in value if v not in holdout))
-        return gate.prime_text(state)
+        if int(state.get("since") or 0) <= getattr(gate, "PRIME_PROMPTS", 12):
+            return gate.prime_text(state)
+        # past the window: 0.8.0 keeps one line, an older arm fell silent
+        return gate.prime_short(state) if hasattr(gate, "prime_short") else ""
     finally:
         for key, value in kept.items():
             setattr(gate, key, value)

@@ -63,10 +63,11 @@ Delaware yourself"), a process ("tu signes le consentement et le certificat"), a
 fais le geste 1"), a reason written in the NEXT paragraph. So a refusal also writes the session's
 state, and the same script, run as a UserPromptSubmit hook and as a SessionStart hook after a
 compaction or a resume (`--prime`), hands the producer the rule BEFORE it drafts: the count, the
-last sentences refused, the shapes, the words the gate reads. It runs for PRIME_PROMPTS prompts
-after the last refusal (that session's longest gap between two refusals was 6 prompts), says
-nothing in a session the gate never refused, and lifts nothing: the Stop gate reads every closing
-exactly as before.
+last sentences refused, the shapes, the words the gate reads. It runs in full for PRIME_PROMPTS
+prompts after the last refusal (that session's longest gap between two refusals was 6 prompts),
+then as one line holding the command until the session ends (2026-11-07, see THE PATHS AROUND THE
+CHECK), says nothing in a session the gate never refused, and lifts nothing: the Stop gate reads
+every closing exactly as before.
 
 THE INPUT ASKED AS A QUESTION (2026-11-04). A closing (an application form, 2,696 characters)
 asked the user, under a header naming the user's knowledge and "absent de tous mes fichiers",
@@ -109,6 +110,29 @@ handbacks_in, with the same configuration, and prints each sentence the Stop hoo
 (exit 1) or that it passes (exit 0). The prime and the refusal name the exact command, this
 script's own path, so a closing and a re-answer are checked before they are shown. It lifts
 nothing either: the Stop gate still reads every closing.
+
+THE PATHS AROUND THE CHECK (2026-11-07). Reflect counted three sessions stuck after 0.7.0, refused
+5 to 8 times each. Reading their transcripts: of their 20 refusals, 3 ran a version with the
+check, and each session that got it was not refused again once its re-answer had passed. Under
+the check, 24 refusals over 18 sessions, none of them stuck. What went around it:
+  1. The version. Claude Code fixes the plugin root when a session starts, so a session ran 0.5.0
+     for three days while 0.7.1 was installed, 8 refusals and not one check. gatekit's
+     follow_install now hands a stale copy over to the installed one, the first thing a gate does.
+  2. The window. 12 prompts came from one session's longest gap, 6. 8 of the 20 refusals came 16
+     to 86 prompts after the last one, past the prime. It shortens, it never stops.
+  3. Agreement. The refusal says "irréversible" and "externe"; the model wrote them in agreement
+     with a plural noun, as French requires, and the gate refused them. 2 of the 3 re-answers
+     refused again in those sessions were that, and handback_retract_gate reads this matcher, so
+     it refused the line it asks for and then denied the --check call. A plural is the class
+     word spelled right: on 3,436 closings of 14 days it flips 7, each one naming its class,
+     against 17 more refused by the wordings of point 5.
+  4. The reason in other words, again: the user's own rule ("ta règle", "tu m'as demandé"), the
+     reason of 6 of the 20, where a go on the agent's own gesture was the honest sentence. Still
+     refused, now named, with the rewrite that passes.
+  5. The synonym. The check tells a producer exactly what the gate reads, so a loop on it ends on
+     a wording the gate does not read: the first replay of this fix passed 12 of 12 with "reste
+     le tien", "qui t'appartient" and "réservée à toi", the user's rule still the only reason.
+     Those wordings are read now, and the refusal says a synonym lifts nothing.
 
 The bounds: the re-answer of a stop chain is checked like the first answer; the gate lets go after
 CHAIN_CAP blocks in a row (a `cap` row in the ledger and a systemMessage). A crash or a timeout
@@ -200,6 +224,11 @@ EN_MODAL = r"""(?:['’]ll\s+(?:need|have)\s+to|\s+(?:can|could|need\s+to|needs\
 # config, the third person the agent uses for the user. The eval case's grader is built from this
 # source and compiled as a JavaScript RegExp, whose \w is ASCII: a word ending on an accented
 # letter is closed with (?!\w), which Python reads exactly like \b there.
+# Whose a gesture is, in the wordings a --check loop finds when the shapes it hits are the only
+# ones it hears about (2026-11-07, 12 replays and 17 closings of 14 days): "reste le tien",
+# "t'appartient", "ne dépend que de toi", "réservée à toi". The nouns keep "les verdicts sont les
+# tiens", which tells who wrote what, and the imperfect keeps "ce qui ne pouvait venir que de toi
+# est fait".
 # Three subjects that are not the user, read as one in primed sessions after 2026-11-01 and so
 # refused where no prime could help: a bold code span ("**`tests/x.py`** verifie dans le code"),
 # a watcher that will tell the agent ("A watch will tell me as soon as OVH delivers it"), and, in
@@ -222,7 +251,14 @@ HANDBACK_SRC = (r"""
   | \btes\s+mains\b
   | \bte\s+revien(?:t|nent|dra|dront|drait)\b(?!\s+par\b)
   | \brevien(?:t|nent|dra|dront)\s+[àa]\s+toi\b
-  | \bd[ée]pend(?:ent)?\s+de\s+toi\b
+  | \bd[ée]pend(?:ent)?\s+(?:que\s+)?de\s+toi\b
+  | \bne\s+peu(?:t|vent)\s+venir\s+que\s+de\s+toi\b
+  | \bne\s+se\s+d[ée]cide(?:nt)?\s+que\s+par\s+toi\b
+  | (?<!ne\s)\bt['’]appartien(?:t|nent|dra|dront)\b
+  | \br[ée]serv[ée]e?s?\s+[àa]\s+toi\b
+  | \b(?:go|gestes?|clics?|choix|d[ée]cisions?|seuils?)\s+[àa]\s+toi\b
+  | \b(?:go|gestes?|clics?|choix|d[ée]cisions?|seuils?)\b[^.,;:\n]{0,30}\b(?:reste(?:nt)?|est|sont)\s+
+    (?:bien\s+)?(?:le\s+tien|la\s+tienne|les\s+tien(?:ne)?s)\b
   | \bil\s+te\s+suffit\b
   | \bun\s+(?:tap|clic)\s+suffit\b
   | \b(?:dis|pr[ée]viens)[\s-]moi\s+(?:quand|une\s+fois|d[èe]s\s+que|lorsque)\b
@@ -273,7 +309,7 @@ HANDBACK_SRC = (r"""
 # Why only the user can, named in the same paragraph. The words of the asking contract (his own
 # knowledge, a go on an irreversible or external gesture, a fact absent from every store), in
 # English and French.
-CLASS_RE = re.compile(r"\b(?:knowledge|connaissance|irr[ée]versible|external|externe"
+CLASS_RE = re.compile(r"\b(?:knowledge|connaissance|irr[ée]versibles?|external|externes?"
                       r"|absente?s?)\b", re.I)
 # A check only a human may pass. "second factor" is the refusal's own example of one: until
 # 2026-10-28 the refusal named it and this did not read it, so a re-answer that wrote "c'est ton
@@ -363,7 +399,7 @@ CONFIRM_RE = re.compile(
     r"|\btell\s+me\s+(?:if|whether)\s+(?:that|this)\s+(?:is|reads)\s+(?:right|correct|how\s+you)",
     re.I)
 # The two classes that still lift a confirmation: a go on an irreversible or external gesture.
-GO_CLASS_RE = re.compile(r"\b(?:irr[ée]versible|external|externe)\b", re.I)
+GO_CLASS_RE = re.compile(r"\b(?:irr[ée]versibles?|external|externes?)\b", re.I)
 # An absence claimed over the agent's own files only is not the contract's absent (every store,
 # ledger AND page): blanked before the class is read.
 NARROW_ABSENT = re.compile(
@@ -379,15 +415,17 @@ NARROW_ABSENT_WORDS = ("absent de tous mes fichiers", "absente de mes fichiers",
 # word it says does not must be one neither reads (2026-10-28: the refusal named "a second factor",
 # "a payment", "a preference" and "a commitment" as reasons, the gate read none of them, and
 # sessions were refused again on the re-answer that used them).
-CLASS_WORDS = ("knowledge", "connaissance", "irreversible", "irréversible", "external", "externe",
-               "absent", "absente")
+CLASS_WORDS = ("knowledge", "connaissance", "irreversible", "irréversible", "irréversibles",
+               "external", "externe", "externes", "absent", "absente")
 HUMAN_ONLY_WORDS = ("captcha", "2FA", "two-factor", "second factor", "second facteur",
                     "one-time code", "code de vérification", "code SMS", "Face ID", "Touch ID",
                     "passkey", "biometric", "security key", "clé de sécurité")
 NOT_A_CLASS = ("a payment", "un paiement", "a preference", "ta préférence", "a commitment",
                "un engagement", "your password", "ton mot de passe", "your money", "ton argent",
                "under your name", "à ton nom", "only you know", "toi seul le sais",
-               "none of my files names any", "aucun de mes fichiers ne le dit")
+               "none of my files names any", "aucun de mes fichiers ne le dit", "ta règle",
+               "your rule", "tu m'as demandé", "you asked me", "la machine ne paie jamais",
+               "the machine never buys")
 # A description with the user as its subject is read like an order: the shapes of the session
 # that taught it (2026-10-27, an apostille and a consulate file, seven refusals, five of them a
 # process or a calendar told with "tu" as the subject).
@@ -413,10 +451,11 @@ SENTENCE_MAX = 240
 LISTED_MAX = 4
 
 # The prime: what a refused session is told before each later closing is drafted. The shapes are
-# the ones the 2026-10-30 and 2026-11-03 sessions were refused on, cut and neutralised; a test
-# reads each against the gate (refused) and each rewrite (passes), so the prime never names a
-# shape the gate allows or a rewrite it refuses. PRIME_NOT_READ are reasons the 2026-11-03
-# session wrote in its own words, each one in NOT_A_CLASS.
+# the ones the 2026-10-30, 2026-11-03 and 2026-11-04 sessions were refused on, cut and
+# neutralised; a test reads each against the gate (refused) and each rewrite (passes), so the
+# prime never names a shape the gate allows or a rewrite it refuses. PRIME_NOT_READ are reasons
+# those sessions wrote in their own words, each one in NOT_A_CLASS. PRIME_PROMPTS bounds the full
+# text; past it the session keeps prime_short, the command alone, until it ends.
 PRIME_SUFFIX = ".handback_gate.prime"
 PRIME_PROMPTS = 12
 PRIME_KEPT = 2
@@ -424,13 +463,16 @@ PRIME_SHAPES = ("No: you call the registry yourself", "quand ils arrivent, tu fa
                 "tu signes le consentement et le certificat", "quand tu cliques sur Continue",
                 "c'est toi qui le fermes depuis le tableau de bord",
                 "alors que tu coches Yes sur leur politique IA",
-                "Pour les voir, ouvre l'écran du serveur")
+                "Pour les voir, ouvre l'écran du serveur",
+                "le choix te revient, puisque ta règle est que je n'écris rien sans ta demande",
+                "ce geste reste le tien")
 PRIME_REWRITES = ("au clic sur Continue, la page lance ses contrôles",
                   "le compte se ferme depuis le tableau de bord, à solde nul",
                   "quand ils arrivent, le geste 1 : ta signature, irréversible",
                   "le formulaire déclare Yes sur leur politique IA",
-                  "je t'envoie les deux formulaires en captures")
-PRIME_NOT_READ = ("none of my files names any", "only you know")
+                  "je t'envoie les deux formulaires en captures",
+                  "je bascule dès ton go, une écriture externe sur ton compte")
+PRIME_NOT_READ = ("none of my files names any", "only you know", "ta règle", "tu m'as demandé")
 PRIME_CHECKS = ("captcha", "2FA", "second factor", "passkey")
 PRIME_EVENTS = ("UserPromptSubmit", "SessionStart")
 SENTENCE_END = re.compile(r"[.!?](?=\s|$)|\n")
@@ -649,6 +691,8 @@ def reason_text(found, cfg):
              "blank line): {}; or a check by its name: {}; or terms, conditions or CGU that "
              "forbid automation. {} alone are not read, and an absence claimed over your own "
              "files ({}) is not the class absent: absent means from every store AND every page. "
+             "Another wording of whose it is (\"reste le tien\", \"t'appartient\") is the same "
+             "hand-back, the word above is what lifts it. "
              "A closing that points at asks higher up (\"tes réponses aux 4 questions\") is read "
              "whole. A gesture already classified higher up needs its word again where it is "
              "mentioned again (a reco, an option, a next step; a table is one paragraph). Before "
@@ -697,7 +741,8 @@ def check_report(text, cfg=None):
     lines.append("Name the real actor (I, the third party, nobody), or keep it the user's and "
                  "write in that same paragraph one of: {}; or a check by its name: {}. A reason "
                  "in other words ({}) is not read, nor an absence claimed over your own files "
-                 "({}). Then check again.".format(
+                 "({}). Another wording of whose it is (\"reste le tien\", \"t'appartient\") is "
+                 "the same hand-back, the word above is what lifts it. Then check again.".format(
                      ", ".join(CLASS_WORDS), ", ".join(HUMAN_ONLY_WORDS),
                      ", ".join("\"{}\"".format(w) for w in PRIME_NOT_READ),
                      ", ".join("\"{}\"".format(w) for w in NARROW_ABSENT_WORDS[:2])))
@@ -788,9 +833,19 @@ def prime_text(state):
                 ", ".join(CLASS_WORDS), ", ".join(PRIME_CHECKS))
 
 
+def prime_short(state):
+    """What a session reads past PRIME_PROMPTS prompts after its last refusal: the command, which
+    is what holds. Pure."""
+    n = int(state.get("count") or 0)
+    return ("handback-gate refused {} closing{} of this session. Before you end a turn here, "
+            "write the closing, then {}; send it only once it passes. (handback-gate)"
+            ).format(n, "" if n == 1 else "s", check_how())
+
+
 def on_prime():
     """UserPromptSubmit, and SessionStart after a compaction or a resume: in a session the gate
-    refused within the last PRIME_PROMPTS prompts, hand the rule to the producer as context."""
+    refused, hand the rule to the producer as context, the full text within PRIME_PROMPTS
+    prompts of the last refusal and after a compaction or a resume, prime_short otherwise."""
     payload = trace.read_payload()
     event = payload.get("hook_event_name")
     if event not in PRIME_EVENTS:
@@ -803,11 +858,11 @@ def on_prime():
     if event == "UserPromptSubmit":
         state["since"] = int(state.get("since") or 0) + 1
         _write_prime(payload, state)
-    if int(state.get("since") or 0) > PRIME_PROMPTS:
-        return 0
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": event,
-                                             "additionalContext": prime_text(state)}},
-                     ensure_ascii=False))
+    late = event == "UserPromptSubmit" and int(state.get("since") or 0) > PRIME_PROMPTS
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": event,
+        "additionalContext": prime_short(state) if late else prime_text(state)}},
+        ensure_ascii=False))
     return 0
 
 

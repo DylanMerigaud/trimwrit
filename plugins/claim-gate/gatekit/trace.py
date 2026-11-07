@@ -18,6 +18,13 @@ next clean run records the recovery.
 NO BYPASS. No environment variable and no marker file turns a gate off. The only knob is
 `--home DIR`, an argument no hooks.json passes: tests point every file at a fixture with it.
 
+A LONG SESSION RUNS THE INSTALLED VERSION. Claude Code fixes ${CLAUDE_PLUGIN_ROOT} when a session
+starts, so a fix reaches a running session only when its process restarts: one opened on
+handback-gate 0.5.0 ran it for three days through 0.6.0, 0.7.0 and 0.7.1 (2026-11-03 to 11-06).
+configure() is the first call of every gate, before stdin is read, so a copy that is no longer
+the one installed hands over there (follow_install). The registry is read as data: a file it
+cannot read, or a target that is not there, leaves the running copy in charge.
+
 WHERE THINGS GO is configuration, section "trace" of trimwrit-gates.json:
   ledger            the health JSONL (default: the plugin's data directory)
   witness_module    a Python file exposing log(door, event, reason_class, session_id) that
@@ -45,6 +52,8 @@ else:  # run as a script: python3 gatekit/trace.py witness ...
 LEDGER_NAME = "hook-health.jsonl"
 REFUSALS_NAME = "door-refusals.jsonl"
 STATE_NAME = "trimwrit-gates"
+REGISTRY_NAME = "installed_plugins.json"
+CACHE_NAME = "cache"
 CHAIN_CAP = 3
 DETAIL_MAX = 600
 ENV_SESSION = "CLAUDE_SESSION_ID"
@@ -60,9 +69,51 @@ class HookTimeout(Exception):
     """Raised by the alarm when a hook has not decided in time."""
 
 
+def installed_root(root):
+    """The directory Claude Code's registry installs this plugin at now, when `root` is a cached
+    copy (<plugins>/cache/<market>/<name>/<version>) and that is another existing directory;
+    None otherwise, and for a registry it cannot read. Several entries (a user and a project
+    scope): the newest lastUpdated, the rule of every reader of that file."""
+    version_dir = os.path.abspath(root)
+    name_dir = os.path.dirname(version_dir)
+    market_dir = os.path.dirname(name_dir)
+    cache_dir = os.path.dirname(market_dir)
+    if os.path.basename(cache_dir) != CACHE_NAME:
+        return None
+    key = "{}@{}".format(os.path.basename(name_dir), os.path.basename(market_dir))
+    try:
+        with open(os.path.join(os.path.dirname(cache_dir), REGISTRY_NAME),
+                  encoding="utf-8") as fh:
+            entries = json.load(fh)["plugins"][key]
+        rows = [e for e in entries if isinstance(e.get("installPath"), str)
+                and os.path.isdir(e["installPath"])]
+        newest = max(rows, key=lambda e: str(e.get("lastUpdated") or ""))["installPath"]
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+    return None if os.path.realpath(newest) == os.path.realpath(version_dir) else newest
+
+
+def follow_install(argv):
+    """Replace this process with the same script of the installed copy, argv and stdin intact,
+    when this copy is not the installed one. Returns when there is nothing to follow."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    script = os.path.abspath(argv[0])
+    if not script.startswith(root + os.sep):
+        return
+    installed = installed_root(root)
+    target = os.path.join(installed, os.path.relpath(script, root)) if installed else None
+    if target and os.path.isfile(target):
+        try:
+            os.execv(sys.executable, [sys.executable, target] + argv[1:])
+        except OSError:
+            pass
+
+
 def configure(argv):
-    """Take `--home DIR` out of argv (in place) and remember it. Returns argv."""
+    """Hand over to the installed copy when this one is stale (follow_install), then take
+    `--home DIR` out of argv (in place) and remember it. Returns argv."""
     global _HOME, _SETTINGS
+    follow_install(argv)
     if "--home" in argv:
         i = argv.index("--home")
         if i + 1 >= len(argv):

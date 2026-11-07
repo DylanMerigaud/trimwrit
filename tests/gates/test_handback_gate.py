@@ -759,17 +759,25 @@ def test_the_prime_comes_back_after_a_compaction_and_a_resume(tmp_path):
     assert startup.stdout.strip() == ""
 
 
-def test_the_prime_stops_after_its_window_and_a_new_refusal_restarts_it(tmp_path):
+def test_the_prime_shortens_past_its_window_and_never_goes_silent(tmp_path):
+    # 2026-11-03 to 11-06: a session refused again 33 to 86 prompts after its last refusal had no
+    # prime left. The full text stops at the window, the command never does.
     path = make_transcript(tmp_path, RELAPSE[1])
     blocked(run_py(NAME, SCRIPT, stop(path, "window"), tmp_path))
-    outs = [run_py(NAME, SCRIPT, prompt("window"), tmp_path, "--prime").stdout.strip()
-            for _ in range(gate.PRIME_PROMPTS + 1)]
-    assert all(outs[:gate.PRIME_PROMPTS]) and outs[-1] == ""
-    late = run_py(NAME, SCRIPT, prompt("window", "SessionStart", "compact"), tmp_path, "--prime")
-    assert late.stdout.strip() == ""
+    outs = [primed(run_py(NAME, SCRIPT, prompt("window"), tmp_path, "--prime"))
+            for _ in range(gate.PRIME_PROMPTS + 2)]
+    full, short = outs[gate.PRIME_PROMPTS - 1], outs[gate.PRIME_PROMPTS]
+    assert "IN THAT SAME PARAGRAPH" in full and "IN THAT SAME PARAGRAPH" not in short
+    assert outs[-1] == short
+    assert short.startswith("handback-gate refused 1 closing of this session")
+    assert gate.check_command() in short and "exit 0: it passes" in short
+    assert len(short) < len(full) / 3
+    late = primed(run_py(NAME, SCRIPT, prompt("window", "SessionStart", "compact"), tmp_path,
+                         "--prime"), "SessionStart")
+    assert "IN THAT SAME PARAGRAPH" in late    # a compaction erased every earlier prime
     blocked(run_py(NAME, SCRIPT, stop(path, "window"), tmp_path))
-    assert "refused 2 closings" in primed(run_py(NAME, SCRIPT, prompt("window"), tmp_path,
-                                                 "--prime"))
+    again = primed(run_py(NAME, SCRIPT, prompt("window"), tmp_path, "--prime"))
+    assert "refused 2 closings" in again and "IN THAT SAME PARAGRAPH" in again
 
 
 def test_the_prime_never_blocks_and_a_cap_is_not_counted(tmp_path):
@@ -1109,3 +1117,119 @@ def test_the_check_says_what_lifts_each_kind_like_the_refusal():
     _, report = gate.check_report(PRIMED_RELAPSE[2], CFG)
     assert gate.LOOKUP_TEXT not in report and gate.CONFIRM_TEXT not in report
     assert all("\"{}\"".format(w) in report for w in gate.NARROW_ABSENT_WORDS[:2])
+
+
+# 2026-11-03 to 11-06: the refusal asks for the word "irréversible" or "externe", the model writes
+# it in agreement with a plural noun, and the gate refuses that too. Each re-answer of the two
+# chains refused twice in a row after 0.7.0 was this; handback_retract_gate reads the same
+# matcher, so the one line it asks for was refused as well and it denied the --check call itself.
+AGREED = [
+    "**Prochaine étape :** réserver le logement. C'est toi qui le fais, parce que ce sont des "
+    "paiements externes irréversibles que la machine ne fait jamais.",
+    "**Prochaine étape :** les trois paiements te reviennent. Ce sont des paiements externes et "
+    "irréversibles.",
+    "Les deux paiements restent à toi : externes et irréversibles.",
+    "L'ordre et l'inscription se font sur le site, et c'est toi qui les poses : ce sont des "
+    "engagements irréversibles.",
+    "Correction : le plafond et l'ordre restent à toi seul, parce que ces gestes sont "
+    "irréversibles et externes et que tu m'as interdit d'enchérir à ta place.",
+    "Correction : ces deux gestes sont irréversibles et externes, ils restent à toi seul ; je ne "
+    "fais rien sur le site.",
+]
+UNAGREED = [
+    "**Prochaine étape :** les trois paiements te reviennent.",
+    "Les deux paiements restent à toi.",
+    "Les irréversibilités du contrat restent à toi.",
+    "L'externalisation reste à toi.",
+]
+
+
+@pytest.mark.parametrize("text", AGREED)
+def test_a_class_word_in_agreement_with_a_plural_is_read(text):
+    assert gate.handbacks_in(text, CFG) == [], text
+    assert gate.check_report(text, CFG)[0] == 0, text
+
+
+@pytest.mark.parametrize("text", UNAGREED)
+def test_the_same_sentences_with_no_class_stay_refused(text):
+    assert gate.handback_in(text, CFG), text
+
+
+def test_the_plural_lifts_a_confirmation_like_the_singular():
+    ask = "Dis-moi si c'est bien ça : ces envois sont {}."
+    assert gate.confirms_in(ask.format("cool"))
+    assert not gate.confirms_in(ask.format("irréversibles"))
+    assert not gate.confirms_in(ask.format("externes"))
+
+
+# 2026-10-31 to 11-06: the reason the model reaches for when a gesture waits on the user's order
+# is the user's own rule or request. No class word in it, so every re-answer had to find one.
+RULE_REASONS = [
+    "**À toi de choisir**, puisque tu m'as demandé de ne rien changer dans le jeu sans ta demande :",
+    "Le choix de farmer la panoplie te revient, puisque ta règle est que je ne lance rien dans le "
+    "jeu sans ta demande.",
+    "La bascule attend ton ordre. C'est à toi parce que tu m'as demandé de ne changer les zones "
+    "que sur ta demande.",
+    "**Suite :** deux choix te reviennent, car ils écrivent dans le jeu et tu n'as demandé ni le "
+    "craft ni la Gelée.",
+    "Les ordres sur le site restent à toi, c'est ta règle depuis le 27/10.",
+]
+
+
+@pytest.mark.parametrize("text", RULE_REASONS)
+def test_the_users_own_rule_is_no_class_and_the_refusal_says_so(text):
+    found = gate.handbacks_in(text, CFG)
+    assert found, text
+    reason = gate.reason_text(found, CFG)
+    report = gate.check_report(text, CFG)[1]
+    for word in ("ta règle", "tu m'as demandé"):
+        assert "\"{}\"".format(word) in reason and "\"{}\"".format(word) in report, word
+
+
+def test_the_prime_names_the_users_rule_and_the_go_on_my_own_gesture():
+    prime = gate.prime_text({"count": 1, "sentences": []})
+    assert "\"ta règle\"" in prime and "\"tu m'as demandé\"" in prime
+    assert "je bascule dès ton go, une écriture externe sur ton compte" in prime
+
+
+# 2026-11-07, the first replay of 0.8.0: a --check loop tells the producer what the gate reads, so
+# it ends on a wording the gate does not. The closings of 14 days held the same wordings.
+WHOSE = [
+    "Dans l'onglet ouvert : AUGMENTER, puis DÉPOSER UN ORDRE. Ce geste reste le tien par ta règle.",
+    "**Reste ouvert, décision de zone qui t'appartient d'après ta règle sur ce compte :** le "
+    "déplacement du groupe.",
+    "**Reste ouvert, décision de zone réservée à toi par ta règle :** le déplacement du groupe.",
+    "Dépasser ce plafond ne se décide que par toi.",
+    "Le go reste le tien, parce que chaque ordre t'engage à payer si tu gagnes l'enchère.",
+    "Le clic sur Submit reste le tien.",
+    "Ce seuil reste le tien.",
+    "Le go t'appartient, parce que chaque ordre t'engage à payer.",
+    "- **Ce qui t'appartient :** le go.",
+    "Il reste trois gestes qui ne dépendent que de toi :",
+    "Le go ne peut venir que de toi : chaque ordre t'engage à payer.",
+    "**Reste ouvert, décision à toi parce que ta règle réserve les zones à ton ordre :** le groupe.",
+]
+NOT_WHOSE = [
+    "Il est remplacé par le même texte : tous les verdicts sont les tiens.",
+    "En tête du doc, l'ordre des sources est le tien : d'abord le code.",
+    "**Conclusion** : la partie qui ne pouvait venir que de toi est faite, le remplissage a repris.",
+    "Le choix ne t'appartient pas, je le fais.",
+    "Le go reste le tien : un envoi externe.",
+    "Le choix t'appartient, c'est ta connaissance.",
+]
+
+
+@pytest.mark.parametrize("text", WHOSE)
+def test_a_synonym_of_whose_it_is_is_the_same_hand_back(text):
+    assert gate.handback_in(text, CFG), text
+
+
+@pytest.mark.parametrize("text", NOT_WHOSE)
+def test_who_wrote_what_and_a_named_class_stay_out_of_it(text):
+    assert not gate.handback_in(text, CFG), text
+
+
+def test_the_refusal_and_the_check_say_a_synonym_lifts_nothing():
+    found = gate.handbacks_in(WHOSE[0], CFG)
+    for text in (gate.reason_text(found, CFG), gate.check_report(WHOSE[0], CFG)[1]):
+        assert "\"reste le tien\"" in text and "is the same hand-back" in text

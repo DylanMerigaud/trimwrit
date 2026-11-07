@@ -60,9 +60,11 @@ written in the next paragraph.
 
 So a refusal also writes the session's state, and the same script runs as a `UserPromptSubmit`
 hook and as a `SessionStart` hook after a compaction or a resume (`--prime`): for 12 prompts after
-the last refusal it hands the model, as context, the count, the last two sentences refused, the
-shapes above with their rewrites, and the words the gate reads, with the reminder that a reason
-counts only in the same paragraph. In a session the gate never refused it prints nothing. It lifts
+the last refusal, and after each compaction or resume, it hands the model, as context, the count,
+the last two sentences refused, the shapes above with their rewrites, and the words the gate
+reads, with the reminder that a reason counts only in the same paragraph. Past those 12 prompts it
+keeps one line, the command of the check below, until the session ends. In a session the gate
+never refused it prints nothing. It lifts
 nothing: the `Stop` hook reads every closing exactly as before, and a test reads each shape the
 prime names against the gate (refused) and each rewrite (passes).
 
@@ -157,6 +159,38 @@ A re-answer in the same stop chain is checked like the first one; after three bl
 turn ends, with a visible message and a `cap` row in the ledger. A `SubagentStop` is ignored. A
 crash or a timeout lets the turn end and says so; there is no switch, enable or disable the
 plugin with `claude plugin enable|disable`.
+
+
+## What went around the check
+
+Reflect counted three sessions stuck after 0.7.0, refused 5 to 8 times each. Of their 20 refusals,
+3 ran a version that had the check; each session that got it was not refused again once its
+re-answer had passed. Under the check, 24 refusals over 18 sessions, none stuck. What went around
+it, each closed in 0.8.0:
+
+- **The version.** Claude Code fixes a plugin's root when a session starts, so one session ran
+  0.5.0 for three days while 0.7.1 was installed. A gate's first call now hands a stale copy over
+  to the version `installed_plugins.json` names (`gatekit/trace.py`, `follow_install`).
+- **The window.** 8 of the 20 refusals came 16 to 86 prompts after the last one, past the 12 of the
+  prime. It now keeps one line, the command of the check, until the session ends.
+- **Agreement.** The refusal asks for "irréversible" and "externe"; the model wrote them in
+  agreement with a plural noun and the gate refused them, which `handback_retract_gate` inherited.
+  2 of the 3 re-answers refused again were that. The plural is now the class word.
+- **The reason in other words.** The user's own rule ("ta règle", "tu m'as demandé") was the reason
+  of 6 of the 20. Still refused, now named, with the rewrite that passes ("je bascule dès ton go,
+  une écriture externe sur ton compte").
+- **The synonym.** The check tells a producer exactly what the gate reads, so a loop on it ends on
+  a wording the gate does not read. The first replay of this fix passed 12 of 12 with "reste le
+  tien", "qui t'appartient" and "réservée à toi". Those are read now, and the refusal says a
+  synonym lifts nothing.
+
+On 3,436 unique closings of 14 days, the plural lets 7 through, each naming its class (one of them
+also held a gesture the agent could do, the passenger names of a train booking: a class word lifts
+a paragraph, in the singular too), and the synonyms refuse 17 more: 246 refused becomes 256.
+
+Replayed with `replay/prime_replay.py` on two situations past the prime's window (Opus at medium,
+six runs per situation and arm, read by this gate): first drafts refused 6 of 12 with the silence
+of 0.7.1, the check run in 0; 0 of 12 with the short prime, the check run in 12.
 
 ## Measured
 

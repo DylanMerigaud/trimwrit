@@ -1,5 +1,35 @@
 # Changelog
 
+## handback-gate 0.8.0, 2026-11-07
+
+- **A long session runs the installed version.** Claude Code fixes a plugin's root when a session
+  starts, so one session ran 0.5.0 for three days while 0.7.1 was installed: 8 refusals, not one
+  check. `gatekit/trace.py` `configure()`, the first call of every gate, now hands a stale copy
+  over to the version `installed_plugins.json` names, argv and stdin intact (`follow_install`). A
+  registry it cannot read or a target that is not there leaves the running copy in charge. Vendored
+  into every plugin; a plugin other than this one takes it at its next version.
+- **The prime never goes silent.** Its window came from one session's longest gap, 6 prompts; 8 of
+  the 20 refusals reflect counted came 16 to 86 prompts after the last one. Past 12 prompts the
+  session keeps one line, the command of the check, until it ends; a compaction or a resume gets
+  the full text again.
+- **A class word in agreement with a plural is read** ("irréversibles", "externes"). The refusal
+  asks for those words and the model wrote them correctly in French; 2 of the 3 re-answers refused
+  again were that, and `handback_retract_gate` inherited it, refusing the line it asks for and then
+  denying the `--check` call. This is the one change that lets a text through: 7 of 3,436 unique
+  closings of 14 days, each naming its class. One of the 7 also held a gesture the agent could do
+  (a train booking's passenger names): a class word lifts a paragraph, in the singular too.
+- **More wordings of whose a gesture is are read** ("reste le tien", "t'appartient", "ne dépend que
+  de toi", "ne peut venir que de toi", "réservée à toi", "décision à toi"), 17 more closings
+  refused on the same corpus, all true hand-backs: a loop on `--check` ends on a wording the gate
+  does not read, and the first replay of this fix did exactly that, 12 of 12. The refusal and the
+  check say a synonym lifts nothing. In all, 246 refused closings become 256.
+- **The user's own rule is named as no class** ("ta règle", "tu m'as demandé", the reason of 6 of
+  the 20 refusals), with the rewrite that passes: the go on the agent's own gesture, with its class.
+- `replay/prime_replay.py` renders a state past an arm's window the way that arm would, and two
+  situations join it. First drafts past the window (Opus at medium, six runs per situation and
+  arm, read by the 0.8.0 gate): 6 of 12 refused with the silence of 0.7.1, the check run in 0; 0
+  of 12 with the short prime, the check run in 12.
+
 ## handback-gate 0.7.1, 2026-11-05
 
 - **A go asked as a question is no lookup.** growth-cockpit's card bank lost a send since 0.6.0:

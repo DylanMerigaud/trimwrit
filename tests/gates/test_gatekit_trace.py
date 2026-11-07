@@ -239,3 +239,105 @@ def test_transcript_prefers_the_payload_then_the_last_main_thread_row(tmp_path):
     assert transcript.final_text({"last_assistant_message": "live",
                                   "transcript_path": str(path)}) == "live"
     assert transcript.final_text({"transcript_path": str(path)}) == "plain string"
+
+
+# ---- a long session runs the installed version ------------------------------------------------
+# 2026-11-03 to 11-06: a session opened on handback-gate 0.5.0 ran it for three days, through 0.6.0,
+# 0.7.0 and 0.7.1, because Claude Code fixes ${CLAUDE_PLUGIN_ROOT} when a session starts.
+
+STAMPED = '''#!/usr/bin/env python3
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from gatekit import trace  # noqa: E402
+
+trace.configure(sys.argv)
+print("{version} " + " ".join(sys.argv[1:]) + " " + sys.stdin.read())
+'''
+
+
+def install(tmp_path, *versions):
+    """A plugin cache holding `versions`, every script printing its version, its argv and stdin."""
+    roots = {}
+    for version in versions:
+        root = tmp_path / "plugins" / "cache" / "market" / "fixture" / version
+        (root / "scripts").mkdir(parents=True)
+        shutil.copytree(SRC, str(root / "gatekit"), ignore=shutil.ignore_patterns("__pycache__"))
+        (root / "scripts" / "gate.py").write_text(STAMPED.replace("{version}", version),
+                                                  encoding="utf-8")
+        roots[version] = root
+    return roots
+
+
+def registry(tmp_path, *entries):
+    path = tmp_path / "plugins" / "installed_plugins.json"
+    path.write_text(json.dumps({"version": 2, "plugins": {"fixture@market": [
+        {"scope": "user", "installPath": str(p), "lastUpdated": at} for p, at in entries]}}),
+        encoding="utf-8")
+
+
+def run_version(root, *args):
+    return subprocess.run([sys.executable, str(root / "scripts" / "gate.py")] + list(args),
+                          input="the payload", capture_output=True, text=True, env=clean_env(),
+                          timeout=60)
+
+
+def test_an_older_copy_hands_over_to_the_installed_version(tmp_path):
+    roots = install(tmp_path, "0.7.1", "0.8.0")
+    registry(tmp_path, (roots["0.8.0"], "2026-11-07T10:00:00.000Z"))
+    r = run_version(roots["0.7.1"], "--prime")
+    assert (r.returncode, r.stdout.strip()) == (0, "0.8.0 --prime the payload"), r.stderr
+
+
+def test_the_argv_reaches_the_new_copy_before_home_is_taken_out(tmp_path):
+    roots = install(tmp_path, "0.7.1", "0.8.0")
+    registry(tmp_path, (roots["0.8.0"], "2026-11-07T10:00:00.000Z"))
+    r = run_version(roots["0.7.1"], "--home", str(tmp_path), "--prime")
+    assert r.stdout.strip() == "0.8.0 --prime the payload", r.stderr
+
+
+def test_the_newest_entry_of_the_registry_wins(tmp_path):
+    roots = install(tmp_path, "0.7.1", "0.8.0")
+    registry(tmp_path, (roots["0.7.1"], "2026-11-01T10:00:00.000Z"),
+             (roots["0.8.0"], "2026-11-07T10:00:00.000Z"))
+    assert run_version(roots["0.7.1"]).stdout.strip() == "0.8.0  the payload"
+
+
+@pytest.mark.parametrize("broken", [
+    None,                                       # no registry at all
+    "{not json",                                # unreadable
+    json.dumps({"version": 2}),                 # no plugins map
+    json.dumps({"plugins": {"other@market": []}}),   # not installed
+    json.dumps({"plugins": {"fixture@market": 3}}),  # a shape it does not know
+])
+def test_a_registry_it_cannot_read_leaves_the_running_copy_in_charge(tmp_path, broken):
+    roots = install(tmp_path, "0.7.1")
+    if broken is not None:
+        (tmp_path / "plugins" / "installed_plugins.json").write_text(broken, encoding="utf-8")
+    r = run_version(roots["0.7.1"])
+    assert (r.returncode, r.stdout.strip()) == (0, "0.7.1  the payload"), r.stderr
+
+
+def test_the_installed_copy_does_not_loop_on_itself(tmp_path):
+    roots = install(tmp_path, "0.8.0")
+    registry(tmp_path, (roots["0.8.0"], "2026-11-07T10:00:00.000Z"))
+    assert run_version(roots["0.8.0"]).stdout.strip() == "0.8.0  the payload"
+
+
+def test_a_registry_naming_a_directory_without_the_script_changes_nothing(tmp_path):
+    roots = install(tmp_path, "0.7.1", "0.8.0")
+    (roots["0.8.0"] / "scripts" / "gate.py").unlink()
+    registry(tmp_path, (roots["0.8.0"], "2026-11-07T10:00:00.000Z"))
+    assert run_version(roots["0.7.1"]).stdout.strip() == "0.7.1  the payload"
+    registry(tmp_path, (tmp_path / "gone", "2026-11-07T10:00:00.000Z"))
+    assert run_version(roots["0.7.1"]).stdout.strip() == "0.7.1  the payload"
+
+
+def test_a_copy_outside_a_plugin_cache_never_looks_at_a_registry(tmp_path):
+    root = tmp_path / "plugins" / "fixture"
+    (root / "scripts").mkdir(parents=True)
+    shutil.copytree(SRC, str(root / "gatekit"), ignore=shutil.ignore_patterns("__pycache__"))
+    (root / "scripts" / "gate.py").write_text(STAMPED.replace("{version}", "repo"),
+                                              encoding="utf-8")
+    assert run_version(root).stdout.strip() == "repo  the payload"

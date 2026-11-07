@@ -137,7 +137,9 @@ their defaults. No key turns a gate off. To turn one off, disable the plugin (`c
 The shared code (the chain cap, the crash report, the refusal ledger, the configuration reader)
 has one source, `gates/gatekit/`, copied byte for byte into every plugin by
 `tools/vendor_gates.py`, because Claude Code copies a plugin alone into its cache and a plugin
-cannot reach a file outside its own directory. The test suite fails on any drift.
+cannot reach a file outside its own directory. The test suite fails on any drift. Claude Code
+fixes a plugin's root when a session starts, so a gate's first call hands a stale copy over to
+the version `installed_plugins.json` names: a fix reaches a session that has been open for days.
 
 Each Stop gate ships the case that measures it. Each prompt was first screened on the bare model
 (no plugin, no tools, three runs) until it made the model commit the fault the hook exists for,
