@@ -3,6 +3,7 @@ import ast
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -321,3 +322,42 @@ def test_eval_graders_load_in_the_native_runner(name):
             assert keys <= NATIVE_GRADER_KEYS, (case.path, keys - NATIVE_GRADER_KEYS)
             assert not PYTHON_ONLY_REGEX.search(grader.get("pattern", "")), grader["name"]
             assert samples.get(grader["name"]), "no proof samples for " + grader["name"]
+
+
+# The official validator (`claude plugin validate`, docs plugins-reference "Validate the
+# manifest") catches what the hand-written field checks above do not: a type mismatch, a path
+# that is missing or escapes the plugin root, an unknown field Claude Code would strip, an MCP
+# entry it would drop. --strict turns its warnings into failures. Measured 2026-11-08 on
+# 2.1.319: every plugin and the root pass in about a second each, with no API call.
+CLAUDE = shutil.which("claude")
+needs_claude = pytest.mark.skipif(CLAUDE is None, reason="claude CLI not installed")
+
+
+def validate(path):
+    return subprocess.run([CLAUDE, "plugin", "validate", "--strict", path],
+                          capture_output=True, text=True, timeout=120)
+
+
+@needs_claude
+@pytest.mark.parametrize("path", [os.path.join(PLUGINS, n) for n in NAMES] + [ROOT],
+                         ids=NAMES + ["root"])
+def test_official_validator_passes_strict(path):
+    out = validate(path)
+    text = out.stdout + out.stderr
+    assert out.returncode == 0, text
+    assert "Validation passed" in text, text
+    assert "with warnings" not in text, text
+
+
+@needs_claude
+def test_official_validator_bites(tmp_path):
+    """A manifest with a type mismatch fails the same call, so a green run above means
+    something."""
+    broken = tmp_path / NAMES[0]
+    shutil.copytree(os.path.join(PLUGINS, NAMES[0]), broken)
+    manifest = broken / ".claude-plugin" / "plugin.json"
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    data["version"] = 1
+    manifest.write_text(json.dumps(data), encoding="utf-8")
+    out = validate(str(broken))
+    assert out.returncode != 0, out.stdout + out.stderr
