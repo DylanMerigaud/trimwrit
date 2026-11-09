@@ -39,6 +39,25 @@ A call of the smaller model that raises counts as wrong, its error text in small
 aborts the run. The probe never changes `passed`: it informs a downshift, it does not grade the
 producer. A sonnet or haiku bank, a deterministic one, `--offline` and `--no-probe` probe nothing.
 
+THE EFFORT PROBE. The same question one rung down the other axis: a bank whose producer runs at
+an effort above medium (`EFFORT_LADDER`: xhigh to high, high to medium) also asks the SAME model
+at the next cheaper effort (`probe_effort`), on the SAME sampled cases as the model probe. Its
+rows go to RUNS/<stamp>.effort-probe.jsonl and its summary under `downshift.effort` of
+RELEASE.json: RELEASE.json `downshift` keeps the model probe's keys above when there is one, and
+gains the key `effort`:
+
+  downshift.effort.effort      the cheaper effort probed (big_effort: the one the producer runs)
+  downshift.effort.model       the model, the same for both sides
+  downshift.effort.n           the cases sampled, chosen as the model probe chooses them
+  downshift.effort.right       how many the cheaper effort got right; rate is right / n
+  downshift.effort.big_rate    the producer's effort's rate on the SAME cases, from the main run
+  downshift.effort.agree       the sampled cases where both are right or both are wrong
+  downshift.effort.diffs       [{id, big_right, small_right, small_got}], small = the cheaper effort
+
+A bank with no model probe (a sonnet at high effort) writes `downshift` as {"effort": {...}}
+alone. Same rules: a raising call is wrong, never an abort, `passed` never moves; a bank at
+medium or lower, a deterministic one, `--offline` and `--no-probe` probe no effort.
+
 `trimwrit bank new <slug>` lays out a bank on this kit; `trimwrit bank check` reads every
 RELEASE.json under a directory against the envelope.
 
@@ -69,6 +88,10 @@ SMALLER = {
     "claude-opus-4-8": "claude-sonnet-5-5",
 }
 PROBE_SAMPLE = 20
+PROBE_EFFORT_EXT = ".effort-probe.jsonl"
+# the effort ladder: the effort a bank's producer runs at -> the ONE cheaper effort its probe
+# asks of the same model. Medium and below are not here: medium is already the default.
+EFFORT_LADDER = {"xhigh": "high", "high": "medium"}
 # what bank_sha leaves out: the outputs of a run and caches, never its inputs
 NOT_INPUTS = (RELEASE, RUNS, "__pycache__", ".pytest_cache")
 
@@ -160,9 +183,11 @@ def run_path(bank, stamp, ext=".jsonl"):
 
 def latest_run(bank, pattern="*"):
     """The newest file of `bank`/RUNS matching `pattern`, or None. A probe file
-    (<stamp>.probe.jsonl) is left out unless `pattern` names the probe: it is not the run."""
+    (<stamp>.probe.jsonl, <stamp>.effort-probe.jsonl) is left out unless `pattern` names the
+    probe: it is not the run."""
     found = sorted(p for p in glob.glob(os.path.join(bank, RUNS, pattern)) if os.path.isfile(p)
-                   and (PROBE_EXT not in os.path.basename(p) or "probe" in pattern))
+                   and (not os.path.basename(p).endswith((PROBE_EXT, PROBE_EFFORT_EXT))
+                        or "probe" in pattern))
     return found[-1] if found else None
 
 
@@ -276,6 +301,32 @@ def probe_sample(cases, sample=PROBE_SAMPLE):
     return keyed[:max(0, int(sample))]
 
 
+def _compare(cases, rows, call, grade, sample, out, tag):
+    """The sampled cases asked through `call(case)` and compared with the main run's `rows`:
+    (n, right, big_right, agree, diffs). `tag` is merged into each row given to `out`."""
+    big = {r["id"]: bool(r["right"]) for r in rows}
+    picked = probe_sample([c for c in cases if c.get("id") in big], sample)
+    right = agree = 0
+    diffs = []
+    for case in picked:
+        try:
+            got = call(case)
+            ok = bool(grade(case, got))
+        except Exception as exc:  # noqa: BLE001  (one failed call is a wrong answer, not a crash)
+            got, ok = "error: {}: {}".format(type(exc).__name__, exc), False
+        big_ok = big[case["id"]]
+        right += ok
+        if ok == big_ok:
+            agree += 1
+        else:
+            diffs.append({"id": case["id"], "big_right": big_ok, "small_right": ok,
+                          "small_got": got})
+        if out is not None:
+            out.append(dict({"id": case["id"]}, **tag, got=got, right=ok, big_right=big_ok))
+    big_right = sum(1 for c in picked if big[c["id"]])
+    return len(picked), right, big_right, agree, diffs
+
+
 def probe(cases, rows, answer, grade, model, sample=PROBE_SAMPLE, out=None):
     """Ask the model below `model` (`smaller`) the sampled cases and compare with the main run.
 
@@ -289,28 +340,9 @@ def probe(cases, rows, answer, grade, model, sample=PROBE_SAMPLE, out=None):
     small = smaller(model)
     if small is None:
         return None
-    big = {r["id"]: bool(r["right"]) for r in rows}
-    picked = probe_sample([c for c in cases if c.get("id") in big], sample)
-    right = agree = 0
-    diffs = []
-    for case in picked:
-        try:
-            got = answer(case, model=small)
-            ok = bool(grade(case, got))
-        except Exception as exc:  # noqa: BLE001  (one failed call is a wrong answer, not a crash)
-            got, ok = "error: {}: {}".format(type(exc).__name__, exc), False
-        big_ok = big[case["id"]]
-        right += ok
-        if ok == big_ok:
-            agree += 1
-        else:
-            diffs.append({"id": case["id"], "big_right": big_ok, "small_right": ok,
-                          "small_got": got})
-        if out is not None:
-            out.append({"id": case["id"], "model": small, "got": got, "right": ok,
-                        "big_right": big_ok})
-    n = len(picked)
-    big_right = sum(1 for c in picked if big[c["id"]])
+    n, right, big_right, agree, diffs = _compare(
+        cases, rows, lambda case: answer(case, model=small), grade, sample, out,
+        {"model": small})
     return {"model": small, "big_model": model, "n": n, "right": right,
             "rate": round(right / n, 4) if n else None, "big_right": big_right,
             "big_rate": round(big_right / n, 4) if n else None, "agree": agree,
@@ -326,6 +358,44 @@ def probe_line(d):
         len(d["diffs"]), " (ids {})".format(ids) if ids else "")
 
 
+def cheaper_effort(effort):
+    """The ONE cheaper effort a bank whose producer runs at `effort` probes, or None (medium,
+    low, an unknown effort, or None)."""
+    return EFFORT_LADDER.get(effort) if isinstance(effort, str) else None
+
+
+def probe_effort(cases, rows, answer, grade, model, effort, sample=PROBE_SAMPLE, out=None):
+    """Ask the SAME `model` one effort lower (`cheaper_effort`) the sampled cases, the very cases
+    `probe` samples, and compare with the main run.
+
+    `answer(case, model=..., effort=...)` is the bank's answer function; the effort probe passes
+    both keywords (the model probe passes only `model`, so an older answer(case, model=MODEL)
+    keeps working there). A call that raises counts as wrong, its error text in small_got.
+    `out`, a list, receives the per-case rows (for RUNS/<stamp>.effort-probe.jsonl). Returns the
+    `downshift.effort` dict of the module docstring, or None when `effort` has no cheaper rung,
+    the bank grades no model, or nothing was sampled."""
+    low = cheaper_effort(effort)
+    if low is None or model is None:
+        return None
+    n, right, big_right, agree, diffs = _compare(
+        cases, rows, lambda case: answer(case, model=model, effort=low), grade, sample, out,
+        {"model": model, "effort": low})
+    if not n:
+        return None
+    return {"effort": low, "big_effort": effort, "model": model, "n": n, "right": right,
+            "rate": round(right / n, 4), "big_right": big_right,
+            "big_rate": round(big_right / n, 4), "agree": agree, "diffs": diffs}
+
+
+def probe_effort_line(d):
+    """One human line of a `probe_effort` dict, e.g. 'probe effort high on 20 cases: 18/20 vs
+    xhigh 19/20 (claude-opus-5-5), 2 diffs (ids a, b)'."""
+    ids = ", ".join(str(x["id"]) for x in d["diffs"])
+    return "probe effort {} on {} cases: {}/{} vs {} {}/{} ({}), {} diffs{}".format(
+        d["effort"], d["n"], d["right"], d["n"], d["big_effort"], d["big_right"], d["n"],
+        d["model"], len(d["diffs"]), " (ids {})".format(ids) if ids else "")
+
+
 # ------------------------------------------------------------------ the scaffold
 
 SLUG_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
@@ -334,6 +404,7 @@ MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$")
 # how a bank's run.py and test import this kit: from an installed trimwrit by default; a
 # repository that wraps the kit passes its own block (it must bind the name `bank`)
 DEFAULT_IMPORT = "from trimwrit import bank  # noqa: E402"
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 CODEBOOK = """# {judges}: the codebook
 
@@ -373,8 +444,12 @@ and the corpus, never the producer.
 
 When MODEL is a top-tier model (bank.SMALLER), a live run then asks ONE smaller model the same
 question on a deterministic sample of the cases (--probe-sample, default 20): its rows go to
-RUNS/<stamp>.probe.jsonl, its summary under `downshift` in RELEASE.json, one line to stderr. The
-probe never changes `passed`. --no-probe skips it.
+RUNS/<stamp>.probe.jsonl, its summary under `downshift` in RELEASE.json, one line to stderr.
+
+When EFFORT is above medium (bank.EFFORT_LADDER), a live run also asks the SAME model one effort
+lower on the same sampled cases: its rows go to RUNS/<stamp>.effort-probe.jsonl, its summary under
+`downshift.effort` in RELEASE.json, one line to stderr. No probe ever changes `passed`.
+--no-probe skips both.
 """
 import argparse
 import json
@@ -386,13 +461,18 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 {import_block}
 
 MODEL = {model_literal}
+# the effort the producer runs at (low, medium, high, xhigh): above medium, the effort probe asks
+# MODEL one rung lower too
+EFFORT = {effort_literal}
 BAR = {{"{bar_metric}": {bar_value}}}
 
 
-def answer(case, model=MODEL):
-    """The producer's answer on one case, from `model`. Call the producer's own function here,
-    the same code path production runs, with `model` in place of its model id: the downshift
-    probe passes a smaller model (bank.smaller(MODEL)) to see whether it would hold the bar. A
+def answer(case, model=MODEL, effort=EFFORT):
+    """The producer's answer on one case, from `model` at `effort`. Call the producer's own
+    function here, the same code path production runs, with `model` in place of its model id and
+    `effort` in place of its effort: the downshift probe passes a smaller model
+    (bank.smaller(MODEL)), the effort probe a cheaper effort (bank.cheaper_effort(EFFORT)), to see
+    whether either would hold the bar. A
     model call runs lean (claude -p --bare or --safe-mode): a one-shot that loads the whole
     harness costs ten times the tokens for the same answer."""
     raise NotImplementedError("call the producer on case['input']")
@@ -413,7 +493,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\\n")[0])
     ap.add_argument("--offline", action="store_true")
     ap.add_argument("--no-probe", action="store_true",
-                    help="skip the downshift probe on the smaller model")
+                    help="skip the downshift probes (smaller model, cheaper effort)")
     ap.add_argument("--probe-sample", type=int, default=bank.PROBE_SAMPLE,
                     help="cases the downshift probe asks (default %(default)s)")
     args = ap.parse_args(argv)
@@ -440,6 +520,17 @@ def main(argv=None):
             for r in probe_rows:
                 fh.write(json.dumps(r, sort_keys=True, ensure_ascii=False) + "\\n")
         print(bank.probe_line(extra["downshift"]), file=sys.stderr)
+    if not args.no_probe and bank.cheaper_effort(EFFORT) is not None:
+        effort_rows = []
+        eff = bank.probe_effort(cases, rows, answer, grade, MODEL, EFFORT,
+                                sample=args.probe_sample, out=effort_rows)
+        if eff is not None:
+            extra.setdefault("downshift", {{}})["effort"] = eff
+            with open(bank.run_path(HERE, stamp, bank.PROBE_EFFORT_EXT), "w",
+                      encoding="utf-8") as fh:
+                for r in effort_rows:
+                    fh.write(json.dumps(r, sort_keys=True, ensure_ascii=False) + "\\n")
+            print(bank.probe_effort_line(eff), file=sys.stderr)
     doc = bank.write_release(HERE, passed=passed, n=len(rows), bar=BAR, model=MODEL, run=stamp,
                              extra=extra)
     print(json.dumps(doc, sort_keys=True))
@@ -487,9 +578,9 @@ def test_the_bar_is_the_codebook_bar():
 
 
 def plan(slug, judges, bar, bank_rel, model=None, producer=None, today=None,
-         import_block=DEFAULT_IMPORT, path_block=""):
+         import_block=DEFAULT_IMPORT, path_block="", effort="medium"):
     """{path relative to the repository: text} of a new bank at `bank_rel`. Raises BankError on
-    a bad slug, bar or model."""
+    a bad slug, bar, model or effort."""
     if not SLUG_RE.match(slug or ""):
         raise BankError("slug {!r}: lowercase words joined by '-'".format(slug))
     m = BAR_RE.match(bar or "")
@@ -498,6 +589,8 @@ def plan(slug, judges, bar, bank_rel, model=None, producer=None, today=None,
                         "'accuracy >= 0.9'".format(bar))
     if model is not None and not MODEL_RE.match(model):
         raise BankError("model {!r}: the model id the producer calls, or none".format(model))
+    if effort not in EFFORTS:
+        raise BankError("effort {!r}: one of {}".format(effort, ", ".join(EFFORTS)))
     if not (judges or "").strip():
         raise BankError("--judges: one line saying what the bank judges")
     if "bank" not in import_block:
@@ -506,7 +599,7 @@ def plan(slug, judges, bar, bank_rel, model=None, producer=None, today=None,
     module = slug.replace("-", "_")
     fill = dict(judges=judges, judges_lc=judges[:1].lower() + judges[1:], bank_rel=bank_rel,
                 today=today or datetime.date.today().isoformat(), bar_metric=m.group(1),
-                bar_value=float(m.group(2)), module=module, model_literal=repr(model),
+                bar_value=float(m.group(2)), module=module, model_literal=repr(model), effort_literal=repr(effort),
                 producer=producer or "(name the file and the function that makes the call)",
                 import_block=import_block, path_block=path_block)
     return {bank_rel + "/CODEBOOK.md": CODEBOOK.format(**fill),

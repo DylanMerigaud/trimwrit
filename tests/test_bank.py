@@ -297,7 +297,7 @@ def test_the_run_template_carries_the_probe():
     files = bank.plan("x", "Judge x", "accuracy >= 0.5", "banks/x", model="claude-opus-5-5")
     src = files["banks/x/run.py"]
     compile(src, "run.py", "exec")
-    assert "def answer(case, model=MODEL):" in src and "smaller model" in src
+    assert "def answer(case, model=MODEL, effort=EFFORT):" in src and "smaller model" in src
     assert "--no-probe" in src and "--probe-sample" in src and '"downshift"' in src
 
 
@@ -350,3 +350,151 @@ def test_no_probe_and_offline_ask_no_smaller_model(tmp_path):
     assert not list((b / "RUNS").glob("*.probe.jsonl"))
     off = _py([str(b / "run.py"), "--offline"], tmp_path)
     assert off.returncode == 0 and "probe" not in off.stderr
+
+
+# ------------------------------------------------------------------ the effort probe
+
+def test_the_effort_ladder_steps_down_to_medium_and_stops():
+    assert bank.EFFORT_LADDER == {"xhigh": "high", "high": "medium"}
+    assert bank.cheaper_effort("xhigh") == "high" and bank.cheaper_effort("high") == "medium"
+    for e in ("medium", "low", "max", None, 3, "HIGH"):
+        assert bank.cheaper_effort(e) is None, e
+
+
+def test_no_effort_probe_at_medium_or_below_or_without_a_model():
+    rows = [{"id": "c00", "right": True}]
+
+    def answer(case, model=None, effort=None):
+        raise AssertionError("never asked")
+
+    for m, e in (("claude-opus-5-5", "medium"), ("claude-opus-5-5", "low"), (None, "xhigh")):
+        assert bank.probe_effort(_cases(1), rows, answer, lambda c, g: True, m, e) is None
+    # nothing sampled: no dict either
+    assert bank.probe_effort(_cases(3), [], answer, lambda c, g: True, "m", "high") is None
+
+
+def test_the_effort_probe_asks_the_same_model_on_the_model_probes_sample():
+    cases = _cases(40)
+    rows = [{"id": c["id"], "right": c["id"] != "c00"} for c in cases]
+    calls, model_out, effort_out = [], [], []
+
+    def answer(case, model="claude-opus-5-5", effort="xhigh"):
+        calls.append((model, effort))
+        return 0
+
+    grade = lambda c, got: got == c["expected"]  # noqa: E731
+    m = bank.probe(cases, rows, answer, grade, "claude-opus-5-5", sample=12, out=model_out)
+    calls.clear()
+    d = bank.probe_effort(cases, rows, answer, grade, "claude-opus-5-5", "xhigh", sample=12,
+                          out=effort_out)
+    assert set(calls) == {("claude-opus-5-5", "high")} and len(calls) == 12 == d["n"]
+    assert [r["id"] for r in effort_out] == [r["id"] for r in model_out]   # the same cases
+    assert all(r["effort"] == "high" and r["model"] == "claude-opus-5-5" for r in effort_out)
+    assert d["effort"] == "high" and d["big_effort"] == "xhigh" and d["model"] == "claude-opus-5-5"
+    assert d["big_rate"] == m["big_rate"] and d["right"] == m["right"]
+    assert {x["id"] for x in d["diffs"]} == {x["id"] for x in m["diffs"]}
+    assert d["agree"] == 12 - len(d["diffs"])
+    line = bank.probe_effort_line(d)
+    assert line.startswith("probe effort high on 12 cases: {}/12 vs xhigh".format(d["right"]))
+    assert "(claude-opus-5-5)" in line
+
+
+def test_a_raising_cheaper_effort_counts_wrong_and_never_aborts():
+    cases = _cases(3)
+    rows = [{"id": c["id"], "right": True} for c in cases]
+
+    def answer(case, model=None, effort=None):
+        if case["id"] == "c02":
+            raise RuntimeError("timeout")
+        return case["expected"]
+
+    d = bank.probe_effort(cases, rows, answer, lambda c, g: g == c["expected"], "m", "high")
+    assert d["effort"] == "medium" and d["n"] == 3 and d["right"] == 2
+    assert d["diffs"] == [{"id": "c02", "big_right": True, "small_right": False,
+                           "small_got": "error: RuntimeError: timeout"}]
+
+
+def test_the_scaffold_carries_an_effort_and_refuses_an_unknown_one():
+    src = bank.plan("x", "Judge x", "accuracy >= 0.5", "banks/x", model="m")["banks/x/run.py"]
+    assert "EFFORT = 'medium'" in src and "def answer(case, model=MODEL, effort=EFFORT):" in src
+    assert "probe_effort" in src and "downshift.effort" in src
+    src = bank.plan("x", "Judge x", "accuracy >= 0.5", "banks/x", model="m",
+                    effort="xhigh")["banks/x/run.py"]
+    compile(src, "run.py", "exec")
+    assert "EFFORT = 'xhigh'" in src
+    with pytest.raises(bank.BankError, match="effort"):
+        bank.plan("x", "Judge x", "accuracy >= 0.5", "banks/x", effort="huge")
+
+
+def test_latest_run_is_never_the_effort_probe_file(tmp_path):
+    b = _bank(tmp_path)
+    run = bank.run_path(b, "20261109T000000")
+    eff = bank.run_path(b, "20261109T000001", bank.PROBE_EFFORT_EXT)
+    for p in (run, eff):
+        open(p, "w").close()
+    assert bank.latest_run(b) == run
+    assert bank.latest_run(b, "*.effort-probe.jsonl") == eff
+
+
+def _effort_bank(tmp_path, model, effort):
+    argv = list(NEW)
+    argv[8] = model
+    assert main(["--root", str(tmp_path)] + argv + ["--effort", effort]) == 0
+    b = tmp_path / "banks" / "ticket-route"
+    _fill(b)
+    run_py = (b / "run.py").read_text().replace(
+        '    raise NotImplementedError("call the producer on case[\'input\']")',
+        '    if effort != EFFORT and case["id"] == "t1":\n'
+        '        return "general"\n'
+        '    if model != MODEL and case["id"] == "t2":\n'
+        '        raise RuntimeError("small model down")\n'
+        '    return {"refund please": "billing", "app crashes": "bugs"}[case["input"]]')
+    (b / "run.py").write_text(run_py)
+    return b
+
+
+def test_an_opus_xhigh_bank_writes_both_probes_under_downshift(tmp_path):
+    b = _effort_bank(tmp_path, "claude-opus-5-5", "xhigh")
+    res = _py([str(b / "run.py")], tmp_path)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert ("probe effort high on 2 cases: 1/2 vs xhigh 2/2 (claude-opus-5-5), 1 diffs (ids t1)"
+            in res.stderr)
+    rel = bank.read_release(str(b))
+    assert bank.envelope_problems(rel) == [] and rel["passed"] is True
+    ds = rel["downshift"]
+    assert ds["model"] == "claude-sonnet-5-5" and ds["rate"] == 0.5    # the model keys kept
+    eff = ds["effort"]
+    assert eff["effort"] == "high" and eff["big_effort"] == "xhigh"
+    assert eff["model"] == "claude-opus-5-5" and eff["n"] == 2 and eff["right"] == 1
+    assert eff["big_rate"] == 1.0 and eff["agree"] == 1
+    assert eff["diffs"] == [{"id": "t1", "big_right": True, "small_right": False,
+                             "small_got": "general"}]
+    rows = bank.load(str(b / "RUNS" / (rel["run"] + bank.PROBE_EFFORT_EXT)))
+    assert sorted(r["id"] for r in rows) == ["t1", "t2"]
+    assert {r["effort"] for r in rows} == {"high"}
+
+
+def test_a_sonnet_high_bank_writes_the_effort_probe_alone(tmp_path):
+    b = _effort_bank(tmp_path, "claude-sonnet-5-5", "high")
+    res = _py([str(b / "run.py")], tmp_path)
+    assert res.returncode == 0, res.stdout + res.stderr
+    ds = bank.read_release(str(b))["downshift"]
+    assert list(ds) == ["effort"] and ds["effort"]["effort"] == "medium"
+    assert not list((b / "RUNS").glob("*[0-9].probe.jsonl"))
+
+
+def test_a_medium_bank_probes_no_effort(tmp_path):
+    b = _effort_bank(tmp_path, "claude-opus-5-5", "medium")
+    res = _py([str(b / "run.py")], tmp_path)
+    assert res.returncode == 0 and "probe effort" not in res.stderr
+    rel = bank.read_release(str(b))
+    assert "effort" not in rel["downshift"]
+    assert not list((b / "RUNS").glob("*.effort-probe.jsonl"))
+
+
+def test_no_probe_skips_both_probes(tmp_path):
+    b = _effort_bank(tmp_path, "claude-opus-5-5", "xhigh")
+    res = _py([str(b / "run.py"), "--no-probe"], tmp_path)
+    assert res.returncode == 0 and "probe" not in res.stderr
+    assert "downshift" not in bank.read_release(str(b))
+    assert not list((b / "RUNS").glob("*probe.jsonl"))

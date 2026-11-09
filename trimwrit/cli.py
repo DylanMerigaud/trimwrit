@@ -1173,7 +1173,7 @@ def cmd_bank(args):
         return 1 if bad else 0
     bank_rel = (args.dir or os.path.join("banks", args.slug)).rstrip("/")
     files = bank_mod.plan(args.slug, args.judges, args.bar, bank_rel, model=args.model,
-                          producer=args.producer)
+                          producer=args.producer, effort=args.effort)
     for rel in bank_mod.lay_out(root, files):
         print("wrote", rel)
     print("next: fill CODEBOOK.md section 0 and CORPUS.jsonl with real cases, write answer() "
@@ -1420,6 +1420,9 @@ def main(argv=None):
     bn.add_argument("--bar", required=True, help="'<metric> >= <value>', e.g. 'accuracy >= 0.9'")
     bn.add_argument("--model", default=None, help="the model id graded (none: deterministic)")
     bn.add_argument("--producer", default=None, help="the file and function making the call")
+    bn.add_argument("--effort", default="medium", choices=bank_mod.EFFORTS,
+                    help="the effort the producer runs at (default %(default)s); above medium, "
+                         "a live run also probes one effort lower")
     bn.add_argument("--dir", default=None, help="the bank directory (default: banks/<slug>)")
     bn.set_defaults(func=cmd_bank)
     bc = bsub.add_parser("check", help="every RELEASE.json under --dir against the envelope")

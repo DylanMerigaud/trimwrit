@@ -886,6 +886,13 @@ same cases, the cases where they agree, each diff), and one line says it, e.g. `
 claude-sonnet-5-5 on 20 cases: 18/20 vs claude-opus-5-5 19/20, 2 diffs (ids ...)`. The probe never
 changes `passed`; `--no-probe` skips it.
 
+A bank whose producer runs above medium effort (`EFFORT` in run.py, `bank new --effort`, the
+ladder `bank.EFFORT_LADDER`: xhigh to high, high to medium) also runs an effort probe: the SAME
+model one effort lower, on the same sampled cases, through `answer(case, model=..., effort=...)`.
+Rows to `RUNS/<stamp>.effort-probe.jsonl`, the comparison under `downshift.effort` in
+`RELEASE.json`, one line, e.g. `probe effort high on 20 cases: 18/20 vs xhigh 19/20
+(claude-opus-5-5), 2 diffs (ids ...)`. It never changes `passed`; `--no-probe` skips both probes.
+
 `trimwrit bank check --dir <path>` reads every `RELEASE.json` under a directory and exits 1 on one
 without the envelope. The repository this came from held 15 of them in 15 shapes, and its door
 read `passed` while one bank wrote `released: false`.

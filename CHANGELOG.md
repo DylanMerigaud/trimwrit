@@ -15,6 +15,19 @@
   text and never aborts the run; the probe never changes `passed`. `run.py` takes `--no-probe`
   and `--probe-sample N`; `answer(case, model=MODEL)` receives the smaller model. `latest_run`
   leaves a probe file out unless its pattern names the probe.
+- **A bank above medium effort also asks one effort lower.** The same question on the other
+  axis: a bank graded its producer at the producer's effort and said nothing on whether a cheaper
+  effort would have held the bar, so an effort was raised or lowered on no number. A bank laid out by `trimwrit bank new --effort <e>`
+  (the scaffold's new `EFFORT`, default `medium`) whose effort is on the ladder
+  `bank.EFFORT_LADDER` (xhigh to high, high to medium; `bank.cheaper_effort(effort)`, None at
+  medium or below) runs, after its live run, `bank.probe_effort`: the SAME model at the cheaper
+  effort, on the very cases the model probe samples. Its rows go to
+  `RUNS/<stamp>.effort-probe.jsonl`, its summary under `downshift.effort` in `RELEASE.json`
+  (`effort`, `big_effort`, `model`, `n`, `right`, `rate`, `big_rate`, `agree`, `diffs`), beside
+  the model probe's keys when there is one, one line to stderr ("probe effort high on 20 cases:
+  18/20 vs xhigh 19/20 (claude-opus-5-5), 2 diffs (ids ...)"). `answer(case, model=MODEL,
+  effort=EFFORT)` receives the cheaper effort; `--no-probe` skips both probes. Same rules: a
+  raising call is wrong, never an abort, and `passed` never moves.
 
 ## handback-gate 0.8.0, 2026-11-07
 
