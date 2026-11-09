@@ -878,6 +878,14 @@ checks the grader against the expected answers; a real run writes `RUNS/<stamp>.
 `model`, `bank_sha`, `run`), the bank's own keys beside them. The producer's door reads
 `bank.released(path)`: true only for that envelope with `passed: true`.
 
+A bank that grades a top-tier model (an opus or a fable, `bank.SMALLER`) also runs, after its live
+run, a downshift probe: the same question on a deterministic sample of up to 20 cases, asked of
+ONE smaller model (opus to sonnet, fable to opus) through `answer(case, model=...)`. The rows go to
+`RUNS/<stamp>.probe.jsonl`, the comparison under `downshift` in `RELEASE.json` (both rates on the
+same cases, the cases where they agree, each diff), and one line says it, e.g. `probe
+claude-sonnet-5-5 on 20 cases: 18/20 vs claude-opus-5-5 19/20, 2 diffs (ids ...)`. The probe never
+changes `passed`; `--no-probe` skips it.
+
 `trimwrit bank check --dir <path>` reads every `RELEASE.json` under a directory and exits 1 on one
 without the envelope. The repository this came from held 15 of them in 15 shapes, and its door
 read `passed` while one bank wrote `released: false`.

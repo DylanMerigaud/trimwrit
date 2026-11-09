@@ -212,3 +212,141 @@ def test_nothing_the_scaffold_writes_carries_a_long_dash(tmp_path):
     files = bank.plan("x", "Judge x", "accuracy >= 0.5", "banks/x", model="m")
     for rel, text in files.items():
         assert not any(ch in text for ch in DASHES), rel
+
+
+# ------------------------------------------------------------------ the downshift probe
+
+def test_the_ladder_probes_only_top_tier_models():
+    assert bank.smaller("claude-opus-5-5") == "claude-sonnet-5-5"
+    assert bank.smaller("claude-fable-5-1") == "claude-opus-5-5"
+    for m in ("claude-sonnet-5-5", "claude-haiku-4-5", None, "gpt-x", 3):
+        assert bank.smaller(m) is None, m
+
+
+def _cases(n):
+    return [{"id": "c{:02d}".format(i), "input": i, "expected": i % 2} for i in range(n)]
+
+
+def test_the_sample_is_deterministic_and_capped():
+    cases = _cases(50)
+    a = bank.probe_sample(cases, 20)
+    assert len(a) == 20 and a == bank.probe_sample(list(reversed(cases)), 20)
+    assert [c["id"] for c in a] != [c["id"] for c in cases[:20]]   # not the head of the file
+    assert len(bank.probe_sample(cases[:5], 20)) == 5 and bank.probe_sample(cases, 0) == []
+
+
+def test_probe_reports_agreement_and_diffs_on_the_same_cases():
+    cases = _cases(30)
+    # the big model is wrong on c00 only; the small one answers 0 on every case
+    rows = [{"id": c["id"], "right": c["id"] != "c00"} for c in cases]
+    calls = []
+
+    def answer(case, model="claude-opus-5-5"):
+        calls.append(model)
+        return 0
+
+    out = []
+    d = bank.probe(cases, rows, answer, lambda c, got: got == c["expected"], "claude-opus-5-5",
+                   sample=10, out=out)
+    picked = bank.probe_sample(cases, 10)
+    assert set(calls) == {"claude-sonnet-5-5"} and len(calls) == 10 == d["n"] == len(out)
+    small_right = {c["id"] for c in picked if c["expected"] == 0}
+    big_right = {c["id"] for c in picked if c["id"] != "c00"}
+    assert d["model"] == "claude-sonnet-5-5" and d["big_model"] == "claude-opus-5-5"
+    assert d["right"] == len(small_right) and d["rate"] == round(len(small_right) / 10, 4)
+    assert d["big_rate"] == round(len(big_right) / 10, 4)
+    diff_ids = {x["id"] for x in d["diffs"]}
+    assert diff_ids == small_right ^ big_right and d["agree"] == 10 - len(diff_ids)
+    for x in d["diffs"]:
+        assert x["small_right"] == (x["id"] in small_right) and x["small_got"] == 0
+    line = bank.probe_line(d)
+    assert line.startswith("probe claude-sonnet-5-5 on 10 cases: {}/10 vs claude-opus-5-5"
+                           .format(d["right"])) and "diffs (ids " in line
+
+
+def test_probe_samples_only_cases_the_main_run_graded():
+    cases = _cases(10)
+    rows = [{"id": "c03", "right": True}]
+    d = bank.probe(cases, rows, lambda c, model=None: 1, lambda c, g: True, "claude-opus-5-5")
+    assert d["n"] == 1 and d["big_rate"] == 1.0 and d["agree"] == 1 and d["diffs"] == []
+    assert bank.probe_line(d).endswith(", 0 diffs")
+
+
+def test_a_raising_small_model_counts_wrong_and_never_aborts():
+    cases = _cases(4)
+    rows = [{"id": c["id"], "right": True} for c in cases]
+
+    def answer(case, model=None):
+        if case["id"] == "c01":
+            raise RuntimeError("quota hit")
+        return case["expected"]
+
+    d = bank.probe(cases, rows, answer, lambda c, g: g == c["expected"], "claude-opus-5")
+    assert d["n"] == 4 and d["right"] == 3 and d["agree"] == 3
+    assert d["diffs"] == [{"id": "c01", "big_right": True, "small_right": False,
+                           "small_got": "error: RuntimeError: quota hit"}]
+
+
+def test_no_probe_for_a_sonnet_or_a_deterministic_bank():
+    rows = [{"id": "c00", "right": True}]
+    for m in ("claude-sonnet-5-5", None):
+        assert bank.probe(_cases(1), rows, lambda c, model=None: 0, lambda c, g: True, m) is None
+
+
+def test_the_run_template_carries_the_probe():
+    files = bank.plan("x", "Judge x", "accuracy >= 0.5", "banks/x", model="claude-opus-5-5")
+    src = files["banks/x/run.py"]
+    compile(src, "run.py", "exec")
+    assert "def answer(case, model=MODEL):" in src and "smaller model" in src
+    assert "--no-probe" in src and "--probe-sample" in src and '"downshift"' in src
+
+
+def test_latest_run_is_never_the_probe_file(tmp_path):
+    b = _bank(tmp_path)
+    run = bank.run_path(b, "20261109T000000")
+    probe = bank.run_path(b, "20261109T000000", bank.PROBE_EXT)
+    for p in (run, probe):
+        open(p, "w").close()
+    assert bank.latest_run(b) == run == bank.latest_run(b, "*.jsonl")
+    assert bank.latest_run(b, "*.probe.jsonl") == probe
+
+
+def _opus_bank(tmp_path):
+    argv = list(NEW)
+    argv[8] = "claude-opus-5-5"
+    assert main(["--root", str(tmp_path)] + argv) == 0
+    b = tmp_path / "banks" / "ticket-route"
+    _fill(b)
+    run_py = (b / "run.py").read_text().replace(
+        '    raise NotImplementedError("call the producer on case[\'input\']")',
+        '    if model != MODEL and case["id"] == "t2":\n'
+        '        raise RuntimeError("small model down")\n'
+        '    return {"refund please": "billing", "app crashes": "bugs"}[case["input"]]')
+    (b / "run.py").write_text(run_py)
+    return b
+
+
+def test_an_opus_bank_probes_sonnet_and_the_probe_never_changes_passed(tmp_path):
+    b = _opus_bank(tmp_path)
+    res = _py([str(b / "run.py")], tmp_path)
+    assert res.returncode == 0, res.stdout + res.stderr
+    assert ("probe claude-sonnet-5-5 on 2 cases: 1/2 vs claude-opus-5-5 2/2, 1 diffs (ids t2)"
+            in res.stderr)
+    rel = bank.read_release(str(b))
+    assert bank.envelope_problems(rel) == [] and rel["passed"] is True
+    ds = rel["downshift"]
+    assert ds["model"] == "claude-sonnet-5-5" and ds["rate"] == 0.5 and ds["big_rate"] == 1.0
+    assert ds["diffs"][0]["small_got"] == "error: RuntimeError: small model down"
+    probe_rows = bank.load(str(b / "RUNS" / (rel["run"] + ".probe.jsonl")))
+    assert sorted(r["id"] for r in probe_rows) == ["t1", "t2"]
+    assert json.loads(res.stdout)["downshift"] == ds
+
+
+def test_no_probe_and_offline_ask_no_smaller_model(tmp_path):
+    b = _opus_bank(tmp_path)
+    res = _py([str(b / "run.py"), "--no-probe"], tmp_path)
+    assert res.returncode == 0 and "probe" not in res.stderr
+    assert "downshift" not in bank.read_release(str(b))
+    assert not list((b / "RUNS").glob("*.probe.jsonl"))
+    off = _py([str(b / "run.py"), "--offline"], tmp_path)
+    assert off.returncode == 0 and "probe" not in off.stderr

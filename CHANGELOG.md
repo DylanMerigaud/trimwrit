@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased, 2026-11-09
+
+- **An opus bank also asks one smaller model.** On 2026-11-08 to 11-09 about 64 banks were built
+  overnight, each grading its producer with thousands of opus calls: 55 percent of an account's
+  weekly window in 12 hours, and nothing said whether sonnet would have held the bar. A bank laid
+  out by `trimwrit bank new` whose `MODEL` is on the ladder `bank.SMALLER` (fable to opus, opus to
+  sonnet; `bank.smaller(model)`, None for a sonnet, a haiku or a deterministic bank) now runs, after
+  its live run, `bank.probe`: the same cases, a deterministic sample of up to 20 (sorted by a sha
+  of the case id), on that ONE smaller model. Its rows go to `RUNS/<stamp>.probe.jsonl`, its
+  summary under `downshift` in `RELEASE.json` (`model`, `n`, `right`, `rate`, `big_rate` on the
+  same cases, `agree`, `diffs`), one line to stderr ("probe claude-sonnet-5-5 on 20 cases: 18/20
+  vs claude-opus-5-5 19/20, 2 diffs (ids ...)"). A call that raises counts as wrong with its error
+  text and never aborts the run; the probe never changes `passed`. `run.py` takes `--no-probe`
+  and `--probe-sample N`; `answer(case, model=MODEL)` receives the smaller model. `latest_run`
+  leaves a probe file out unless its pattern names the probe.
+
 ## handback-gate 0.8.0, 2026-11-07
 
 - **A long session runs the installed version.** Claude Code fixes a plugin's root when a session

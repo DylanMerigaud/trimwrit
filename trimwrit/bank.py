@@ -19,6 +19,26 @@ bank's own keys beside them (a producer's door keeps reading those):
   bank_sha  12 hex of the bank's own files (cases, codebook, graders) the run read
   run       the run's name under RUNS/, or null
 
+THE DOWNSHIFT PROBE. A bank that grades a top-tier model (`SMALLER` names the ladder: a fable
+or an opus) also asks, by default, ONE smaller model the same question on a small deterministic
+sample of its cases (`probe`), so the owner sees at once whether the cheaper model would hold the
+bar. On 2026-11-08 about 64 banks graded their producer on opus overnight, thousands of calls,
+55 percent of an account's weekly window in 12 hours, with nothing saying whether sonnet would
+have done. The probe's per-case rows go to RUNS/<stamp>.probe.jsonl and its summary under the key
+`downshift` of RELEASE.json:
+
+  model     the smaller model probed
+  n         the cases sampled (up to 20 by default, the same ones on every run: sorted by a sha
+            of the case id, among the cases the main run graded)
+  right     how many the smaller model got right; rate is right / n
+  big_rate  the graded model's rate on the SAME sampled cases, read from the main run's rows
+  agree     the sampled cases where both are right or both are wrong
+  diffs     [{id, big_right, small_right, small_got}] for every case where they differ
+
+A call of the smaller model that raises counts as wrong, its error text in small_got; it never
+aborts the run. The probe never changes `passed`: it informs a downshift, it does not grade the
+producer. A sonnet or haiku bank, a deterministic one, `--offline` and `--no-probe` probe nothing.
+
 `trimwrit bank new <slug>` lays out a bank on this kit; `trimwrit bank check` reads every
 RELEASE.json under a directory against the envelope.
 
@@ -38,6 +58,17 @@ ENVELOPE = ("schema", "passed", "at", "n", "bar", "model", "bank_sha", "run")
 CORPUS = "CORPUS.jsonl"
 RELEASE = "RELEASE.json"
 RUNS = "RUNS"
+PROBE_EXT = ".probe.jsonl"
+# the downshift ladder: a top-tier model graded by a bank -> the ONE smaller model its probe asks.
+# Only top-tier models are here: a sonnet or a haiku bank is already the cheap one, no probe.
+SMALLER = {
+    "claude-fable-5-1": "claude-opus-5-5",
+    "claude-fable-5": "claude-opus-5-5",
+    "claude-opus-5-5": "claude-sonnet-5-5",
+    "claude-opus-5": "claude-sonnet-5-5",
+    "claude-opus-4-8": "claude-sonnet-5-5",
+}
+PROBE_SAMPLE = 20
 # what bank_sha leaves out: the outputs of a run and caches, never its inputs
 NOT_INPUTS = (RELEASE, RUNS, "__pycache__", ".pytest_cache")
 
@@ -128,8 +159,10 @@ def run_path(bank, stamp, ext=".jsonl"):
 
 
 def latest_run(bank, pattern="*"):
-    """The newest file of `bank`/RUNS matching `pattern`, or None."""
-    found = sorted(p for p in glob.glob(os.path.join(bank, RUNS, pattern)) if os.path.isfile(p))
+    """The newest file of `bank`/RUNS matching `pattern`, or None. A probe file
+    (<stamp>.probe.jsonl) is left out unless `pattern` names the probe: it is not the run."""
+    found = sorted(p for p in glob.glob(os.path.join(bank, RUNS, pattern)) if os.path.isfile(p)
+                   and (PROBE_EXT not in os.path.basename(p) or "probe" in pattern))
     return found[-1] if found else None
 
 
@@ -227,6 +260,72 @@ def check_tree(root):
     return out
 
 
+# ------------------------------------------------------------------ the downshift probe
+
+def smaller(model):
+    """The ONE smaller model a bank grading `model` probes, or None (a model off the ladder,
+    a sonnet, a haiku, or a deterministic bank's None)."""
+    return SMALLER.get(model) if isinstance(model, str) else None
+
+
+def probe_sample(cases, sample=PROBE_SAMPLE):
+    """Up to `sample` of `cases`, in a stable order: sorted by a sha of each case's id, so two
+    runs on the same corpus pick the same cases, and a case added later does not reshuffle the
+    others."""
+    keyed = sorted(cases, key=lambda c: (sha(str(c.get("id"))), str(c.get("id"))))
+    return keyed[:max(0, int(sample))]
+
+
+def probe(cases, rows, answer, grade, model, sample=PROBE_SAMPLE, out=None):
+    """Ask the model below `model` (`smaller`) the sampled cases and compare with the main run.
+
+    `rows` are the main run's rows ({"id", "right", ...}); only cases they graded are sampled, so
+    `big_rate` is the graded model's rate on exactly the cases the smaller one answered.
+    `answer(case, model=...)` is the bank's own answer function, `grade(case, got)` its grader.
+    A call (or a grading) that raises counts as wrong for the smaller model, the error text in
+    small_got; it never aborts. `out`, a list, receives the per-case rows (for
+    RUNS/<stamp>.probe.jsonl). Returns the `downshift` dict of the module docstring, or None when
+    `model` has no smaller model."""
+    small = smaller(model)
+    if small is None:
+        return None
+    big = {r["id"]: bool(r["right"]) for r in rows}
+    picked = probe_sample([c for c in cases if c.get("id") in big], sample)
+    right = agree = 0
+    diffs = []
+    for case in picked:
+        try:
+            got = answer(case, model=small)
+            ok = bool(grade(case, got))
+        except Exception as exc:  # noqa: BLE001  (one failed call is a wrong answer, not a crash)
+            got, ok = "error: {}: {}".format(type(exc).__name__, exc), False
+        big_ok = big[case["id"]]
+        right += ok
+        if ok == big_ok:
+            agree += 1
+        else:
+            diffs.append({"id": case["id"], "big_right": big_ok, "small_right": ok,
+                          "small_got": got})
+        if out is not None:
+            out.append({"id": case["id"], "model": small, "got": got, "right": ok,
+                        "big_right": big_ok})
+    n = len(picked)
+    big_right = sum(1 for c in picked if big[c["id"]])
+    return {"model": small, "big_model": model, "n": n, "right": right,
+            "rate": round(right / n, 4) if n else None, "big_right": big_right,
+            "big_rate": round(big_right / n, 4) if n else None, "agree": agree,
+            "diffs": diffs}
+
+
+def probe_line(d):
+    """One human line of a `probe` dict, e.g. 'probe claude-sonnet-5-5 on 20 cases: 18/20 vs
+    claude-opus-5-5 19/20, 2 diffs (ids a, b)'."""
+    ids = ", ".join(str(x["id"]) for x in d["diffs"])
+    return "probe {} on {} cases: {}/{} vs {} {}/{}, {} diffs{}".format(
+        d["model"], d["n"], d["right"], d["n"], d["big_model"], d["big_right"], d["n"],
+        len(d["diffs"]), " (ids {})".format(ids) if ids else "")
+
+
 # ------------------------------------------------------------------ the scaffold
 
 SLUG_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
@@ -267,10 +366,15 @@ RUN = '''#!/usr/bin/env python3
 """run.py: grade {judges_lc} on {bank_rel}/CORPUS.jsonl against the bar of CODEBOOK.md section 2;
 writes RUNS/<stamp>.jsonl and RELEASE.json (the RELEASE envelope of trimwrit/bank.py).
 
-    python3 {bank_rel}/run.py [--offline]
+    python3 {bank_rel}/run.py [--offline] [--no-probe] [--probe-sample N]
 
 --offline grades each case's `expected` as if the producer had answered it: it checks the grader
 and the corpus, never the producer.
+
+When MODEL is a top-tier model (bank.SMALLER), a live run then asks ONE smaller model the same
+question on a deterministic sample of the cases (--probe-sample, default 20): its rows go to
+RUNS/<stamp>.probe.jsonl, its summary under `downshift` in RELEASE.json, one line to stderr. The
+probe never changes `passed`. --no-probe skips it.
 """
 import argparse
 import json
@@ -285,10 +389,12 @@ MODEL = {model_literal}
 BAR = {{"{bar_metric}": {bar_value}}}
 
 
-def answer(case):
-    """The producer's answer on one case. Call the producer's own function here, the same code
-    path production runs. A model call runs lean (claude -p --bare or --safe-mode): a one-shot
-    that loads the whole harness costs ten times the tokens for the same answer."""
+def answer(case, model=MODEL):
+    """The producer's answer on one case, from `model`. Call the producer's own function here,
+    the same code path production runs, with `model` in place of its model id: the downshift
+    probe passes a smaller model (bank.smaller(MODEL)) to see whether it would hold the bar. A
+    model call runs lean (claude -p --bare or --safe-mode): a one-shot that loads the whole
+    harness costs ten times the tokens for the same answer."""
     raise NotImplementedError("call the producer on case['input']")
 
 
@@ -306,6 +412,10 @@ def score(rows):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\\n")[0])
     ap.add_argument("--offline", action="store_true")
+    ap.add_argument("--no-probe", action="store_true",
+                    help="skip the downshift probe on the smaller model")
+    ap.add_argument("--probe-sample", type=int, default=bank.PROBE_SAMPLE,
+                    help="cases the downshift probe asks (default %(default)s)")
     args = ap.parse_args(argv)
     cases = bank.corpus(HERE)
     stamp = bank.run_stamp()
@@ -321,8 +431,17 @@ def main(argv=None):
     with open(bank.run_path(HERE, stamp), "w", encoding="utf-8") as fh:
         for r in rows:
             fh.write(json.dumps(r, sort_keys=True, ensure_ascii=False) + "\\n")
+    extra = dict(s)
+    if not args.no_probe and bank.smaller(MODEL) is not None:
+        probe_rows = []
+        extra["downshift"] = bank.probe(cases, rows, answer, grade, MODEL,
+                                        sample=args.probe_sample, out=probe_rows)
+        with open(bank.run_path(HERE, stamp, bank.PROBE_EXT), "w", encoding="utf-8") as fh:
+            for r in probe_rows:
+                fh.write(json.dumps(r, sort_keys=True, ensure_ascii=False) + "\\n")
+        print(bank.probe_line(extra["downshift"]), file=sys.stderr)
     doc = bank.write_release(HERE, passed=passed, n=len(rows), bar=BAR, model=MODEL, run=stamp,
-                             extra=s)
+                             extra=extra)
     print(json.dumps(doc, sort_keys=True))
     return 0 if passed else 1
 
