@@ -38,6 +38,14 @@ give the result. The same chain cap applies. A background subagent or a Monitor 
 job: the harness delivers those only by ending the turn. The deferral words are read only while a
 job runs, since "en cours" alone names someone else's work as often as a promise.
 
+Since 0.3.0 the Stop payload's `background_tasks` array decides which jobs still run when Claude
+Code sends it (the docs warn the transcript may lag at Stop time). Measured on 2.1.319: a
+backgrounded `sleep 120` arrives as `{"id": "bxpghd8nv", "type": "shell", "status": "running",
+...}`, the id being the transcript's `backgroundTaskId`, and the array is `[]` once it exits. An
+entry counts when it is of type `shell`, not in a terminal status, and the transcript shows its
+launch since the last prompt of the user (a dev server started turns ago is not this turn's work).
+With no `background_tasks` key, the transcript scan alone decides, as before.
+
 Measured before shipping on 639 past transcripts of the author's sessions with a background job
 (2026-08-15 to 2026-10-16): 3371 stops, 891 with a job of the session still running, 249 of them
 ending on a deferral to it. Of those 249 jobs, 119 ended within 10 minutes of the stop, 67 within
@@ -75,8 +83,9 @@ Each extra is wrapped in `(?:...)` and added as one more alternative.
 last 700 characters), `promise_gate.deferral_in(text, cfg=None)` the promise or the deferral to
 running work ending it, `promise_gate.target_in(prompt, cfg=None) -> bool` says whether a prompt
 sets a target. With no `cfg` they load the settings of the current directory.
-`promise_gate.pending_jobs(transcript_path) -> dict` maps the task id of each background shell
-job still running to its description; `promise_gate.JobScan` does the same one line at a time.
+`promise_gate.pending_jobs(transcript_path, live=None) -> dict` maps the task id of each
+background shell job still running to its description (`live` is
+`promise_gate.live_shell_tasks(payload)`, the payload's running shell tasks or None); `promise_gate.JobScan` does the same one line at a time.
 
 Utilities for a hand run: `python3 scripts/promise_gate.py --arm "text"`, `--disarm` and
 `--print` act on the session named by `CLAUDE_SESSION_ID`.

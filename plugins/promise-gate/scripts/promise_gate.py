@@ -38,6 +38,19 @@ passent", "still running", "once the tests finish"), the stop is blocked and tol
 job inside the turn. A background subagent or a Monitor is not such a job: the harness can only
 deliver those by ending the turn, and a turn that ends on them is the harness's own way to wait.
 
+Which jobs are still running (2026-11-08, harness item promise-gate-read-background-tasks):
+the Stop payload's `background_tasks` array decides when it is present. Claude Code builds it from
+its task registry for exactly this check, and the docs warn the transcript may lag at Stop time.
+Measured on 2.1.319 the same day: a `sleep 120` put in the background gave a Stop payload with
+`{"id": "bxpghd8nv", "type": "shell", "status": "running", "command": ..., "description": ...}`,
+its id the very `backgroundTaskId` of the transcript, and `[]` once it had exited. So a job is
+pending when its entry is of type `shell` and not in a terminal status; a subagent, a Monitor or a
+workflow is the harness's own wait, as above. The array carries no launch time, so the transcript
+still scopes it: an entry counts only when the transcript shows its launch since the last prompt
+of the user (a dev server started three turns ago, "the server is still running", is no deferral
+of this turn). With no `background_tasks` key (an older Claude Code, the registry unreachable),
+the transcript alone decides, as before (JobScan).
+
 The bounds: the re-answer of a stop chain is checked like the first answer; the gate lets go after
 CHAIN_CAP blocks in a row (a `cap` row in the ledger and a systemMessage). A crash or a timeout
 lets the turn end and is reported loudly. No environment variable and no configuration key
@@ -230,6 +243,26 @@ def _prompt_text(row):
     return text if text and not text.startswith(NOT_A_PROMPT) else None
 
 
+SHELL_TYPES = ("shell", "local_bash")
+DONE_STATUSES = ("completed", "failed", "killed", "stopped", "cancelled", "canceled", "error")
+
+
+def live_shell_tasks(payload):
+    """{task id: description} of the payload's `background_tasks` entries that are shell jobs
+    still in flight, or None when the payload carries no such array (the transcript decides)."""
+    tasks = payload.get("background_tasks")
+    if not isinstance(tasks, list):
+        return None
+    out = {}
+    for t in tasks:
+        if not isinstance(t, dict) or t.get("type") not in SHELL_TYPES or not t.get("id"):
+            continue
+        if str(t.get("status") or "").lower() in DONE_STATUSES:
+            continue
+        out[str(t["id"])] = str(t.get("description") or "").strip()
+    return out
+
+
 class JobScan:
     """The shell jobs this session launched in the background since the last prompt of the user
     and that are still running, fed one transcript line at a time: a tool result carrying a
@@ -239,7 +272,8 @@ class JobScan:
     transcript of tens of megabytes reads in a fraction of a second."""
 
     def __init__(self):
-        self.jobs, self._described = {}, {}
+        # `launched`: every background shell job launched since the last prompt, finished or not.
+        self.jobs, self.launched, self._described = {}, {}, {}
 
     def feed(self, line):
         if "<task-id>" in line:
@@ -258,6 +292,7 @@ class JobScan:
             return
         if _prompt_text(row) is not None:
             self.jobs.clear()
+            self.launched.clear()
             return
         content = (row.get("message") or {}).get("content")
         blocks = [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
@@ -275,11 +310,16 @@ class JobScan:
             tid = str(result["backgroundTaskId"])
             use = next((b.get("tool_use_id") for b in blocks if b.get("type") == "tool_result"),
                        None)
-            self.jobs[tid] = self._described.get(use, "")
+            self.jobs[tid] = self.launched[tid] = self._described.get(use, "")
 
 
-def pending_jobs(transcript_path):
-    """{task id: description} of the session's background shell jobs still running (JobScan)."""
+def pending_jobs(transcript_path, live=None):
+    """{task id: description} of the session's background shell jobs still running. `live` is
+    live_shell_tasks(payload): when it is a dict, it decides which jobs run, and the transcript
+    only keeps those launched since the last prompt of the user; when None, the transcript alone
+    decides (JobScan)."""
+    if live is not None and not live:
+        return {}
     scan = JobScan()
     try:
         fh = open(transcript_path or "", encoding="utf-8", errors="replace")
@@ -288,7 +328,9 @@ def pending_jobs(transcript_path):
     with fh:
         for line in fh:
             scan.feed(line)
-    return scan.jobs
+    if live is None:
+        return scan.jobs
+    return {t: d or scan.launched[t] for t, d in live.items() if t in scan.launched}
 
 
 def reason_text(promise, excerpt, cfg):
@@ -338,7 +380,8 @@ def on_stop():
     jobs = {}
     if not promise:
         deferral = deferral_in(text, cfg)
-        jobs = pending_jobs(payload.get("transcript_path")) if deferral else {}
+        jobs = pending_jobs(payload.get("transcript_path"),
+                            live_shell_tasks(payload)) if deferral else {}
         promise = deferral if jobs else None
     if not promise:
         trace.chain_clear(HOOK, payload)

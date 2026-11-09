@@ -403,9 +403,20 @@ def write_rows(tmp_path, rows, name="t.jsonl"):
     return str(path)
 
 
-def stop_on(tmp_path, rows, session="job", final=RELAPSE_FINAL, active=False):
-    return run_py(NAME, SCRIPT, stop(write_rows(tmp_path, rows), session, active=active,
-                                     message=final), tmp_path)
+def stop_on(tmp_path, rows, session="job", final=RELAPSE_FINAL, active=False, tasks=None):
+    payload = stop(write_rows(tmp_path, rows), session, active=active, message=final)
+    if tasks is not None:
+        payload["background_tasks"], payload["session_crons"] = tasks, []
+    return run_py(NAME, SCRIPT, payload, tmp_path)
+
+
+def task(job, what=None, kind="shell", status="running"):
+    """A `background_tasks` entry as Claude Code 2.1.319 sends it (measured 2026-11-08)."""
+    entry = {"id": job, "type": kind, "status": status,
+             "description": what if what is not None else "a background job"}
+    if kind == "shell":
+        entry["command"] = "python3 -m pytest -q tests"
+    return entry
 
 
 def silent(r):
@@ -521,3 +532,56 @@ def test_a_missing_transcript_reads_as_no_job(tmp_path):
     r = run_py(NAME, SCRIPT, stop(str(tmp_path / "absent.jsonl"), "gone", message=RELAPSE_FINAL),
                tmp_path)
     silent(r)
+
+
+# Stop payload `background_tasks` (2026-11-08, harness item promise-gate-read-background-tasks):
+# when the array is there it decides which jobs run; the transcript only scopes it to this turn.
+
+def test_the_payload_says_the_job_ended_while_the_transcript_lags(tmp_path):
+    # The transcript has the launch and no notification yet; the registry already dropped the job.
+    silent(stop_on(tmp_path, relapse_rows(), tasks=[]))
+
+
+def test_the_payload_says_the_job_runs_and_blocks(tmp_path):
+    reason = blocked(stop_on(tmp_path, relapse_rows(), tasks=[task(TESTS_JOB, TESTS_WHAT)]))
+    assert TESTS_JOB in reason and TESTS_WHAT in reason
+    refusals = rows(os.path.join(str(tmp_path), "door-refusals.jsonl"))
+    assert [x["reason_class"] for x in refusals] == ["job_pending"]
+
+
+def test_a_payload_entry_in_a_terminal_status_is_not_pending(tmp_path):
+    # A registry entry with a terminal status is never pending.
+    silent(stop_on(tmp_path, relapse_rows(),
+                   tasks=[task(TESTS_JOB, TESTS_WHAT, status="completed")]))
+
+
+@pytest.mark.parametrize("kind", ["subagent", "monitor", "workflow", "MCP task"])
+def test_a_payload_task_that_is_no_shell_is_the_harness_own_wait(tmp_path, kind):
+    silent(stop_on(tmp_path, relapse_rows(), tasks=[task(TESTS_JOB, kind=kind)]))
+
+
+def test_a_payload_job_launched_before_the_last_prompt_is_not_this_turn(tmp_path):
+    rows_ = relapse_rows()[:-1] + [user("et le mail de Sara?"), said(RELAPSE_FINAL)]
+    silent(stop_on(tmp_path, rows_, tasks=[task(TESTS_JOB, TESTS_WHAT)]))
+
+
+def test_a_payload_job_the_transcript_never_launched_is_not_this_turn(tmp_path):
+    silent(stop_on(tmp_path, [user(RELAPSE_PROMPT), said(RELAPSE_FINAL)],
+                   tasks=[task("bdevsrv01", "dev server")]))
+
+
+def test_a_payload_description_is_used_when_the_transcript_has_none(tmp_path):
+    rows_ = [user(RELAPSE_PROMPT)] + launch("toolu_auto", "b2eimejzl") + [said(RELAPSE_FINAL)]
+    reason = blocked(stop_on(tmp_path, rows_, tasks=[task("b2eimejzl", "Run the suite")]))
+    assert "\"Run the suite\" (b2eimejzl)" in reason
+
+
+def test_live_shell_tasks_reads_the_measured_payload():
+    payload = {"background_tasks": [
+        {"id": "bxpghd8nv", "type": "shell", "status": "running",
+         "description": "Sleep for 120 seconds in background", "command": "sleep 120 ;"},
+        {"id": "a1", "type": "subagent", "status": "running", "description": "x",
+         "agent_type": "lean"}], "session_crons": []}
+    assert gate.live_shell_tasks(payload) == {"bxpghd8nv": "Sleep for 120 seconds in background"}
+    assert gate.live_shell_tasks({}) is None
+    assert gate.live_shell_tasks({"background_tasks": []}) == {}
