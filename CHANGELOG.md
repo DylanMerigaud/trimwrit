@@ -1,6 +1,28 @@
 # Changelog
 
-## Unreleased, 2026-11-09
+## 0.13.0, 2026-11-10
+
+- **What loads every turn has a number.** `trimwrit integrate` writes rules into instruction
+  files and nothing stopped an always-loaded one from growing: one global CLAUDE.md reached 14.7k
+  tokens, reread on every turn. `trimwrit preamble [--root R] [--user-dir DIR] [--probe]
+  [--json]` measures the pieces that load into every session (the root's `CLAUDE.md` and
+  `.claude/CLAUDE.md`, `~/.claude/CLAUDE.md`, `~/.claude/rules/*.md` as one piece, the project's
+  `MEMORY.md`), in tokens of what the model sees: HTML comments stripped, UTF-8 bytes / 2.35
+  (`trimwrit/preamble.py`). Budgets come from `.trimwrit/budget.json`, by piece name or by a path
+  relative to the root; a piece over its budget prints `OVER` and the command exits 3. `--probe`
+  asks `claude -p` once and prints the input tokens it measured, or `probe: unavailable (...)`
+  without touching the exit code.
+- **The budget door in integrate.** A budget nobody enforces is a dashboard. `write_rule` now
+  measures the target after the write, and when it is a budgeted piece left over its budget and
+  larger than before, it raises `OverBudget` (an `IntegrateError`; `trimwrit integrate` exits 3)
+  with an `over-budget:` message naming the numbers and where the rule goes instead: a skill of
+  its situation, or the story in the history doc, with one line in the always-loaded file naming
+  the door. Rewording a rule shorter always passes, even in a file still over.
+- **relocate moves a rule out without losing its case.** Moving a block by hand loses the marker
+  or half the paragraph. `trimwrit relocate <rule-id> --to <file> [--from <target>]` cuts the
+  block exactly as `prune` would, appends it to the destination (created if missing, marker
+  rewritten in its comment syntax), refuses a destination that already holds the rule, exits 1
+  when the rule is not found, and prints the block's size and `next: trimwrit run --case <id>`.
 
 - **An opus bank also asks one smaller model.** On 2026-11-08 to 11-09 about 64 banks were built
   overnight, each grading its producer with thousands of opus calls: 55 percent of an account's

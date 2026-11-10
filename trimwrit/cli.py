@@ -14,6 +14,8 @@ shows the whole loop as a canvas, plus the one that reads what a rule did after 
   stats      aggregate a ledger of rule evaluations and flag runtime candidates
   map        every harness of every repo as a coverage tree, in one self contained page
   bank       lay out an eval bank on the shared kit (new), or read every RELEASE.json (check)
+  preamble   what loads into every session, in tokens, against .trimwrit/budget.json
+  relocate   move one rule block out of an always-loaded file into another file
 
 The CLI is the only writer. Skills call it, they never edit the ledger or a case by hand, and
 that is deliberate: a ledger that a model can edit in prose is a ledger that will disagree with
@@ -36,6 +38,7 @@ from . import decide as decide_mod
 from . import integrate as integrate_mod
 from . import ledger as ledger_mod
 from . import map as map_mod
+from . import preamble as preamble_mod
 from . import prune as prune_mod
 from . import report as report_mod
 from . import models as models_mod
@@ -50,6 +53,9 @@ DEFAULT_TARGETS = ("CLAUDE.md",)
 # `run --decide` stopped because a round measured no run (an outage, a usage limit): not a
 # refusal (2) and not a failing case (1), so a scheduler can tell "try later" from "broken".
 EXIT_UNMEASURED = 4
+# A piece that loads every turn is over its budget in .trimwrit/budget.json (preamble), or a
+# write would push it there (integrate): not a refusal of the input (2), a size to deal with.
+EXIT_OVER_BUDGET = 3
 RUN_EPILOG = ("exit codes: 0 done (an undecided case is a result), 1 a case below --threshold "
               "(plain run), 2 refused, 4 --decide stopped: a round measured no run (every "
               "session errored, hit a usage limit or answered nothing), history kept for what "
@@ -280,6 +286,9 @@ def cmd_integrate(args):
     try:
         res = integrate_mod.write_rule(target, rule_id, case_id, args.date or _today(),
                                        incident, args.rule, root=args.root)
+    except integrate_mod.OverBudget as exc:
+        print("refused: {}".format(exc), file=sys.stderr)
+        return EXIT_OVER_BUDGET
     except (integrate_mod.IntegrateError, RefusedWrite) as exc:
         print("refused: {}".format(exc), file=sys.stderr)
         return 2
@@ -303,6 +312,95 @@ def cmd_integrate(args):
     print("  the marker carries the case id, the date and the incident, which is what lets the\n"
           "  next reader delete it without guessing what it protected.")
     return 0
+
+
+# ------------------------------------------------------------------ preamble / relocate
+
+
+def cmd_preamble(args):
+    try:
+        rows = preamble_mod.pieces(args.root, user_dir=args.user_dir)
+    except ValueError as exc:
+        print("refused: {}".format(exc), file=sys.stderr)
+        return 2
+    over = any(r["over"] for r in rows)
+    probed = reason = None
+    if args.probe:
+        probed, reason = preamble_mod.probe(args.root, runner=getattr(args, "runner", None))
+    if args.json:
+        doc = {"pieces": rows, "total": sum(r["tokens"] for r in rows)}
+        if args.probe:
+            doc["probe"] = {"total": probed, "reason": reason}
+        print(json.dumps(rows if not args.probe else doc, indent=2))
+        return EXIT_OVER_BUDGET if over else 0
+    width = max([len(r["name"]) for r in rows] + [len("total")])
+    for r in rows:
+        budget = "" if r["budget"] is None else " / {}".format(r["budget"])
+        print("{}  {}{}{}".format(r["name"].ljust(width), r["tokens"], budget,
+                                  "  OVER" if r["over"] else ""))
+    print("{}  {}".format("total".ljust(width), sum(r["tokens"] for r in rows)))
+    if args.probe:
+        if probed is None:
+            print("probe: unavailable ({})".format(reason))
+        else:
+            print("probe total  {}".format(probed))
+    return EXIT_OVER_BUDGET if over else 0
+
+
+def _remark(block, rule_id, dest):
+    """`block` with its marker line written in the comment syntax of `dest`."""
+    first, _, rest = block.partition("\n")
+    open_c, close_c = integrate_mod.comment_for(dest)
+    if first.lstrip().startswith(open_c.strip()):
+        return block
+    info = integrate_mod.read_rules_text(block).get(rule_id)
+    if not info:
+        return block
+    if info["date"]:
+        line = integrate_mod.marker(dest, rule_id, info["case"], info["date"], info["incident"])
+    else:
+        line = "{}{} {} case {}{}".format(open_c, integrate_mod.MARK_OPEN, rule_id,
+                                          info["case"], close_c)
+    return line + ("\n" + rest if rest else "")
+
+
+def cmd_relocate(args):
+    sources = ([os.path.expanduser(t) for t in args.from_.split(",") if t] if args.from_
+               else list(DEFAULT_TARGETS))
+    dest = os.path.expanduser(args.to)
+    dest_path = os.path.join(args.root, dest)
+    dest_text = ""
+    if os.path.exists(dest_path):
+        with open(dest_path, encoding="utf-8") as fh:
+            dest_text = fh.read()
+    if integrate_mod.find_rule(dest_text, args.rule_id):
+        print("refused: {} already holds {}; nothing moved.".format(dest, args.rule_id),
+              file=sys.stderr)
+        return 1
+    for src in sources:
+        src_path = os.path.join(args.root, src)
+        if not os.path.exists(src_path) or os.path.realpath(src_path) == os.path.realpath(
+                dest_path):
+            continue
+        with open(src_path, encoding="utf-8") as fh:
+            text = fh.read()
+        cut = integrate_mod._cut(text, args.rule_id)
+        if not cut:
+            continue
+        remaining, block = cut
+        info = integrate_mod.read_rules_text(block).get(args.rule_id, {})
+        block = _remark(block, args.rule_id, dest)
+        sep = "" if not dest_text else ("\n" if dest_text.endswith("\n\n")
+                                        else ("\n\n" if dest_text.endswith("\n") else "\n\n"))
+        write_text(dest_path, dest_text + sep + block + "\n", "the destination {}".format(dest))
+        write_text(src_path, remaining, "the rule target {}".format(src))
+        print("moved {} from {} to {} ({} tokens)".format(
+            args.rule_id, src, dest, preamble_mod.tokens(block)))
+        for case in integrate_mod.case_list(info.get("case", "")):
+            print("next: trimwrit run --case {}".format(case))
+        return 0
+    print("rule {} not found in {}".format(args.rule_id, ", ".join(sources)), file=sys.stderr)
+    return 1
 
 
 # ------------------------------------------------------------------ run
@@ -1265,6 +1363,25 @@ def main(argv=None):
     ig.add_argument("--date", help="default today")
     ig.add_argument("--route", default=ledger_mod.ROUTE_COUNTER, choices=ledger_mod.ROUTES)
     ig.set_defaults(func=cmd_integrate)
+
+    pa = sub.add_parser("preamble", help="what loads into every session, in tokens, against "
+                                         "the budgets in .trimwrit/budget.json (exit 3 over)")
+    # SUPPRESS: given after the subcommand it sets the root, absent it leaves the global one.
+    pa.add_argument("--root", default=argparse.SUPPRESS, help="repository root")
+    pa.add_argument("--user-dir", default=None, help="the user layer (default ~/.claude)")
+    pa.add_argument("--probe", action="store_true",
+                    help="also ask `claude -p` once and print the input tokens it measured")
+    pa.add_argument("--json", action="store_true")
+    pa.set_defaults(func=cmd_preamble)
+
+    rl = sub.add_parser("relocate", help="move one rule block out of an always-loaded file "
+                                         "into another file (a skill, a history doc)")
+    rl.add_argument("rule_id")
+    rl.add_argument("--to", required=True, help="destination file, created if missing")
+    rl.add_argument("--from", dest="from_", help="comma separated files to take it from "
+                                                 "(default CLAUDE.md)")
+    rl.add_argument("--root", default=argparse.SUPPRESS, help="repository root")
+    rl.set_defaults(func=cmd_relocate)
 
     rn = sub.add_parser("run", help="run the cases with the rule and without it",
                         epilog=RUN_EPILOG)

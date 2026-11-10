@@ -897,6 +897,32 @@ Rows to `RUNS/<stamp>.effort-probe.jsonl`, the comparison under `downshift.effor
 without the envelope. The repository this came from held 15 of them in 15 shapes, and its door
 read `passed` while one bank wrote `released: false`.
 
+## Budgets: what loads every turn
+
+A rule written into an always-loaded file is reread on every turn of every session, and nothing
+in the loop above stopped such a file from growing: one global CLAUDE.md reached 14.7k tokens.
+`trimwrit preamble` measures what a repository and the user layer load each time: the root's
+`CLAUDE.md` (and `.claude/CLAUDE.md`), `~/.claude/CLAUDE.md`, `~/.claude/rules/*.md` as one piece,
+and the project's memory index `MEMORY.md`. A nested CLAUDE.md loads only when a file under it is
+read, so it is not counted. The estimate is what the model sees: HTML comments (the rule markers)
+stripped, UTF-8 bytes divided by 2.35. `--probe` also asks `claude -p` once and prints the input
+tokens it really measured; `--user-dir` points at another user layer, `--json` prints the rows.
+
+Budgets live in `.trimwrit/budget.json`:
+
+```json
+{"CLAUDE.md": 4000, "~/.claude/CLAUDE.md": 6000, "~/.claude/rules": 2000,
+ "MEMORY.md": 1500, "outreach/CLAUDE.md": 1200}
+```
+
+`preamble` exits 3 when a piece is over. `integrate` holds the same line: a write that leaves a
+budgeted file over its budget, and larger than it was, is refused with exit 3 and an
+`over-budget:` message that says where the rule goes instead (a skill whose description names
+the situation, or the story in the history doc, with one line in the always-loaded file naming
+the door). Rewording a rule shorter always passes. `trimwrit relocate <rule-id> --to <file>
+[--from <target>]` moves a rule block, marker and paragraph, out of the file that holds it, and
+prints the `trimwrit run --case` line that measures the rule in its new home.
+
 ## What this is not
 
 **Not a memory.** Claude Code has had automatic `feedback` memories since v2.1.59. This tool
@@ -945,7 +971,9 @@ instead of passing.
 | `trimwrit pending` | tags that have earned a rule, and by which route |
 | `trimwrit case` | a correction becomes a native eval case |
 | `trimwrit check` | prove every grader can actually fire, before a run trusts it |
-| `trimwrit integrate` | write the rule, with its case and its incident |
+| `trimwrit integrate` | write the rule, with its case and its incident; refused over a budget |
+| `trimwrit preamble` | what loads into every session, in tokens, against `.trimwrit/budget.json` |
+| `trimwrit relocate` | move one rule block out of an always-loaded file into a skill or a doc |
 | `trimwrit run` | run the cases with the rule and without it; `--decide` runs until the numbers decide |
 | `trimwrit prune` | rules that no longer earn their place |
 | `trimwrit viz` | serialize the pipeline into a payload and open it as a canvas |

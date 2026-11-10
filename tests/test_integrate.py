@@ -156,3 +156,50 @@ def test_rules_sha256_hashes_each_citing_block_across_targets(tmp_path):
     assert got["R1"] == hashlib.sha256(block.encode("utf-8")).hexdigest()
     # The block is exactly what strip_rules takes out, give or take the blank lines after it.
     assert block in text and block not in I.strip_rules(text, ["R1"])[0]
+
+
+def _budget(tmp_path, data):
+    import json
+    (tmp_path / ".trimwrit").mkdir(exist_ok=True)
+    (tmp_path / ".trimwrit" / "budget.json").write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_a_write_past_the_budget_is_refused_and_nothing_is_written(tmp_path):
+    (tmp_path / "CLAUDE.md").write_text("x" * 235 + "\n", encoding="utf-8")
+    _budget(tmp_path, {"CLAUDE.md": 110})
+    with pytest.raises(I.OverBudget) as exc:
+        I.write_rule("CLAUDE.md", "R1", "0001", "2026-08-23", "i", "y" * 100,
+                     root=str(tmp_path), user_dir=str(tmp_path / "home"))
+    msg = str(exc.value)
+    assert msg.startswith("over-budget:") and "budget 110" in msg and "SKILL.md" in msg
+    assert isinstance(exc.value, I.IntegrateError)
+    assert (tmp_path / "CLAUDE.md").read_text(encoding="utf-8") == "x" * 235 + "\n"
+
+
+def test_the_user_file_is_budgeted_by_its_tilde_name(tmp_path):
+    udir = tmp_path / "home" / ".claude"
+    udir.mkdir(parents=True)
+    _budget(tmp_path, {"~/.claude/CLAUDE.md": 5})
+    with pytest.raises(I.OverBudget):
+        I.write_rule(str(udir / "CLAUDE.md"), "R1", "0001", "2026-08-23", "i", "y" * 100,
+                     root=str(tmp_path), user_dir=str(udir))
+
+
+def test_shrinking_a_rule_in_a_file_still_over_is_allowed(tmp_path):
+    I.write_rule("CLAUDE.md", "R1", "0001", "2026-08-23", "i", "y" * 900, root=str(tmp_path))
+    _budget(tmp_path, {"CLAUDE.md": 50})
+    res = I.write_rule("CLAUDE.md", "R1", "0001", "2026-08-23", "i", "y" * 500,
+                       root=str(tmp_path), user_dir=str(tmp_path / "home"))
+    assert res["action"] == "replaced"
+    with pytest.raises(I.OverBudget):
+        I.write_rule("CLAUDE.md", "R1", "0001", "2026-08-23", "i", "y" * 600,
+                     root=str(tmp_path), user_dir=str(tmp_path / "home"))
+
+
+def test_no_budget_no_refusal(tmp_path):
+    res = I.write_rule("CLAUDE.md", "R1", "0001", "2026-08-23", "i", "y" * 5000,
+                       root=str(tmp_path), user_dir=str(tmp_path / "home"))
+    assert res["action"] == "added"
+    _budget(tmp_path, {"docs/other.md": 1})
+    I.write_rule("CLAUDE.md", "R2", "0002", "2026-08-23", "i", "z" * 5000,
+                 root=str(tmp_path), user_dir=str(tmp_path / "home"))

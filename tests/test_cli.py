@@ -1393,3 +1393,15 @@ def test_ten_outage_runs_in_a_row_leave_the_case_open(tmp_path, capsys):
     assert _run(tmp_path, *(args + (claude,))) == 0
     out = capsys.readouterr().out
     assert "sessions started: 12" in out and "earns its place" in out
+
+
+def test_integrate_exits_3_over_budget(tmp_path, capsys):
+    import json
+
+    _run(tmp_path, "log", "do not do that", "--tag", "t")
+    (tmp_path / ".trimwrit" / "budget.json").write_text(json.dumps({"CLAUDE.md": 5}),
+                                                        encoding="utf-8")
+    assert _run(tmp_path, "integrate", "0001", "--case", "0001", "--incident", "once",
+                "--rule", "a rule long enough to pass five tokens of budget") == 3
+    assert "over-budget:" in capsys.readouterr().err
+    assert not (tmp_path / "CLAUDE.md").exists()

@@ -22,6 +22,7 @@ import hashlib
 import os
 import re
 
+from . import preamble
 from .text import one_line, refuse_bad_dashes, write_text
 
 MARK_OPEN = "trimwrit:"
@@ -37,6 +38,10 @@ DEFAULT_COMMENT = ("# ", "")
 
 class IntegrateError(Exception):
     pass
+
+
+class OverBudget(IntegrateError):
+    """The write would push an always-loaded file past its budget in `.trimwrit/budget.json`."""
 
 
 def comment_for(path):
@@ -78,7 +83,7 @@ def rule_ids(text):
     return re.findall(re.escape(MARK_OPEN) + r"\s+(\S+)\s+case\s+([^,\s]+)", text)
 
 
-def write_rule(target, rule_id, case_id, date, incident, rule_text, root="."):
+def write_rule(target, rule_id, case_id, date, incident, rule_text, root=".", user_dir=None):
     """Append or replace one rule in `target`. Refuses without a case id.
 
     The refusal is the product. Any editor can add a line to a CLAUDE.md; the thing nobody has
@@ -116,8 +121,40 @@ def write_rule(target, rule_id, case_id, date, incident, rule_text, root="."):
         new = existing + sep + block + "\n"
         action = "added"
 
+    _budget_door(target, root, user_dir, path, existing, new)
     write_text(path, new, "the rule target {}".format(target))
     return {"target": target, "rule": rule_id, "case": case_id, "action": action}
+
+
+def _budget_door(target, root, user_dir, path, old_text, new_text):
+    """Refuse a write that grows a budgeted, always-loaded piece past its budget.
+
+    The size is the piece's AFTER the write (every rules file counts toward `~/.claude/rules`).
+    Rewording a rule shorter is always let through, even when the file is still over: it does
+    not grow, and refusing it would block the very edit that brings the file back down.
+    """
+    try:
+        found = preamble.budget_for(root, target, user_dir)
+    except ValueError as exc:
+        raise IntegrateError(str(exc))
+    if not found:
+        return
+    key, budget = found
+    real = os.path.realpath(path)
+    others = 0
+    for other in preamble.piece_files(root, target, user_dir):
+        if os.path.realpath(other) != real and os.path.exists(other):
+            with open(other, encoding="utf-8") as fh:
+                others += preamble.tokens(fh.read())
+    before = others + preamble.tokens(old_text)
+    after = others + preamble.tokens(new_text)
+    if after > budget and after > before:
+        raise OverBudget(
+            "over-budget: {} would go from {} to {} tokens, budget {} ({}). Put the rule "
+            "instead in a skill of its situation (a SKILL.md whose description names the "
+            "trigger), or the story in the repository's history doc, keeping in the "
+            "always-loaded file one line naming the door.".format(
+                key, before, after, budget, preamble.BUDGET_FILE))
 
 
 def _cut(text, rule_id):
@@ -254,7 +291,12 @@ def read_rules(target, root="."):
     if not os.path.exists(path):
         return {}
     with open(path, encoding="utf-8") as fh:
-        lines = fh.read().split("\n")
+        return read_rules_text(fh.read())
+
+
+def read_rules_text(text):
+    """`read_rules` on a string: the same dict, for a block or a file already read."""
+    lines = text.split("\n")
     out = {}
     # The date and incident are optional: the short marker form keeps them in a history doc
     # instead (see rule_ids).
