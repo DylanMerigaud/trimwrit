@@ -13,7 +13,8 @@ shows the whole loop as a canvas, plus the one that reads what a rule did after 
   viz        serialize the pipeline into a payload and open it as a local canvas
   stats      aggregate a ledger of rule evaluations and flag runtime candidates
   map        every harness of every repo as a coverage tree, in one self contained page
-  bank       lay out an eval bank on the shared kit (new), or read every RELEASE.json (check)
+  bank       lay out an eval bank on the shared kit (new), read every RELEASE.json (check),
+             reuse or build one (route), which run on a key (explain), per axis (facets)
   preamble   what loads into every session, in tokens, against .trimwrit/budget.json
   relocate   move one rule block out of an always-loaded file into another file
   skills     which skills fire, and which never do while their rule's door keeps refusing
@@ -34,6 +35,8 @@ from . import adopt as adopt_mod
 from . import audit as audit_mod
 from . import bank as bank_mod
 from . import cases as cases_mod
+from . import facets as facets_mod
+from . import route as route_mod
 from . import check as check_mod
 from . import decide as decide_mod
 from . import integrate as integrate_mod
@@ -1322,6 +1325,18 @@ def cmd_bank(args):
                 print("      " + problem)
         print("{} release(s), {} without the envelope".format(len(rows), len(bad)))
         return 1 if bad else 0
+    if args.bank_cmd == "route":
+        return _bank_route(root, args)
+    if args.bank_cmd == "explain":
+        layers = route_mod.explain(args.key, route_mod.load_registry(root), root)
+        if args.json:
+            print(json.dumps(layers, indent=2, sort_keys=True))
+        else:
+            for x in layers:
+                print(route_mod.layer_line(x))
+        return 0
+    if args.bank_cmd == "facets":
+        return _bank_facets(root, args)
     bank_rel = (args.dir or os.path.join("banks", args.slug)).rstrip("/")
     files = bank_mod.plan(args.slug, args.judges, args.bar, bank_rel, model=args.model,
                           producer=args.producer, effort=args.effort)
@@ -1330,6 +1345,41 @@ def cmd_bank(args):
     print("next: fill CODEBOOK.md section 0 and CORPUS.jsonl with real cases, write answer() "
           "and grade() in {0}/run.py, then `python3 {0}/run.py --offline` must pass before the "
           "first real run.".format(bank_rel))
+    return 0
+
+
+def _bank_route(root, args):
+    """`bank route`: reuse, extend or new (exit 0), ask (exit 3: ambiguous and the registry has
+    no ask())."""
+    reg = route_mod.load_registry(root)
+    key = None if args.key in ("-", "none") else args.key
+    res = route_mod.route(key, args.judges, producer=args.producer, registry=reg, root=root)
+    if args.json:
+        print(json.dumps(res, indent=2, sort_keys=True))
+    else:
+        print(route_mod.route_line(res))
+        if res.get("candidates"):
+            print("candidates: " + ", ".join(res["candidates"]))
+    return 3 if res["decision"] == "ask" else 0
+
+
+def _bank_facets(root, args):
+    """`bank facets`: the route per axis of a subject (a JSON object, or a key)."""
+    try:
+        subject = json.loads(args.subject)
+    except ValueError:
+        subject = None
+    if not isinstance(subject, dict):
+        subject = {"key": args.subject}
+    axes = facets_mod.load_axes(root)
+    reg = route_mod.load_registry(root) if not subject.get("banks") else None
+    banks = facets_mod.subject_banks(subject, reg, root)
+    res = facets_mod.route_facets(subject, axes, banks, root=root)
+    if args.json:
+        print(json.dumps(res, indent=2, sort_keys=True))
+    else:
+        for e in res:
+            print(facets_mod.entry_line(e))
     return 0
 
 
@@ -1603,8 +1653,8 @@ def main(argv=None):
     ad.add_argument("--json", action="store_true")
     ad.set_defaults(func=cmd_adopt)
 
-    bk = sub.add_parser("bank", help="an eval bank on the shared kit: lay one out, or read "
-                                     "every RELEASE.json against the envelope")
+    bk = sub.add_parser("bank", help="an eval bank on the shared kit: lay one out, read every "
+                                     "RELEASE.json, route a key, explain its stack")
     bsub = bk.add_subparsers(dest="bank_cmd", required=True)
     bn = bsub.add_parser("new", help="lay out CODEBOOK.md, CORPUS.jsonl, run.py and its test")
     bn.add_argument("slug", help="lowercase words joined by '-'")
@@ -1620,6 +1670,25 @@ def main(argv=None):
     bc = bsub.add_parser("check", help="every RELEASE.json under --dir against the envelope")
     bc.add_argument("--dir", default=".", help="directory to read (default: the root)")
     bc.set_defaults(func=cmd_bank)
+    br = bsub.add_parser("route", help="reuse, extend or build a bank for a key, through the "
+                                       "project's registry (.trimwrit/bank.json)")
+    br.add_argument("key", help="the key to route ('-' for none)")
+    br.add_argument("--judges", default="", help="what the key judges, one line")
+    br.add_argument("--producer", default=None, help="a.py,b.py or a site key file.py:CONST")
+    br.add_argument("--root", default=argparse.SUPPRESS, help="repository root")
+    br.add_argument("--json", action="store_true")
+    br.set_defaults(func=cmd_bank)
+    be = bsub.add_parser("explain", help="the harnesses that run on a key, in order, each with "
+                                         "its release status")
+    be.add_argument("key")
+    be.add_argument("--root", default=argparse.SUPPRESS, help="repository root")
+    be.add_argument("--json", action="store_true")
+    be.set_defaults(func=cmd_bank)
+    bf = bsub.add_parser("facets", help="the route per axis of a subject (JSON object or key)")
+    bf.add_argument("subject", help="a JSON object (key, banks, facets, ...) or a key")
+    bf.add_argument("--root", default=argparse.SUPPRESS, help="repository root")
+    bf.add_argument("--json", action="store_true")
+    bf.set_defaults(func=cmd_bank)
 
     args = p.parse_args(argv)
     try:

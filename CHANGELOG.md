@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.15.0, 2026-11-10
+
+- **Reuse or build: `trimwrit bank route`.** A project held seven banks checking one bet's first
+  touch figures against that bet's own record, one per bet, each built from scratch: nothing
+  asked whether a bank already graded the judgment. Asked, verbatim: "il faudrait un harness
+  pour voir si on recreer un harness ou reuse un et comment on selection tout les harness qui
+  s'execute... et ajouter ce mechanisme a la lib". `trimwrit/route.py` ports the generic part of
+  the router that project wrote: `route(key, judges, producer=None, registry=...)` answers
+  reuse, extend or new in a fixed order (the registry, an equal judges line, a shared producer,
+  a family, candidates by token overlap with the same thresholds, 2 shared words and 0.34 of the
+  shorter line, then the registry's own `ask`), with the shape {decision, bank, family, how,
+  why}. Everything project specific comes through a registry the project plugs in
+  `.trimwrit/bank.json` (`{"registry": "<module.py>:<callable>"}`, a duck type documented in
+  the module); without an `ask` an ambiguous route answers `ask` and the command exits 3, a
+  missing bank.json exits 2 naming the file and the key.
+- **Which banks run: `trimwrit bank explain <key>`** prints the registry's `layers(key)` in the
+  order they run, each bank with its release status read through the kit (released, failing,
+  unreleased, invalid), a layer naming a slice read on that slice.
+- **Slices in the envelope.** RELEASE.json may carry `types` and `instances`, each {name:
+  {"passed": bool, "n": count, ...}}: `write_release(types=..., instances=...)` writes them,
+  `envelope_problems` refuses a malformed one ("`types[x]` has no boolean passed"), and
+  `released_slice(bank, kind, name)` reads one back (True, False, None when absent). `by_type`
+  and `by_instance`, which banks already write, are read as aliases.
+- **Facets: `trimwrit/facets.py` and `trimwrit bank facets`.** A bank that passes on one audience
+  in one language was read as vouching for every other; asked, verbatim: "faut un framework qui
+  soit extensible a d'autre truc et category de harness". An `Axis` (name, vocabulary,
+  resolver, why) is one entry of the axes a project plugs in (`"axes"` in bank.json);
+  `coverage` and `release_extra` write `covers` and `by_facet` into a release (validated by the
+  envelope when present); `diverges` splits an axis only when two values each hold 20 cases and
+  their metric differs by more than 0.10; `route_facets` answers per axis covered, pooled,
+  extend, new or unknown. Same numbers as the project's own module on the same inputs, its
+  tests ported.
+
 ## 0.14.0 and preamble-gate 0.1.0, 2026-11-10
 
 - **A rule in an always-loaded file has a shape, and integrate holds it.** Asked whether the

@@ -899,6 +899,46 @@ Rows to `RUNS/<stamp>.effort-probe.jsonl`, the comparison under `downshift.effor
 without the envelope. The repository this came from held 15 of them in 15 shapes, and its door
 read `passed` while one bank wrote `released: false`.
 
+### Reuse or build, and which banks run
+
+Seven banks checking the same judgment on seven instances, each built from scratch, is what
+happens when nothing asks first whether a bank already grades it. A project plugs its registry
+in `.trimwrit/bank.json`:
+
+```json
+{"registry": "tools/harness_registry.py:make", "axes": "tools/axes.py:axes"}
+```
+
+The callable (given the root when it takes an argument) returns any object with
+`assignments()` {key: bank}, `banks()` {bank: judges line} (`route.codebook_judges` reads the
+`# <judges>: the codebook` H1), `families()` {name: {"members", "home", "why"}},
+`producer_of(key)`, `family_of(key, judges, producer)` and `layers(key)`, plus an optional
+`ask(prompt, schema)` for its own model call (`trimwrit/route.py` documents every optional hook).
+
+```
+trimwrit bank route acme/email --judges "first touch figures against the record" [--producer a.py,b.py] [--json]
+trimwrit bank explain acme/email [--json]
+trimwrit bank facets '{"key": "acme/email", "meta": {"lang": "fr"}}' [--json]
+```
+
+`route` answers in a fixed order, the first step that answers wins: the key already has a bank
+(reuse); a bank's judges line equals this one (reuse); the keys with the same producer share one
+bank used twice or more (reuse); the registry names a family (extend its home, reuse it when the
+registry says its cases already hold this instance); banks sharing two words or more and a third
+of the shorter line are candidates, none means new. Candidates go to the registry's `ask()`;
+without one the answer is `ask` and the command exits 3. `explain` prints `layers(key)` one line
+per layer with its bank's release status read through the kit (released, failing, unreleased,
+invalid; a layer with `"slice": ["types", name]` reads that slice).
+
+A release may carry slices, `types` and `instances`, each {name: {"passed", "n", ...}}
+(`write_release(types=..., instances=...)`, read back by `bank.released_slice(bank, kind,
+name)`; `by_type` and `by_instance` are read as aliases), and facets, `covers` {axis: [values]}
+and `by_facet` {axis: {value: {"n", "metric"}}} (`facets.release_extra`). `trimwrit/facets.py`
+holds the axes registry (an `Axis` is a name, a vocabulary, a resolver and a why) and the
+divergence rule: an axis earns its own slice only when two of its values each hold 20 cases and
+their metric differs by more than 0.10. `facets` answers per axis: covered, pooled, extend, new
+or unknown.
+
 ## Budgets: what loads every turn
 
 A rule written into an always-loaded file is reread on every turn of every session, and nothing
@@ -1020,7 +1060,7 @@ instead of passing.
 | `trimwrit audit` | one table for every harness on the machine, and which ones have no case |
 | `trimwrit adopt` | bring the rules written before trimwrit existed into its registry, with no case |
 | `trimwrit map` | every harness of every repo as a coverage tree, in one self contained page |
-| `trimwrit bank` | `new` lays out an eval bank on the shared kit, `check` reads every RELEASE.json against its envelope |
+| `trimwrit bank` | `new` lays out an eval bank on the shared kit, `check` reads every RELEASE.json against its envelope, `route` says reuse, extend or new for a key, `explain` lists the banks that run on it, `facets` routes it per axis |
 
 ## See it
 

@@ -58,6 +58,19 @@ A bank with no model probe (a sonnet at high effort) writes `downshift` as {"eff
 alone. Same rules: a raising call is wrong, never an abort, `passed` never moves; a bank at
 medium or lower, a deterministic one, `--offline` and `--no-probe` probe no effort.
 
+SLICES. A bank that grades several message types or several instances of one judgment (a bank
+per family, one slice per member) says so in two optional keys, each {name: {"passed": bool,
+"n": count, ...}}:
+
+  types       the verdict per message type the bank reads
+  instances   the verdict per instance (a bet, a project, a row) the bank holds as a slice
+
+`write_release(types=..., instances=...)` writes them (or `extra`, never both for one key), and
+`released_slice(bank, kind, name)` reads one back: True, False, or None when absent. The names
+`by_type` and `by_instance`, which banks written before 0.15.0 carry, are read as aliases and
+validated the same way. The facet keys `covers` {axis: [values]} and `by_facet` {axis: {value:
+{"n", "metric"}}} (trimwrit/facets.py) are validated when present.
+
 `trimwrit bank new <slug>` lays out a bank on this kit; `trimwrit bank check` reads every
 RELEASE.json under a directory against the envelope.
 
@@ -92,6 +105,9 @@ PROBE_EFFORT_EXT = ".effort-probe.jsonl"
 # the effort ladder: the effort a bank's producer runs at -> the ONE cheaper effort its probe
 # asks of the same model. Medium and below are not here: medium is already the default.
 EFFORT_LADDER = {"xhigh": "high", "high": "medium"}
+# the optional slice keys of a release, each with the alias older banks write
+SLICES = {"types": "by_type", "instances": "by_instance"}
+SLICE_KEYS = ("types", "by_type", "instances", "by_instance")
 # what bank_sha leaves out: the outputs of a run and caches, never its inputs
 NOT_INPUTS = (RELEASE, RUNS, "__pycache__", ".pytest_cache")
 
@@ -218,17 +234,80 @@ def envelope_problems(doc):
         out.append("`at` is not an ISO date")
     if doc["run"] is not None and not isinstance(doc["run"], str):
         out.append("`run` is neither a run name nor null")
+    for key in SLICE_KEYS:
+        if key in doc:
+            out += _slice_problems(key, doc[key])
+    if "covers" in doc:
+        out += _covers_problems(doc["covers"])
+    if "by_facet" in doc:
+        out += _by_facet_problems(doc["by_facet"])
     return out
 
 
-def release_doc(bank, *, passed, n, bar, model, run=None, at=None, extra=None):
-    """The RELEASE document of a run: the envelope, then `extra` (the bank's own keys). Raises
-    BankError on a key of `extra` that would overwrite the envelope, or a broken envelope."""
+def _is_count(v):
+    return isinstance(v, int) and not isinstance(v, bool) and v >= 0
+
+
+def _slice_problems(key, value):
+    if not isinstance(value, dict):
+        return ["`{}` is not an object".format(key)]
+    out = []
+    for name, entry in value.items():
+        if not isinstance(entry, dict):
+            out.append("`{}[{}]` is not an object".format(key, name))
+            continue
+        if not isinstance(entry.get("passed"), bool):
+            out.append("`{}[{}]` has no boolean passed".format(key, name))
+        if not _is_count(entry.get("n")):
+            out.append("`{}[{}]` has no count n".format(key, name))
+    return out
+
+
+def _covers_problems(value):
+    if not isinstance(value, dict):
+        return ["`covers` is not an object"]
+    return ["`covers[{}]` is not a list of values".format(axis)
+            for axis, vals in value.items() if not isinstance(vals, list)]
+
+
+def _by_facet_problems(value):
+    if not isinstance(value, dict):
+        return ["`by_facet` is not an object"]
+    out = []
+    for axis, by_value in value.items():
+        if not isinstance(by_value, dict):
+            out.append("`by_facet[{}]` is not an object".format(axis))
+            continue
+        for v, d in by_value.items():
+            where = "`by_facet[{}][{}]`".format(axis, v)
+            if not isinstance(d, dict):
+                out.append(where + " is not an object")
+                continue
+            if not _is_count(d.get("n")):
+                out.append(where + " has no count n")
+            m = d.get("metric")
+            if m is not None and (isinstance(m, bool) or not isinstance(m, (int, float))):
+                out.append(where + " has no metric number")
+    return out
+
+
+def release_doc(bank, *, passed, n, bar, model, run=None, at=None, extra=None, types=None,
+                instances=None):
+    """The RELEASE document of a run: the envelope, then `extra` (the bank's own keys), then the
+    slices `types` and `instances` when given. Raises BankError on a key of `extra` that would
+    overwrite the envelope, a slice given both ways, or a broken envelope (a malformed slice
+    included)."""
     extra = dict(extra or {})
     clash = sorted(set(extra) & set(ENVELOPE))
     if clash:
         raise BankError("extra keys {} would overwrite the envelope: pass them as arguments"
                         .format(clash))
+    for key, value in (("types", types), ("instances", instances)):
+        if value is None:
+            continue
+        if key in extra:
+            raise BankError("`{0}` given twice, as {0}= and in extra: pass it once".format(key))
+        extra[key] = value
     doc = {"schema": SCHEMA, "passed": passed, "at": at or now_iso(), "n": n, "bar": bar,
            "model": model, "bank_sha": bank_sha(bank), "run": run}
     doc.update(extra)
@@ -238,10 +317,12 @@ def release_doc(bank, *, passed, n, bar, model, run=None, at=None, extra=None):
     return doc
 
 
-def write_release(bank, *, passed, n, bar, model, run=None, at=None, extra=None):
-    """Write `bank`/RELEASE.json atomically (a reader never sees half a file) and return it."""
+def write_release(bank, *, passed, n, bar, model, run=None, at=None, extra=None, types=None,
+                  instances=None):
+    """Write `bank`/RELEASE.json atomically (a reader never sees half a file) and return it.
+    `types` and `instances` are the slices of the module docstring."""
     doc = release_doc(bank, passed=passed, n=n, bar=bar, model=model, run=run, at=at,
-                      extra=extra)
+                      extra=extra, types=types, instances=instances)
     fd, tmp = tempfile.mkstemp(dir=bank, prefix=".RELEASE.", suffix=".tmp")
     try:
         # ASCII on disk: a verbatim the bank carries keeps its characters as \u escapes, so the
@@ -272,6 +353,25 @@ def released(bank):
     reading a producer's door makes of its bank."""
     doc = read_release(bank)
     return doc is not None and not envelope_problems(doc) and doc["passed"] is True
+
+
+def released_slice(bank, kind, name):
+    """The verdict of one slice of `bank`'s release: `kind` is "types" or "instances" (the
+    singular reads the same), `name` the type or the instance. True or False as the slice says
+    (read under `types`, else its alias `by_type`; `instances`, else `by_instance`), None when
+    the release is absent, breaks the envelope, or holds no such slice."""
+    key = {"type": "types", "instance": "instances"}.get(kind, kind)
+    if key not in SLICES:
+        raise BankError("slice kind {!r}: types or instances".format(kind))
+    doc = read_release(bank)
+    if doc is None or envelope_problems(doc):
+        return None
+    for k in (key, SLICES[key]):
+        entry = doc.get(k)
+        if isinstance(entry, dict) and isinstance(entry.get(name), dict):
+            passed = entry[name].get("passed")
+            return passed if isinstance(passed, bool) else None
+    return None
 
 
 def check_tree(root):
