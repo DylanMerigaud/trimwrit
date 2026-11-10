@@ -35,11 +35,13 @@ def write_jsonl(path, rows, mtime_days_ago=0):
     os.utime(str(path), (t, t))
 
 
-def skill(base, name, body="", description="Use when it fits."):
+def skill(base, name, body="", description="Use when it fits.", age_days=20):
     d = base / name
     d.mkdir(parents=True)
     (d / "SKILL.md").write_text("---\nname: {}\ndescription: {}\n---\n\n{}".format(
         name, description, body), encoding="utf-8")
+    old = time.time() - age_days * 86400
+    os.utime(d / "SKILL.md", (old, old))
 
 
 def layout(tmp_path):
@@ -118,6 +120,20 @@ def test_check_flags_a_silent_skill_whose_door_refused(tmp_path, capsys):
     # The skill fires once: nothing to say.
     write_jsonl(home / "projects" / "-repo" / "b.jsonl", [skill_call("outreach", 3)])
     assert main(argv) == 0
+
+
+def test_check_waits_until_the_skill_is_as_old_as_the_window(tmp_path, capsys):
+    """A skill written (or its description rewritten) inside the window has not had its 14 days
+    yet: the rules moved into it on its first day would all read as never fired."""
+    home, root = layout(tmp_path)
+    young = home / "skills" / "outreach" / "SKILL.md"
+    recent = time.time() - 3 * 86400
+    os.utime(young, (recent, recent))
+    ledger = tmp_path / "door-refusals.jsonl"
+    write_jsonl(ledger, [{"door": "send-gate", "at": iso(1)}])
+    assert main(["skills", "--check", "--root", str(root), "--user-dir", str(home),
+                 "--refusals", str(ledger)]) == 0
+    assert "never fired" not in capsys.readouterr().out
 
 
 def test_check_ignores_a_door_that_did_not_refuse_in_the_window(tmp_path, capsys):

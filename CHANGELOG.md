@@ -32,6 +32,9 @@
   only the files modified inside the window and parsing only the lines that carry a marker.
   `--check` exits 1 for each rule of a skill that did not fire in 14 days while a door its block
   names refused in them (`--refusals` ledgers); without a ledger it says so and exits 0.
+  A skill whose SKILL.md changed inside those 14 days is not judged yet: the first live run, on
+  the day four rules moved into new skills, flagged every one of them over days the skill did
+  not exist, and a rewritten description gets its own full window.
 - The marketplace counts thirteen gates (it said eleven; oneshot-gate was the twelfth), and the
   README gates table lists oneshot-gate and preamble-gate.
 

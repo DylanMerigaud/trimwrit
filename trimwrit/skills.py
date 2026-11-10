@@ -196,11 +196,22 @@ def refusals(paths, since):
 
 def check(skills, calls, refused, since):
     """[{skill, rule, door, refused}] for each rule of a skill that did not fire since `since`
-    while a door its block names refused at least once in the same window."""
+    while a door its block names refused at least once in the same window.
+
+    A skill whose SKILL.md changed after `since` is not judged yet: on the day rules move into a
+    new skill, every one of them reads as never fired over the window before it existed, and a
+    rewritten description deserves its own full window before it is called dead again.
+    """
     findings = []
     fired = {c[0] for c in calls if c[2] >= since}
     for skill in skills:
         if skill["name"] in fired:
+            continue
+        try:
+            changed = datetime.fromtimestamp(os.path.getmtime(skill["path"]), timezone.utc)
+        except OSError:
+            continue
+        if changed > since:
             continue
         try:
             with open(skill["path"], encoding="utf-8") as fh:
