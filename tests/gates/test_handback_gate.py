@@ -34,6 +34,9 @@ def load_gate():
 
 gate = load_gate()
 CFG = {"user_names": ["Dylan"], "handback_patterns_extra": [], "reason_suffix": ""}
+PASSED = ("handback-gate --check: passes, the Stop hook would let this text end the turn. "
+          "Send this text as it is: a sentence reworded after this check is not checked, and "
+          "the Stop hook reads it again.")
 BARE = {"user_names": [], "handback_patterns_extra": [], "reason_suffix": ""}
 FORM = ("**À toi de décider :** c'est ton nom, ton email et ton téléphone qui partent chez un "
         "vendeur, et il s'en servira pour te démarcher.\n\n"
@@ -463,7 +466,7 @@ def for_javascript(src):
     """No named group, the apostrophes as escapes (the pattern sits in single quotes), and the
     placeholder the hook puts where a code span was read as the backtick that opens one, or,
     before a closing bold marker, as the backtick that closes one."""
-    return (src.replace("(?P<bullet>", "(?:").replace("'", r"\x27").replace("\u2019", r"\u2019")
+    return (src.replace("(?P<bullet>", "(?:").replace("(?P<sub>", "(?:").replace("'", r"\x27").replace("\u2019", r"\u2019")
             .replace(r"CODE\b", "`").replace(r"(?<!CODE\s)", "(?<!`)"))
 
 
@@ -1015,8 +1018,7 @@ def test_the_primed_relapse_closings_are_refused(text):
 
 @pytest.mark.parametrize("text", PRIMED_REWRITES)
 def test_the_primed_rewrites_pass(text):
-    assert gate.check_report(text, CFG) == (
-        0, "handback-gate --check: passes, the Stop hook would let this text end the turn.")
+    assert gate.check_report(text, CFG) == (0, PASSED)
 
 
 def test_the_check_is_the_stop_hooks_own_reading():
@@ -1044,8 +1046,7 @@ def test_the_check_reads_a_file_or_stdin_with_the_configured_names(tmp_path):
     r = run_py(NAME, SCRIPT, "", tmp_path, "--check", str(draft))
     assert r.returncode == 1 and "(\"Dylan can tick\") in: Dylan can tick" in r.stdout, r
     r = run_py(NAME, SCRIPT, PRIMED_REWRITES[0], tmp_path, "--check")
-    assert (r.returncode, r.stdout.strip()) == (
-        0, "handback-gate --check: passes, the Stop hook would let this text end the turn.")
+    assert (r.returncode, r.stdout.strip()) == (0, PASSED)
     assert rows(os.path.join(str(tmp_path), "door-refusals.jsonl")) == []
 
 
@@ -1233,3 +1234,78 @@ def test_the_refusal_and_the_check_say_a_synonym_lifts_nothing():
     found = gate.handbacks_in(WHOSE[0], CFG)
     for text in (gate.reason_text(found, CFG), gate.check_report(WHOSE[0], CFG)[1]):
         assert "\"reste le tien\"" in text and "is the same hand-back" in text
+
+
+# 2026-11-10, the two refusals of a session running 0.8.0 (reflect lesson
+# r:loop:handback_gate:handback_no_class). The first read a script's third person as an order;
+# the second was a re-answer that passed --check, then was reworded before it was sent.
+SCRIPT_REPORT = ("Le script de la panoplie B est écrit et commité. Il calcule ce qui manque pour "
+                 "les 24 Cras, achète les ressources à l'HDV et fait crafter les pièces par un "
+                 "artisan. Le premier vrai passage n'a pas encore eu lieu.")
+CHECKED_ASK = ("Dylan, deux points touchent tes règles, donc il me faut ta préférence "
+               "(connaissance) :\n\n1. **Restat** : je passe 2 Cras en full sagesse.\n\n"
+               "Ma reco : oui aux deux. Réponse possible : \"oui\", \"seulement 1\" ou \"non\".")
+SENT_ASK = ("Dylan, il me faut ta réponse sur deux points, parce qu'ils touchent à des règles "
+            "(connaissance) :\n\n1. **Restat** : je passe 2 Cras en full sagesse.\n\n"
+            "Ma reco : oui aux deux. Tu peux répondre « oui », « seulement 1 » ou « non ».")
+
+
+@pytest.mark.parametrize("text", [
+    SCRIPT_REPORT,
+    "Je calcule ce qui manque pour les 24 Cras, lance les achats et range le reste.",
+    "- Elle vérifie pour chaque compte, relance le job et note le résultat.",
+])
+def test_a_verb_listed_after_a_pronoun_subject_is_no_order(text):
+    assert gate.handbacks_in(text, CFG) == [], text
+
+
+@pytest.mark.parametrize("text", [
+    "Pour savoir si ça marche, tape `curl -s http://host/`.",
+    "Pour finir, achète les ressources à l'HDV.",
+    "Il reste une étape : pour finir, achète les ressources à l'HDV.",
+    "Le script est prêt. Pour les 24 Cras, achète les ressources à l'HDV.",
+])
+def test_an_order_after_a_subordinate_is_still_refused(text):
+    assert gate.handbacks_in(text, CFG), text
+
+
+def checked_transcript(tmp_path, checked, final):
+    cmd = "python3 {} --check <<'EOF'\n{}\nEOF\necho exit $?".format(gate.SCRIPT_PATH, checked)
+    out = [{"type": "user", "message": {"content": "c quoi la question?"}},
+           {"type": "assistant", "message": {"content": [
+               {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": cmd}}]}},
+           {"type": "user", "message": {"content": [
+               {"type": "tool_result", "tool_use_id": "t1", "content": PASSED}]}},
+           {"type": "assistant", "message": {"content": [{"type": "text", "text": final}]}}]
+    path = tmp_path / "checked.jsonl"
+    path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in out),
+                    encoding="utf-8")
+    return str(path)
+
+
+def test_a_closing_reworded_after_its_check_is_told_so(tmp_path):
+    assert gate.check_report(CHECKED_ASK, CFG)[0] == 0
+    write_config(tmp_path, {"handback-gate": {"user_names": ["Dylan"]}})
+    path = checked_transcript(tmp_path, CHECKED_ASK, SENT_ASK)
+    assert gate.last_checked(path) == CHECKED_ASK
+    reason = blocked(run_py(NAME, SCRIPT, stop(path, "drift", message=SENT_ASK), tmp_path))
+    assert reason.startswith("This closing is not the text your --check passed: this sentence "
+                             "was written after the check (\"Tu peux répondre"), reason
+    assert "Send the text the check passed, word for word" in reason
+
+
+def test_a_check_in_an_earlier_turn_is_not_the_one_compared(tmp_path):
+    path = checked_transcript(tmp_path, CHECKED_ASK, SENT_ASK)
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"type": "user", "message": {"content": "autre chose"}}) + "\n")
+    assert gate.last_checked(path) is None
+    found = gate.handbacks_in(SENT_ASK, CFG)
+    assert gate.drift_text(found, SENT_ASK, None) == ""
+    assert gate.drift_text(found, SENT_ASK, SENT_ASK) == ""
+
+
+def test_every_word_the_check_names_is_in_the_prime_and_the_refusal():
+    found = gate.handbacks_in(SENT_ASK, CFG)
+    for text in (gate.reason_text(found, CFG), gate.prime_short({"count": 1}),
+                 gate.prime_text({"count": 1})):
+        assert "word for word" in text, text

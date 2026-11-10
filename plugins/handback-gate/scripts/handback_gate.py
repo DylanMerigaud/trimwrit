@@ -134,6 +134,21 @@ the check, 24 refusals over 18 sessions, none of them stuck. What went around it
      le tien", "qui t'appartient" and "réservée à toi", the user's rule still the only reason.
      Those wordings are read now, and the refusal says a synonym lifts nothing.
 
+THE TEXT SENT IS THE TEXT CHECKED (2026-11-10). Reflect counted one session refused 12 times
+over 8 days (a game bot, every turn a report and a choice). 10 of its refusals ran 0.7.1 or
+older: the session started before 0.8.0 and follow_install ships inside 0.8.0, so it reached the
+session only at a resume. The 2 refusals under 0.8.0, back to back in one turn:
+  1. A misread. "Il calcule ce qui manque pour les 24 Cras, achète les ressources à l'HDV et
+     fait crafter les pièces" tells what a script does; "pour ..., achète les" read as an order.
+     A first-group verb after a subordinate is no order when its sentence opens on a subject
+     pronoun with no colon or semicolon between (SUBJECT_HEAD); "Pour finir, achète les ..." and
+     "Il reste une étape : pour finir, achète les ..." stay refused.
+  2. The rewording. The re-answer to a question was checked ("Réponse possible : oui, ..."),
+     passed, then sent reworded ("Tu peux répondre oui, ..."), and refused. A pass now says the
+     text it read is the one to send; the prime and the refusal say a rewording is a new draft;
+     and a refusal of a closing that differs from the turn's last checked text (read from the
+     transcript's --check heredoc, last_checked) opens on the sentences the check never saw.
+
 The bounds: the re-answer of a stop chain is checked like the first answer; the gate lets go after
 CHAIN_CAP blocks in a row (a `cap` row in the ledger and a systemMessage). A crash or a timeout
 lets the turn end and is reported loudly. No environment variable and no configuration key turns
@@ -210,6 +225,13 @@ FR_AMBIGUOUS = re.compile(
     r"|stocke|enregistre|configure|r[ée]gle|ex[ée]cute|relance"
     r"|accepte|paie|ach[eè]te|commande|valide|confirme|ouvre)$", re.I)
 SECOND_PERSON = re.compile(r"\b(?:tu|ton|ta|tes|toi|te|t'|you|your)\b", re.I)
+# A first-group verb after "pour ..., " is the third person of a list when its sentence opens on
+# a subject pronoun, no colon or semicolon between them: "Il calcule ce qui manque pour les 24
+# Cras, achète les ressources à l'HDV et fait crafter les pièces" tells what a script does
+# (2026-11-10, refused, and the re-answer that followed handed a gesture back for real).
+# "Pour savoir si ça marche, tape ..." opens on its subordinate and stays an order.
+SUBJECT_HEAD = re.compile(r"^[\s\-*•\d.)]*(?:il|elle|on|ils|elles|je|nous)\s+[^:;]*$|^[\s\-*•\d.)]*j['’][^:;]*$",
+                          re.I)
 
 EN_VERB = r"""(?:fill(?:\s+in|\s+out)?|paste|copy|tick|check\s+(?:the\s+)?box(?:es)?|click|print
   |create|plug(?:\s+in)?|run|type|add|store|save|send|log\s+in|sign\s+(?:in|up)|upload|download
@@ -280,7 +302,7 @@ HANDBACK_SRC = (r"""
   | (?:^[ \t]*|[.:;!?]\s+|(?<!CODE\s)\*\*\s*)""" + FR_IMP + r"""\s*""" + FR_OBJ + r"""
   | (?:^[ \t]*(?:[-*]|\d[.)])\s+)(?P<bullet>""" + FR_IMP + r""")\s*""" + FR_OBJ + r"""
   | \b(?:pour|si|quand|une\s+fois|d[èe]s\s+que|apr[èe]s|ensuite|sinon|alors)\b[^,.\n]{0,80},\s*"""
-    + FR_IMP + r"""\s*""" + FR_OBJ_CODE + r"""
+    + r"""(?P<sub>""" + FR_IMP + r""")\s*""" + FR_OBJ_CODE + r"""
   | \b""" + EN_VERB + r"""\b[^.\n]{0,60}(?<!for\s)\byourself\b
   | \bdo\s+(?:it|this|that|them|these|those)\s+yourself\b
   | \b(?:you|{names})""" + EN_MODAL + r"""\s+(?:\w+\s+){0,3}?""" + EN_VERB + r"""\b
@@ -480,6 +502,13 @@ SENTENCE_END = re.compile(r"[.!?](?=\s|$)|\n")
 # The check: the gate handed to the producer as a command, this very script, so that a closing
 # or a re-answer is read before it is shown (2026-11-03).
 CHECK_FLAG = "--check"
+# What a pass says (2026-11-10): a session checked "Réponse possible : oui, ..." (passes), then
+# sent "Tu peux répondre oui, ..." (refused). The pass names the text it read as the one to send,
+# and a refusal of a closing that differs from the last text checked in its turn says so first.
+SEND_AS_CHECKED = ("Send this text as it is: a sentence reworded after this check is not "
+                   "checked, and the Stop hook reads it again.")
+CHECKED_RE = re.compile(r"handback_gate\.py['\"]?\s+--check\s+<<-?\s*['\"]?(\w+)['\"]?[^\n]*\n"
+                        r"(.*?)\n\1[ \t]*(?:\n|$)", re.S)
 SCRIPT_PATH = os.path.abspath(__file__)
 
 CODE = re.compile(r"```.*?```|`[^`\n]{0,300}`", re.S)
@@ -626,6 +655,11 @@ def handbacks_in(text, cfg=None):
             if m.group(0)[:1] not in ".:;!?" \
                     and NEGATED.search(para[max(0, m.start() - 40):m.start()]):
                 continue
+            sub = m.groupdict().get("sub")
+            if sub and FR_AMBIGUOUS.match(sub.strip()):
+                head = max((e.end() for e in SENTENCE_END.finditer(para[:m.start()])), default=0)
+                if SUBJECT_HEAD.match(para[head:m.start()]):
+                    continue
             bullet = m.groupdict().get("bullet")
             if bullet and FR_AMBIGUOUS.match(bullet.strip()) and not SECOND_PERSON.search(para):
                 continue
@@ -716,7 +750,9 @@ def check_how():
     """How to run the check, the words the prime and the refusal both use."""
     return ("pass it through the gate itself, the Stop hook's own reading with its settings: "
             "`{}`, then the text, then a line EOF (exit 0: it passes; exit 1: it lists each "
-            "sentence the Stop hook would refuse, so rewrite them and check again)"
+            "sentence the Stop hook would refuse, so rewrite them and check again). What you "
+            "send is the text that passed, word for word: a sentence reworded after the check "
+            "is a new draft, checked again before it is sent"
             ).format(check_command())
 
 
@@ -727,7 +763,7 @@ def check_report(text, cfg=None):
     found = handbacks_in(text, cfg)
     if not found:
         return 0, ("handback-gate --check: passes, the Stop hook would let this text end the "
-                   "turn.")
+                   "turn. " + SEND_AS_CHECKED)
     n = len(found)
     lines = ["handback-gate --check: the Stop hook would refuse this text, {} hand-back{} with "
              "no reason in {} paragraph:".format(n, "" if n == 1 else "s",
@@ -866,6 +902,68 @@ def on_prime():
     return 0
 
 
+def _is_prompt(row):
+    """A row the user typed: a user row that is no tool result and no hook's feedback."""
+    if row.get("type") != "user" or row.get("isSidechain") or row.get("isMeta"):
+        return False
+    content = (row.get("message") or {}).get("content")
+    if isinstance(content, list):
+        if any(isinstance(c, dict) and c.get("type") == "tool_result" for c in content):
+            return False
+        content = " ".join(c.get("text", "") for c in content if isinstance(c, dict))
+    return isinstance(content, str) and not content.lstrip().startswith("Stop hook feedback")
+
+
+def last_checked(transcript_path):
+    """The text the last --check of this script read in the current turn (after the last
+    prompt the user typed), from its heredoc, or None."""
+    checked = None
+    try:
+        with open(transcript_path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if '"user"' not in line and "--check" not in line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if _is_prompt(row):
+                    checked = None
+                    continue
+                if row.get("type") != "assistant" or row.get("isSidechain"):
+                    continue
+                for c in (row.get("message") or {}).get("content") or []:
+                    if not (isinstance(c, dict) and c.get("type") == "tool_use"):
+                        continue
+                    cmd = (c.get("input") or {}).get("command")
+                    m = CHECKED_RE.search(cmd) if isinstance(cmd, str) else None
+                    if m:
+                        checked = m.group(2)
+    except (OSError, TypeError):
+        return None
+    return checked
+
+
+def _flat(text):
+    return " ".join((text or "").split())
+
+
+def drift_text(found, final, checked):
+    """What a refusal says first when the closing is not the text the turn's last --check read:
+    the refused sentences that check never saw. '' when there is none. Pure."""
+    if checked is None or _flat(checked) == _flat(final):
+        return ""
+    seen = _flat(prose(checked))
+    new = [s.lstrip("-*• ") for _, _, s in found if _flat(s.lstrip("-*• ")) not in seen]
+    if not new:
+        return ""
+    return ("This closing is not the text your --check passed: {} written after the check "
+            "({}). Send the text the check passed, word for word, or check the new wording "
+            "before it is sent.\n").format(
+                "this sentence was" if len(new) == 1 else "these sentences were",
+                "; ".join("\"{}\"".format(s[:SENTENCE_MAX]) for s in new[:LISTED_MAX]))
+
+
 def on_stop():
     payload = trace.read_payload()
     if payload.get("hook_event_name") != "Stop":
@@ -882,7 +980,9 @@ def on_stop():
         return 0
     trace.witness("handback_gate", "Stop", "handback_no_class", payload)
     record_refusal(payload, found)
-    print(json.dumps({"decision": "block", "reason": reason_text(found, cfg)},
+    drift = drift_text(found, transcript.final_text(payload),
+                       last_checked(payload.get("transcript_path") or ""))
+    print(json.dumps({"decision": "block", "reason": drift + reason_text(found, cfg)},
                      ensure_ascii=False))
     return 0
 
