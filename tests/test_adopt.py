@@ -11,6 +11,9 @@ import os
 from trimwrit import adopt, audit, cases, integrate, ledger, prune
 from trimwrit.cli import main
 
+# Any existing file: a rule written into a CLAUDE.md names the door that enforces it.
+DOOR = integrate.__file__
+
 
 def _run(tmp_path, *argv):
     return main(["--root", str(tmp_path)] + list(argv))
@@ -51,7 +54,7 @@ def _build_repo_a(base):
            "# repoA\n\n## one\n\nfirst body\n\n## two\n\nsecond body\n\n## three\n\n"
            "third body\n")
     integrate.write_rule("CLAUDE.md", "R0001", "0001", "2026-08-23",
-                         "an incident, once, on a real day", "the rule text", root=repo)
+                         "an incident, once, on a real day", "the rule text", root=repo, door=DOOR)
     _write(os.path.join(repo, ".claude", "rules", "r.md"), "some rule text with no heading\n")
     return repo
 
@@ -245,7 +248,7 @@ def test_deleting_a_section_marks_it_gone_and_keeps_it(tmp_path):
     # Re-integrate on the smaller file so "three" keeps carrying its marker: this test is about
     # "two" disappearing, not about losing the promoted section along the way.
     integrate.write_rule("CLAUDE.md", "R0001", "0001", "2026-08-23",
-                         "an incident, once, on a real day", "the rule text", root=repo)
+                         "an incident, once, on a real day", "the rule text", root=repo, door=DOOR)
 
     assert _run(tmp_path, "adopt") == 0
     by_key = _by_key(repo)
@@ -316,9 +319,10 @@ def test_prune_orphans_are_unchanged_by_the_presence_of_a_registry(tmp_path):
     evals = os.path.join(root, "evals")
     cases.write_case("0001", "kept case", "p", [cases.forbid_grader("x", name="g")],
                      evals_dir=evals)
-    integrate.write_rule("CLAUDE.md", "R0001", "0001", "2026-08-23", "i", "rule one", root=root)
+    integrate.write_rule("CLAUDE.md", "R0001", "0001", "2026-08-23", "i", "rule one", root=root,
+                         door=DOOR)
     integrate.write_rule("CLAUDE.md", "R0009", "0009", "2026-08-23", "i", "orphan rule",
-                         root=root)
+                         root=root, door=DOOR)
     before = [(f.rule, f.case) for f in prune.orphans(["CLAUDE.md"], evals, root)]
 
     assert _run(tmp_path, "adopt") == 0

@@ -93,7 +93,7 @@ the same standard as a rule in a CLAUDE.md. Each one ships with its tests, and e
 ships the eval case that measures what the hook changes, a plugin arm against a baseline arm
 with the plugin not loaded.
 
-The marketplace holds eleven of them next to `trimwrit`, each a plugin of its own:
+The marketplace holds thirteen of them next to `trimwrit`, each a plugin of its own:
 
 ```bash
 claude plugin marketplace add DylanMerigaud/trimwrit
@@ -113,6 +113,8 @@ claude plugin install claim-gate@trimwrit --scope project   # this repository on
 | `rule-gate` | refuses to end a turn that announces a new rule without naming the file that enforces it | Stop |
 | `handback-gate` | refuses to end a turn that hands the user a gesture or an input the agent could do itself (fill in the form, paste the token, run this command) without naming why only the user can | Stop |
 | `bare-id-gate` | refuses to end a turn whose final message shows an internal id standing alone (a commit sha, a ticket key, a queue code) instead of naming the thing first, the id after it in parentheses | Stop |
+| `oneshot-gate` | refuses a `claude -p` session that can use no tool and still loads the whole harness (no `--bare`, no `--safe-mode`), before its first request | UserPromptSubmit |
+| `preamble-gate` | refuses a hand edit that grows an always-loaded file (any CLAUDE.md, `~/.claude/rules`, the memory index) past its token budget; a shrinking edit always passes | PreToolUse Write, Edit, MultiEdit |
 | `no-third-party-pr` | refuses opening a pull request on a GitHub repository you do not own, through gh, gh api, curl, a script or an alias; the target comes from `-R`, a `GH_REPO` set in the command, or the git remotes | PreToolUse Bash |
 
 Each plugin's README, under `plugins/<name>/`, says exactly what it refuses and lists its keys.
@@ -923,6 +925,41 @@ the door). Rewording a rule shorter always passes. `trimwrit relocate <rule-id> 
 [--from <target>]` moves a rule block, marker and paragraph, out of the file that holds it, and
 prints the `trimwrit run --case` line that measures the rule in its new home.
 
+A budget holds the total; three more refusals hold the shape of each rule written into an
+always-loaded target (any file named CLAUDE.md, a preamble piece, or a budgeted key). Each exits 3:
+
+- `rule-too-long:` the rule text is over three lines, a line counted once per 100 characters so
+  one giant line cannot dodge it. A rule kept there is its imperative, the name of its door and
+  its marker; its story goes to the repository's history doc, and a situational rule goes to the
+  SKILL.md of its situation (`trimwrit relocate`).
+- `no-door:` `--door <path or plugin>` is missing or names nothing that exists (a path under the
+  root, `~` expanded or absolute; a plugin in `<user-dir>/plugins/installed_plugins.json` or under
+  `<root>/plugins/<name>/`). When the rule text does not already name the door, ` Door: <door>.`
+  is appended before the length is counted.
+- `no-description:` a `SKILL.md` target has no frontmatter `description` (in the file, or in the
+  rule text for a new file, whose frontmatter is then written first). A skill is picked by its
+  description alone, so a rule in a skill without one is never read. A SKILL.md needs no door and
+  has no line cap: it loads only when its situation does.
+
+Most lines reach a CLAUDE.md by hand, not through `integrate`. The `preamble-gate` plugin (see
+[Gates](#gates)) refuses a Write, Edit or MultiEdit that grows an always-loaded file past its
+budget, read from the same `.trimwrit/budget.json` and from a user layer in
+`trimwrit-gates.json`:
+
+```json
+{"preamble-gate": {"preamble_budgets": {
+  "~/.claude/CLAUDE.md": 5000, "~/.claude/rules": 1700, "MEMORY.md": 4000, "CLAUDE.md": 15000}}}
+```
+
+A rule moved into a skill is only read when the skill fires. `trimwrit skills [--days 30]
+[--check] [--transcripts DIR] [--refusals PATH ...] [--json]` reads the Claude Code transcripts
+(`~/.claude/projects`, only the files modified inside the window) and prints, per skill (the
+user's, the project's `.claude/skills`, the installed plugins'), its invocations and distinct
+sessions, the ones that never fire first. `--check --refusals door-refusals.jsonl` exits 1 when a
+skill holding a trimwrit rule did not fire in 14 days while a door its rule names refused in
+them: `skill outreach: rule R7 door send-gate refused 4 times in 14 days, the skill never fired:
+rewrite its description so it triggers`.
+
 ## What this is not
 
 **Not a memory.** Claude Code has had automatic `feedback` memories since v2.1.59. This tool
@@ -971,9 +1008,10 @@ instead of passing.
 | `trimwrit pending` | tags that have earned a rule, and by which route |
 | `trimwrit case` | a correction becomes a native eval case |
 | `trimwrit check` | prove every grader can actually fire, before a run trusts it |
-| `trimwrit integrate` | write the rule, with its case and its incident; refused over a budget |
+| `trimwrit integrate` | write the rule, with its case, its incident and its door; refused over a budget, over three lines, with no door, or into a skill with no description |
 | `trimwrit preamble` | what loads into every session, in tokens, against `.trimwrit/budget.json` |
 | `trimwrit relocate` | move one rule block out of an always-loaded file into a skill or a doc |
+| `trimwrit skills` | per skill, its invocations and sessions from the transcripts; `--check` flags a skill that never fires while its rule's door refuses |
 | `trimwrit run` | run the cases with the rule and without it; `--decide` runs until the numbers decide |
 | `trimwrit prune` | rules that no longer earn their place |
 | `trimwrit viz` | serialize the pipeline into a payload and open it as a canvas |

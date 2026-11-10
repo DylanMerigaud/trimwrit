@@ -1,3 +1,3 @@
 """trimwrit: a harness rule enters with a test, and leaves when the test passes without it."""
 
-__version__ = "0.13.0"
+__version__ = "0.14.0"

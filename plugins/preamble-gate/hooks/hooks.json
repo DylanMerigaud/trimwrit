@@ -1,0 +1,6 @@
+{
+  "description": "preamble-gate: a hand edit never grows an always-loaded file past its budget",
+  "hooks": {
+    "PreToolUse": [{"matcher": "Write|Edit|MultiEdit", "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/preamble_gate.py\"", "timeout": 10}]}]
+  }
+}

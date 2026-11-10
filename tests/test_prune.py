@@ -2,15 +2,19 @@ import os
 
 from trimwrit import cases, integrate, prune
 
+# Any existing file: a rule written into a CLAUDE.md names the door that enforces it.
+DOOR = integrate.__file__
+
 
 def _setup(tmp_path):
     root = str(tmp_path)
     evals = os.path.join(root, "evals")
     cases.write_case("0001", "kept case", "p", [cases.forbid_grader("x", name="g")],
                      evals_dir=evals)
-    integrate.write_rule("CLAUDE.md", "R0001", "0001", "2026-08-23", "i", "rule one", root=root)
+    integrate.write_rule("CLAUDE.md", "R0001", "0001", "2026-08-23", "i", "rule one", root=root,
+                         door=DOOR)
     integrate.write_rule("CLAUDE.md", "R0009", "0009", "2026-08-23", "i", "orphan rule",
-                         root=root)
+                         root=root, door=DOOR)
     return root, evals
 
 
@@ -170,7 +174,7 @@ def test_a_rule_citing_a_second_case_not_decided_inert_is_held(tmp_path):
         cases.write_case(cid, "twin", "p", [cases.forbid_grader("x", name="g")],
                          evals_dir=evals)
     integrate.write_rule("CLAUDE.md", "R0003", "0003+0004", "2026-08-23", "i", "twin rule",
-                         root=root)
+                         root=root, door=DOOR)
     summaries = {"0003-twin": _decided("inert"), "0004-twin": _decided("keep")}
     found = prune.inert(summaries, ["CLAUDE.md"], evals, root)
     assert [(f.kind, f.rule) for f in found] == [(prune.INERT, "R0003")]
@@ -219,8 +223,10 @@ def test_rules_citing_by_number_and_by_name_are_both_holders(tmp_path):
     base = "0027-sample-case"
     cases.write_case("0027", "sample case", "p",
                      [cases.forbid_grader("x", name="g")], evals_dir=evals)
-    integrate.write_rule("CLAUDE.md", "R0027", "0027", "2026-10-21", "i", "first", root=root)
-    integrate.write_rule("CLAUDE.md", "R0332", base, "2026-10-21", "i", "second", root=root)
+    integrate.write_rule("CLAUDE.md", "R0027", "0027", "2026-10-21", "i", "first", root=root,
+                         door=DOOR)
+    integrate.write_rule("CLAUDE.md", "R0332", base, "2026-10-21", "i", "second", root=root,
+                         door=DOOR)
     for summary in (_decided("inert"), {"with": 1.0, "without": 1.0, "delta": 0.0}):
         found = prune.inert({base: summary}, ["CLAUDE.md"], evals, root)
         assert sorted(f.rule for f in found) == ["R0027", "R0332"]

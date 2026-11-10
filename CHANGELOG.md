@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.14.0 and preamble-gate 0.1.0, 2026-11-10
+
+- **A rule in an always-loaded file has a shape, and integrate holds it.** Asked whether the
+  practices were enforced, the answer was: the case, the incident and the dash, yes; the shape of
+  a rule, no. A ten line rule block, a rule naming nothing that enforces it, a rule in a skill
+  that can never fire all went through. `write_rule` now treats a target as always loaded when it
+  is a preamble piece, any file named CLAUDE.md, or a budgeted key, and there raises three new
+  `IntegrateError`s that `trimwrit integrate` maps to exit 3: `RuleTooLong` (`rule-too-long:`,
+  over `MAX_RULE_LINES` 3 lines, a line counted per `LINE_CHARS` 100 characters, the message
+  sending the story to the history doc and a situational rule to its skill), `NoDoor`
+  (`no-door:`, `--door <path or plugin>` missing or naming nothing that exists: a path under
+  `--root`, a plugin in `installed_plugins.json` or under `plugins/<name>/`; a rule that does not
+  name its door gets ` Door: <door>.` appended before the count), and, for a `SKILL.md`,
+  `NoDescription` (`no-description:`, no frontmatter description in the file, or in the rule
+  text of a new file, whose frontmatter is then written above the marker). A SKILL.md needs no
+  door and has no line cap. `integrate` also takes `--user-dir`.
+- **New plugin: preamble-gate.** Most lines reach a CLAUDE.md through Write and Edit, where the
+  budget door of 0.13.0 never looks. A `PreToolUse` hook (`Write|Edit|MultiEdit`) on any
+  CLAUDE.md, `~/.claude/rules/*.md` (one piece, summed) and a `memory/MEMORY.md` computes the
+  file after the call (`replace_all` and MultiEdit order honored; an `old_string` not found passes)
+  and denies when it is over budget and larger than before, naming the file, both sizes, the
+  budget and the route (`trimwrit relocate`). Budgets: the repository's `.trimwrit/budget.json`,
+  keyed as `preamble` keys it, over the user layer `preamble-gate.preamble_budgets` of
+  `trimwrit-gates.json`. The token estimate is duplicated from `trimwrit.preamble.tokens`, and a
+  test holds the two equal.
+- **trimwrit skills: which skills fire.** A rule moved into a skill is read only when the skill
+  loads. `trimwrit skills [--days 30] [--check] [--transcripts DIR] [--refusals PATH ...]
+  [--json]` (`trimwrit/skills.py`) counts each skill's invocations and distinct sessions in the
+  Claude Code transcripts (a `Skill` tool_use, or a `<command-name>/name` user message), opening
+  only the files modified inside the window and parsing only the lines that carry a marker.
+  `--check` exits 1 for each rule of a skill that did not fire in 14 days while a door its block
+  names refused in them (`--refusals` ledgers); without a ledger it says so and exits 0.
+- The marketplace counts thirteen gates (it said eleven; oneshot-gate was the twelfth), and the
+  README gates table lists oneshot-gate and preamble-gate.
+
 ## 0.13.0, 2026-11-10
 
 - **What loads every turn has a number.** `trimwrit integrate` writes rules into instruction

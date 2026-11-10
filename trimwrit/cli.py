@@ -16,6 +16,7 @@ shows the whole loop as a canvas, plus the one that reads what a rule did after 
   bank       lay out an eval bank on the shared kit (new), or read every RELEASE.json (check)
   preamble   what loads into every session, in tokens, against .trimwrit/budget.json
   relocate   move one rule block out of an always-loaded file into another file
+  skills     which skills fire, and which never do while their rule's door keeps refusing
 
 The CLI is the only writer. Skills call it, they never edit the ledger or a case by hand, and
 that is deliberate: a ledger that a model can edit in prose is a ledger that will disagree with
@@ -43,6 +44,7 @@ from . import prune as prune_mod
 from . import report as report_mod
 from . import models as models_mod
 from . import runner as runner_mod
+from . import skills as skills_mod
 from . import stats as stats_mod
 from . import verdict as verdict_mod
 from . import viz as viz_mod
@@ -55,6 +57,8 @@ DEFAULT_TARGETS = ("CLAUDE.md",)
 EXIT_UNMEASURED = 4
 # A piece that loads every turn is over its budget in .trimwrit/budget.json (preamble), or a
 # write would push it there (integrate): not a refusal of the input (2), a size to deal with.
+# The same code for a rule that is too long, names no door, or goes into a SKILL.md with no
+# description (integrate): each is a shape to fix, not a malformed command.
 EXIT_OVER_BUDGET = 3
 RUN_EPILOG = ("exit codes: 0 done (an undecided case is a result), 1 a case below --threshold "
               "(plain run), 2 refused, 4 --decide stopped: a round measured no run (every "
@@ -285,8 +289,10 @@ def cmd_integrate(args):
 
     try:
         res = integrate_mod.write_rule(target, rule_id, case_id, args.date or _today(),
-                                       incident, args.rule, root=args.root)
-    except integrate_mod.OverBudget as exc:
+                                       incident, args.rule, root=args.root,
+                                       user_dir=args.user_dir, door=args.door)
+    except (integrate_mod.OverBudget, integrate_mod.RuleTooLong, integrate_mod.NoDoor,
+            integrate_mod.NoDescription) as exc:
         print("refused: {}".format(exc), file=sys.stderr)
         return EXIT_OVER_BUDGET
     except (integrate_mod.IntegrateError, RefusedWrite) as exc:
@@ -401,6 +407,53 @@ def cmd_relocate(args):
         return 0
     print("rule {} not found in {}".format(args.rule_id, ", ".join(sources)), file=sys.stderr)
     return 1
+
+
+def cmd_skills(args):
+    root = args.root
+    udir = args.user_dir
+    found = skills_mod.list_skills(root, udir)
+    at = skills_mod.now()
+    since = skills_mod.window(args.days, at)
+    check_since = skills_mod.window(skills_mod.CHECK_DAYS, at)
+    dirs = args.transcripts or [skills_mod.default_transcripts(udir)]
+    oldest = min(since, check_since) if args.check else since
+    calls = skills_mod.invocations(skills_mod.transcript_files(dirs, oldest), oldest)
+    rows = skills_mod.usage(found, calls, since)
+    findings = None
+    if args.check and args.refusals:
+        try:
+            refused = skills_mod.refusals(args.refusals, check_since)
+        except OSError as exc:
+            print("refused: {}".format(exc), file=sys.stderr)
+            return 2
+        findings = skills_mod.check(found, calls, refused, check_since)
+    if args.json:
+        doc = {"days": args.days, "skills": rows}
+        if args.check:
+            doc["findings"] = findings
+        print(json.dumps(doc, indent=2))
+    else:
+        width = max([len(r["name"]) for r in rows] + [len("skill")])
+        print("{}  {:>11}  {:>8}  {}".format("skill".ljust(width), "invocations", "sessions",
+                                            "source"))
+        for r in rows:
+            print("{}  {:>11}  {:>8}  {}".format(r["name"].ljust(width), r["invocations"],
+                                                r["sessions"], r["source"]))
+        print("{} skills, {} invocations in the last {} days".format(
+            len(rows), sum(r["invocations"] for r in rows), args.days))
+    if not args.check:
+        return 0
+    if findings is None:
+        print("check: no refusals ledger was given (--refusals PATH), so no door can witness "
+              "a skill that never fires; nothing checked.", file=sys.stderr)
+        return 0
+    for f in findings if not args.json else []:
+        print(skills_mod.finding_line(f))
+    if not findings and not args.json:
+        print("check: every skill whose rule's door refused in {} days fired at least once."
+              .format(skills_mod.CHECK_DAYS))
+    return 1 if findings else 0
 
 
 # ------------------------------------------------------------------ run
@@ -1362,6 +1415,10 @@ def main(argv=None):
     ig.add_argument("--incident", help="one line: what went wrong, once, on a real day")
     ig.add_argument("--date", help="default today")
     ig.add_argument("--route", default=ledger_mod.ROUTE_COUNTER, choices=ledger_mod.ROUTES)
+    ig.add_argument("--door", help="the file or plugin that enforces the rule (required for an "
+                                   "always-loaded target: any CLAUDE.md, ~/.claude/rules, "
+                                   "MEMORY.md, a budgeted key)")
+    ig.add_argument("--user-dir", default=None, help="the user layer (default ~/.claude)")
     ig.set_defaults(func=cmd_integrate)
 
     pa = sub.add_parser("preamble", help="what loads into every session, in tokens, against "
@@ -1382,6 +1439,24 @@ def main(argv=None):
                                                  "(default CLAUDE.md)")
     rl.add_argument("--root", default=argparse.SUPPRESS, help="repository root")
     rl.set_defaults(func=cmd_relocate)
+
+    sk = sub.add_parser("skills", help="per skill, its invocations and sessions in the "
+                                       "transcripts; --check: a skill whose rule's door refused "
+                                       "while it never fired (exit 1)")
+    sk.add_argument("--days", type=int, default=skills_mod.WINDOW_DAYS,
+                    help="the window of the table (default {})".format(skills_mod.WINDOW_DAYS))
+    sk.add_argument("--check", action="store_true",
+                    help="exit 1 when a skill holding a rule did not fire in {} days while a "
+                         "door its rule names refused in them".format(skills_mod.CHECK_DAYS))
+    sk.add_argument("--transcripts", action="append",
+                    help="a transcript directory, repeatable (default <user-dir>/projects)")
+    sk.add_argument("--refusals", nargs="+", default=[],
+                    help="JSONL refusal ledgers (a door in `door` or `hook`, a time in `at` or "
+                         "`ts`), e.g. door-refusals.jsonl")
+    sk.add_argument("--json", action="store_true")
+    sk.add_argument("--root", default=argparse.SUPPRESS, help="repository root")
+    sk.add_argument("--user-dir", default=None, help="the user layer (default ~/.claude)")
+    sk.set_defaults(func=cmd_skills)
 
     rn = sub.add_parser("run", help="run the cases with the rule and without it",
                         epilog=RUN_EPILOG)

@@ -4,13 +4,13 @@
     "name": "Dylan Merigaud",
     "url": "https://github.com/DylanMerigaud"
   },
-  "description": "trimwrit, which makes a harness rule earn its place with a test, and eleven gates, each with its tests and, for the Stop gates, the eval case that measures it.",
+  "description": "trimwrit, which makes a harness rule earn its place with a test, and thirteen gates, each with its tests and, for the Stop gates, the eval case that measures it.",
   "plugins": [
     {
       "name": "trimwrit",
       "source": "./",
       "description": "A harness rule enters with a test and leaves when the test passes without it.",
-      "version": "0.13.0",
+      "version": "0.14.0",
       "author": { "name": "Dylan Merigaud" },
       "license": "MIT",
       "category": "productivity",
@@ -135,6 +135,16 @@
       "license": "MIT",
       "category": "productivity",
       "tags": ["worktree", "git", "isolation", "sessions", "parallel"]
+    },
+    {
+      "name": "preamble-gate",
+      "source": "./plugins/preamble-gate",
+      "description": "Refuses a Write or Edit that grows an always-loaded file (any CLAUDE.md, ~/.claude/rules, the memory index) past its token budget; a shrinking edit always passes.",
+      "version": "0.1.0",
+      "author": { "name": "Dylan Merigaud" },
+      "license": "MIT",
+      "category": "productivity",
+      "tags": ["claude-md", "budget", "tokens", "pretooluse", "gate"]
     }
   ]
 }

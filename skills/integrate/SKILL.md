@@ -33,6 +33,7 @@ trimwrit integrate <correction-id> \
   --target CLAUDE.md \
   --route counter \
   --incident "<one line: what went wrong, once, on a real day>" \
+  --door <the file or plugin that enforces it> \
   --rule "<the rule as a model will read it>"
 ```
 
@@ -40,6 +41,29 @@ trimwrit integrate <correction-id> \
 covers the behaviour. A rule about one workflow belongs in that workflow's skill, where it costs
 nothing until the skill loads; the same rule in CLAUDE.md is paid for on every prompt of every
 session forever.
+
+## An always-loaded target takes a door and three lines
+
+Any file named CLAUDE.md, `~/.claude/rules/*.md`, the memory index, or a key of
+`.trimwrit/budget.json` loads every turn. Into one of those, add `--door <path or plugin>`: the
+hook, script or plugin that refuses the behaviour (`--door hooks/send_gate.py`, `--door
+no-em-dash`). It must exist; when the rule does not already name it, ` Door: <door>.` is appended.
+Each refusal below exits 3 and writes nothing:
+
+- `no-door:` no `--door`, or one that names nothing that exists. A rule with no door is a wish:
+  build or name the gate first.
+- `rule-too-long:` more than three lines once the door is named (a line counts once per 100
+  characters). Keep the imperative there; move the story to the repository's history doc, and a
+  rule that only matters in one situation to that situation's skill (`trimwrit relocate <rule>
+  --to <file>` moves an existing one with its marker).
+- `over-budget:` the file would end over its budget in `.trimwrit/budget.json`.
+- `no-description:` the target is a `SKILL.md` with no frontmatter `description`. A skill is
+  picked by its description alone; write one that names the situation. A new SKILL.md can take
+  its frontmatter in `--rule`, it is written above the marker. A skill needs no door and has no
+  line cap.
+
+After moving rules into skills, `trimwrit skills --check --refusals <door-refusals.jsonl>` names
+a skill that never fired while its rule's door kept refusing: rewrite that description.
 
 ## The incident line is not optional and it is not decoration
 

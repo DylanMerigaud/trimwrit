@@ -19,6 +19,7 @@ message, and a marker that holds a single id forces you to either drop a good ca
 showing up forever as unused.
 """
 import hashlib
+import json
 import os
 import re
 
@@ -42,6 +43,32 @@ class IntegrateError(Exception):
 
 class OverBudget(IntegrateError):
     """The write would push an always-loaded file past its budget in `.trimwrit/budget.json`."""
+
+
+class RuleTooLong(IntegrateError):
+    """The rule block for an always-loaded file is longer than MAX_RULE_LINES."""
+
+
+class NoDoor(IntegrateError):
+    """A rule for an always-loaded file names no door, or a door that does not exist."""
+
+
+class NoDescription(IntegrateError):
+    """A SKILL.md target has no frontmatter description, so the skill can never be picked."""
+
+
+# A rule kept in a file that loads every turn is its imperative, the name of its door and its
+# marker. Three lines is what one imperative with its boundary and its exception needs; past
+# that the text is a story, and a story is paid for on every turn of every session. A line is
+# counted per LINE_CHARS characters, so one giant line cannot dodge the count.
+MAX_RULE_LINES = 3
+LINE_CHARS = 100
+SKILL_FILE = "SKILL.md"
+PROJECT_FILE = "CLAUDE.md"
+PLUGIN_REGISTRY = os.path.join("plugins", "installed_plugins.json")
+ROUTE = ("its story goes to the repository's history doc, and a rule that only matters in one "
+         "situation goes to the SKILL.md of that situation (`trimwrit relocate <rule> --to "
+         "<file>` moves one with its marker)")
 
 
 def comment_for(path):
@@ -83,11 +110,16 @@ def rule_ids(text):
     return re.findall(re.escape(MARK_OPEN) + r"\s+(\S+)\s+case\s+([^,\s]+)", text)
 
 
-def write_rule(target, rule_id, case_id, date, incident, rule_text, root=".", user_dir=None):
+def write_rule(target, rule_id, case_id, date, incident, rule_text, root=".", user_dir=None,
+               door=None):
     """Append or replace one rule in `target`. Refuses without a case id.
 
     The refusal is the product. Any editor can add a line to a CLAUDE.md; the thing nobody has
     is a door that will not let an unjustified line through.
+
+    Into an always-loaded file (see `always_loaded`) the rule must also name its `door`, the
+    file or plugin that enforces it, and fit in MAX_RULE_LINES once the door is named. A
+    SKILL.md needs a frontmatter description instead: it is what makes the skill fire.
     """
     if not case_id:
         raise IntegrateError(
@@ -106,7 +138,16 @@ def write_rule(target, rule_id, case_id, date, incident, rule_text, root=".", us
         with open(path, encoding="utf-8") as fh:
             existing = fh.read()
 
+    head = ""
+    if os.path.basename(target) == SKILL_FILE:
+        head, rule_text = _skill_head(target, existing, rule_text)
+    elif always_loaded(root, target, user_dir):
+        rule_text = _with_door(rule_text, _door_name(door, root, user_dir), door)
+        _length_door(target, rule_text)
+        rule_text = refuse_bad_dashes(rule_text, "the rule text")
+
     block = "{}\n{}".format(marker(target, rule_id, case_id, date, incident), rule_text)
+    old_text, existing = existing, existing or head
 
     found = find_rule(existing, rule_id)
     if found:
@@ -121,10 +162,123 @@ def write_rule(target, rule_id, case_id, date, incident, rule_text, root=".", us
         new = existing + sep + block + "\n"
         action = "added"
 
-    _budget_door(target, root, user_dir, path, existing, new)
+    _budget_door(target, root, user_dir, path, old_text, new)
     write_text(path, new, "the rule target {}".format(target))
     return {"target": target, "rule": rule_id, "case": case_id, "action": action}
 
+
+def always_loaded(root, target, user_dir=None):
+    """True when `target` is read into every session: a piece of the preamble, any file named
+    CLAUDE.md (a nested one loads with every file read under it), or a budgeted key."""
+    if os.path.basename(target) == PROJECT_FILE:
+        return True
+    if preamble.piece_name(root, target, user_dir) is not None:
+        return True
+    try:
+        return preamble.budget_for(root, target, user_dir) is not None
+    except ValueError as exc:
+        raise IntegrateError(str(exc))
+
+
+def rule_lines(text):
+    """The lines `text` costs, a line longer than LINE_CHARS counting once per LINE_CHARS."""
+    return sum(-(-len(line) // LINE_CHARS) for line in text.split("\n") if line.strip())
+
+
+def _length_door(target, rule_text):
+    n = rule_lines(rule_text)
+    if n > MAX_RULE_LINES:
+        raise RuleTooLong(
+            "rule-too-long: {} loads every turn, and this rule is {} lines (at most {}, a line "
+            "counted per {} characters). Keep there the imperative and the name of its door; "
+            "{}.".format(target, n, MAX_RULE_LINES, LINE_CHARS, ROUTE))
+
+
+def _registered_plugins(user_dir):
+    """The plugin names (without @marketplace) in Claude Code's installed_plugins.json."""
+    path = os.path.join(preamble._user_dir(user_dir), PLUGIN_REGISTRY)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            keys = json.load(fh).get("plugins") or {}
+    except (OSError, ValueError, AttributeError):
+        return set(), set()
+    return set(keys), {k.split("@", 1)[0] for k in keys}
+
+
+def _door_name(door, root, user_dir):
+    """The short name a reader greps for: the path's basename, or the plugin name.
+
+    A rule that names no enforcing file or plugin is a wish: nothing refuses the behaviour it
+    describes, so the line will be paid for on every turn and broken anyway. The door has to
+    exist, so a typo cannot pass for a door.
+    """
+    if not door or not door.strip():
+        raise NoDoor("no-door: a rule in an always-loaded file names the file or plugin that "
+                     "enforces it. Pass --door <path or plugin>.")
+    door = door.strip()
+    path = os.path.expanduser(door)
+    if not os.path.isabs(path):
+        path = os.path.join(root, path)
+    if os.path.exists(path):
+        return os.path.basename(os.path.normpath(door))
+    full, names = _registered_plugins(user_dir)
+    name = door.split("@", 1)[0]
+    local = os.path.isdir(os.path.join(root, "plugins", name, ".claude-plugin"))
+    if door in full or ("@" not in door and name in names) or local:
+        return name
+    raise NoDoor("no-door: {} is neither a path under {} nor an installed plugin (looked in {} "
+                 "and plugins/<name>/.claude-plugin). Name a door that exists.".format(
+                     door, root, os.path.join(preamble._user_dir(user_dir), PLUGIN_REGISTRY)))
+
+
+def _with_door(rule_text, name, door):
+    """`rule_text`, with " Door: <door>." added when it does not already name its door."""
+    if name in rule_text:
+        return rule_text
+    return "{} Door: {}.".format(rule_text, door.strip())
+
+
+_DESCRIPTION = re.compile(r"^description:[ \t]*(.*)$", re.M)
+
+
+def _has_description(text):
+    """True when `text` opens with a frontmatter block holding a non-empty description."""
+    if not text.startswith("---"):
+        return False
+    end = text.find("\n---", 3)
+    if end == -1:
+        return False
+    block = text[3:end]
+    m = _DESCRIPTION.search(block)
+    if not m:
+        return False
+    value = m.group(1).strip().strip("\"'").strip()
+    if value in ("|", ">", "|-", ">-", ""):
+        rest = block[m.end():].split("\n")[1:]
+        return bool(rest) and rest[0][:1] in (" ", "\t") and bool(rest[0].strip())
+    return True
+
+
+def _skill_head(target, existing, rule_text):
+    """(head, rule text) for a SKILL.md, refused when the skill has no description.
+
+    A skill is picked by its description alone: a rule written into a SKILL.md the model never
+    loads is a rule nobody reads. A new file may carry its frontmatter in the rule text; it is
+    then written first, above the marker, where Claude Code looks for it.
+    """
+    source = existing or rule_text
+    if not _has_description(source):
+        raise NoDescription(
+            "no-description: {} has no frontmatter `description`, and a skill is picked by its "
+            "description alone. Open the file with ---, `description: <when it fires>`, ---."
+            .format(target))
+    if existing:
+        return "", rule_text
+    end = rule_text.find("\n---", 3)
+    close = rule_text.find("\n", end + 4)
+    if close == -1:
+        return rule_text + "\n", ""
+    return rule_text[:close + 1], rule_text[close + 1:].strip()
 
 def _budget_door(target, root, user_dir, path, old_text, new_text):
     """Refuse a write that grows a budgeted, always-loaded piece past its budget.

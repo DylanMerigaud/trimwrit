@@ -1,12 +1,15 @@
 from trimwrit import integrate as I
 from trimwrit.cli import main
 
+# Any existing file: a rule written into a CLAUDE.md names the door that enforces it.
+DOOR = I.__file__
+
 
 def _seed(tmp_path):
     I.write_rule("CLAUDE.md", "R1", "0001+0002", "2026-08-23", "incident one", "rule one",
-                 root=str(tmp_path))
-    I.write_rule("CLAUDE.md", "R2", "0003", "2026-08-23", "incident two", "rule two",
-                 root=str(tmp_path))
+                 root=str(tmp_path), door=DOOR)
+    I.write_rule("CLAUDE.md", "R2", "0003", "2026-08-23", "incident two",
+                 "rule two, door integrate.py", root=str(tmp_path), door=DOOR)
 
 
 def test_relocate_moves_the_block_and_names_the_cases(tmp_path, capsys):
@@ -26,13 +29,15 @@ def test_relocate_into_a_hash_file_rewrites_the_marker(tmp_path, capsys):
     _seed(tmp_path)
     assert main(["--root", str(tmp_path), "relocate", "R2", "--to", "hooks/rule.sh"]) == 0
     moved = (tmp_path / "hooks" / "rule.sh").read_text(encoding="utf-8")
-    assert moved == "# trimwrit: R2 case 0003, 2026-08-23: incident two\nrule two\n"
+    assert moved == ("# trimwrit: R2 case 0003, 2026-08-23: incident two\n"
+                     "rule two, door integrate.py\n")
     assert I.read_rules("hooks/rule.sh", root=str(tmp_path))["R2"]["case"] == "0003"
 
 
 def test_relocate_refuses_a_destination_that_already_holds_the_rule(tmp_path, capsys):
     _seed(tmp_path)
-    I.write_rule("docs/h.md", "R1", "0001", "2026-08-23", "i", "old copy", root=str(tmp_path))
+    I.write_rule("docs/h.md", "R1", "0001", "2026-08-23", "i", "old copy", root=str(tmp_path),
+                 door=DOOR)
     before = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
     assert main(["--root", str(tmp_path), "relocate", "R1", "--to", "docs/h.md"]) == 1
     assert "already holds" in capsys.readouterr().err

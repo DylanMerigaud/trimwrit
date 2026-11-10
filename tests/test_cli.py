@@ -2,7 +2,11 @@
 suite, which needs a real Claude; everything else is exercised here the way a skill calls it."""
 import os
 
+from trimwrit import integrate as _integrate
 from trimwrit.cli import main
+
+# Any existing file: a rule written into a CLAUDE.md names the door that enforces it.
+DOOR = _integrate.__file__
 
 EM = chr(0x2014)
 
@@ -40,7 +44,7 @@ def test_the_whole_loop(tmp_path, capsys):
 
     assert _run(tmp_path, "integrate", "0002", "--target", "CLAUDE.md",
                 "--incident", "a post went out with three of them",
-                "--rule", "Never use an em dash.") == 0
+                "--rule", "Never use an em dash.", "--door", DOOR) == 0
     text = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
     assert "trimwrit: R0002 case 0002" in text and "Never use an em dash." in text
 
@@ -50,7 +54,7 @@ def test_the_whole_loop(tmp_path, capsys):
 
 def test_integrate_refuses_before_a_case_exists(tmp_path, capsys):
     _run(tmp_path, "log", "do not do that", "--tag", "t")
-    assert _run(tmp_path, "integrate", "0001", "--rule", "the rule") == 2
+    assert _run(tmp_path, "integrate", "0001", "--rule", "the rule", "--door", DOOR) == 2
     assert "no case yet" in capsys.readouterr().err
 
 
@@ -244,7 +248,7 @@ def test_a_rule_can_cite_several_cases(tmp_path, capsys):
     _run(tmp_path, "log", "you did it again", "--tag", "t", "--session", "a")
     _run(tmp_path, "log", "and again elsewhere", "--tag", "t", "--session", "b")
     assert _run(tmp_path, "integrate", "0002", "--case", "0001+0002",
-                "--incident", "an incident", "--rule", "the rule") == 0
+                "--incident", "an incident", "--rule", "the rule", "--door", DOOR) == 0
 
     meta = integrate.read_rules("CLAUDE.md", root=str(tmp_path))["R0002"]
     assert meta["case"] == "0001+0002"
@@ -262,11 +266,11 @@ def test_a_rule_citing_two_cases_is_an_orphan_only_when_both_are_gone(tmp_path):
     cases.write_case("0001", "survivor", "p", [cases.forbid_grader("x", name="g")],
                      evals_dir=str(evals))
     integrate.write_rule("CLAUDE.md", "R1", "0001+0009", "2026-08-23", "i", "the rule",
-                         root=str(tmp_path))
+                         root=str(tmp_path), door=DOOR)
     assert prune.orphans(["CLAUDE.md"], str(evals), str(tmp_path)) == []
 
     integrate.write_rule("CLAUDE.md", "R2", "0008+0009", "2026-08-23", "i", "another",
-                         root=str(tmp_path))
+                         root=str(tmp_path), door=DOOR)
     assert [f.rule for f in prune.orphans(["CLAUDE.md"], str(evals), str(tmp_path))] == ["R2"]
 
 
@@ -346,10 +350,10 @@ def test_re_integrating_an_already_promoted_rule_is_not_a_failure(tmp_path, caps
     _run(tmp_path, "log", "one", "--tag", "t", "--session", "a")
     _run(tmp_path, "log", "two", "--tag", "t", "--session", "b")
     assert _run(tmp_path, "integrate", "0002", "--case", "0001",
-                "--incident", "i", "--rule", "first wording") == 0
+                "--incident", "i", "--rule", "first wording", "--door", DOOR) == 0
     # Rewriting the wording, or adding a case, must exit 0 and must not look broken.
     assert _run(tmp_path, "integrate", "0002", "--case", "0001",
-                "--incident", "i", "--rule", "second wording") == 0
+                "--incident", "i", "--rule", "second wording", "--door", DOOR) == 0
     assert "NOT promoted" not in capsys.readouterr().err
 
 
@@ -1402,6 +1406,19 @@ def test_integrate_exits_3_over_budget(tmp_path, capsys):
     (tmp_path / ".trimwrit" / "budget.json").write_text(json.dumps({"CLAUDE.md": 5}),
                                                         encoding="utf-8")
     assert _run(tmp_path, "integrate", "0001", "--case", "0001", "--incident", "once",
-                "--rule", "a rule long enough to pass five tokens of budget") == 3
+                "--rule", "a rule long enough to pass five tokens of budget", "--door", DOOR) == 3
     assert "over-budget:" in capsys.readouterr().err
+    assert not (tmp_path / "CLAUDE.md").exists()
+
+
+def test_integrate_exits_3_on_the_shape_doors(tmp_path, capsys):
+    _run(tmp_path, "log", "do not do that", "--tag", "t")
+    base = ["integrate", "0001", "--case", "0001", "--incident", "once",
+            "--user-dir", str(tmp_path / "home")]
+    assert _run(tmp_path, *base, "--rule", "a rule") == 3
+    assert "no-door:" in capsys.readouterr().err
+    assert _run(tmp_path, *base, "--rule", "a\nb\nc\nd", "--door", DOOR) == 3
+    assert "rule-too-long:" in capsys.readouterr().err
+    assert _run(tmp_path, *base, "--rule", "a", "--target", "skills/z/SKILL.md") == 3
+    assert "no-description:" in capsys.readouterr().err
     assert not (tmp_path / "CLAUDE.md").exists()

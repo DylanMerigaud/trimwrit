@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "preamble-gate",
+  "displayName": "preamble-gate",
+  "description": "Refuses a Write or Edit that grows an always-loaded file (any CLAUDE.md, ~/.claude/rules, the memory index) past its token budget; a shrinking edit always passes.",
+  "version": "0.1.0",
+  "author": { "name": "Dylan Merigaud", "url": "https://github.com/DylanMerigaud" },
+  "homepage": "https://github.com/DylanMerigaud/trimwrit/tree/main/plugins/preamble-gate",
+  "repository": "https://github.com/DylanMerigaud/trimwrit",
+  "license": "MIT",
+  "keywords": ["claude-md", "budget", "tokens", "pretooluse", "gate"]
+}

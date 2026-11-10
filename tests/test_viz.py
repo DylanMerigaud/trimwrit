@@ -15,6 +15,9 @@ from trimwrit import ledger as ledger_mod
 from trimwrit import viz
 from trimwrit.cli import main
 
+# Any existing file: a rule written into a CLAUDE.md names the door that enforces it.
+DOOR = integrate_mod.__file__
+
 EM = chr(0x2014)
 EN = chr(0x2013)
 
@@ -52,7 +55,8 @@ def _build_fixture(tmp_path):
     cases_mod.write_case("0002", "em dash case", "p", [cases_mod.forbid_grader("x", name="g")],
                          evals_dir=evals)
     integrate_mod.write_rule(target, "R0002", "0002", "2026-08-23",
-                             "a post went out with three of them", "the rule text", root=root)
+                             "a post went out with three of them", "the rule text", root=root,
+                             door=DOOR)
 
     ledger_mod.log("time estimate slip", tag="time-estimate", session="c",
                    consequence="an estimate in hours was quoted back and was wrong", root=root)
