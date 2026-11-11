@@ -51,6 +51,20 @@ of the user (a dev server started three turns ago, "the server is still running"
 of this turn). With no `background_tasks` key (an older Claude Code, the registry unreachable),
 the transcript alone decides, as before (JobScan).
 
+A stall the user noticed first, in EVERY session (0.4.0, lesson s:dispatched-work-left-unwatched,
+eight corrections from 2026-09-20 to 2026-11-11, the newest "okay mais ca avance pas notre
+stuff right?": a plan steered toward a goal for a day, no gear had dropped in 48 hours, and the
+user saw it before the model did). The prompt of a user who notices work that stalled, went down
+or failed silently (STALL_SRC: "ca avance pas", "verifier que tout avance", "pk elle sont down",
+"never fail silently", "with a worker listening?", "auto fix") arms a per-session `.stall`
+marker, and the prompt hook tells the model what the turn owes. The Stop hook then refuses to end
+the turn until the transcript, since that prompt, shows a WATCHER gesture: a Monitor, a
+CronCreate, a ScheduleWakeup or a RemoteTrigger call, a Bash command that installs or reads a
+watcher (WATCH_CMD_SRC: a systemd timer, a crontab, a health witness, an autofix entry, a
+scheduler row, a pop), or a write to a file whose name says it watches (WATCH_FILE_SRC). An
+answer alone, however well measured, leaves the next stall to the user again. The next prompt
+that is no stall clears the marker.
+
 The bounds: the re-answer of a stop chain is checked like the first answer; the gate lets go after
 CHAIN_CAP blocks in a row (a `cap` row in the ledger and a systemMessage). A crash or a timeout
 lets the turn end and is reported loudly. No environment variable and no configuration key
@@ -136,7 +150,33 @@ PENDING_SRC = r"""
   | \bstill\s+(?:running|in\s+progress)\b
   | \b(?:waiting|wait)\s+(?:on|for)\s+(?:the|their|its)\s+(?:results?|outputs?|tests?|run|build|verdict)\b
   | \bonce\s+(?:it|they|the\s+(?:tests?|suites?|build|run|checks?|job))\s+(?:finish(?:es)?|completes?|pass(?:es)?|lands?|comes?\s+back|exits?)\b
+  | \br[ée]sultat\s+arrive\b                                    # "le resultat arrive dans ce fil"
+  | \b[àa]\s+(?:la\s+fin\s+du|l'arriv[ée]e\s+du)\s+(?:calcul|run|test|job|scan|plan|lot)\b
 """
+
+# The user noticed a stall before the model did: work that does not advance, went down, failed
+# silently, or lacks its fixer. Each alternative replays a verbatim of the lesson
+# s:dispatched-work-left-unwatched (tests/gates/test_promise_gate.py STALLS).
+STALL_SRC = r"""
+    \b(?:[cç]a|rien|tout|stuff|on|it)\s+(?:n['’]?\s*)?avances?\b   # "ca avance pas", "tout avances"
+  | \b(?:sont|est|soit|is|are|was|were|went|goes|it['’]?s|c['’]?est)\s+(?:encore\s+|still\s+)?down\b
+  | \b(?:silent(?:ly)?|cilet(?:ly)?|silencieu\w*)\b              # "never fail ciletly"
+  | \bsoit\s+sil[ae]nce\b                                        # "soit silance"
+  | \bauto\s*-?\s*fix                                             # "a working auto fix by default"
+  | \bworker\s+listening\b|\blisten\s+actif\b
+  | \b(?:not|isn['’]?t|aren['’]?t|nothing(?:'s|\s+is)?)\s+(?:moving|progressing|advancing|happening)\b
+  | \bstall(?:ed|s|ing)?\b
+"""
+
+# A Bash command that installs a watcher or reads the one already there.
+WATCH_CMD_SRC = r"""
+    systemctl\s+--user\s+(?:enable|start|restart|status|list-timers)
+  | \.timer\b | \bcrontab\b | \bwitness | _health\.py | _watch\.py | \bautofix
+  | cockpit\.py\s+channel | -m\s+sched\b | pop_claude\.sh | \bheartbeat
+"""
+WATCH_FILE_SRC = r"(?:health|watch|witness|monitor|alert|autofix|sentinel|heartbeat)[^/]*$|\.(?:timer|service)$"
+WATCH_TOOLS = ("Monitor", "CronCreate", "ScheduleWakeup", "RemoteTrigger")
+STALL_SUFFIX = ".stall"
 
 FLAGS = re.I | re.X
 _COMPILED = {}
@@ -179,6 +219,89 @@ def _settings(cfg):
     if cfg is not None:
         return cfg
     return trace.plugin_settings({"cwd": os.getcwd()}, root=PLUGIN_ROOT)
+
+
+def stall_in(prompt):
+    m = re.search(STALL_SRC, prompt or "", FLAGS)
+    return m.group(0) if m else None
+
+
+def stall_path(session_id):
+    return trace.session_file(session_id, "") + STALL_SUFFIX
+
+
+def stall_excerpt(session_id):
+    try:
+        with open(stall_path(session_id), encoding="utf-8") as fh:
+            return fh.read().strip() or "(stall noticed)"
+    except OSError:
+        return None
+
+
+def set_stall(session_id, excerpt):
+    path = stall_path(session_id)
+    if excerpt is None:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(excerpt[:EXCERPT_CHARS])
+
+
+def watcher_gestures(transcript_path):
+    """The watcher gestures of the main thread since the last prompt of the user: tool names, a
+    Bash command matching WATCH_CMD_SRC, a Write/Edit of a file matching WATCH_FILE_SRC."""
+    found = []
+    try:
+        fh = open(transcript_path or "", encoding="utf-8", errors="replace")
+    except OSError:
+        return found
+    with fh:
+        for line in fh:
+            if '"user"' in line and '"tool_result"' not in line:
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(row, dict) and _prompt_text(row) is not None:
+                    found = []
+                continue
+            if '"tool_use"' not in line:
+                continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(row, dict) or row.get("isSidechain") or row.get("type") != "assistant":
+                continue
+            content = (row.get("message") or {}).get("content")
+            for b in content if isinstance(content, list) else []:
+                if not isinstance(b, dict) or b.get("type") != "tool_use":
+                    continue
+                name, args = b.get("name"), b.get("input") if isinstance(b.get("input"), dict) else {}
+                if name in WATCH_TOOLS:
+                    found.append(name)
+                elif name == "Bash" and re.search(WATCH_CMD_SRC, str(args.get("command") or ""), FLAGS):
+                    found.append("Bash: " + str(args.get("command"))[:80])
+                elif name in ("Write", "Edit", "MultiEdit") and re.search(
+                        WATCH_FILE_SRC, str(args.get("file_path") or ""), re.I):
+                    found.append(name + ": " + str(args.get("file_path")))
+    return found
+
+
+def stall_reason_text(excerpt, cfg):
+    text = ("The user noticed a stall before you did: \"{}\". An answer, even measured, leaves the "
+            "next one to the user again. In this turn: measure it from the store or the log, fix "
+            "its cause, and leave a WATCHER that catches the next stall without the user (a health "
+            "witness or an autofix entry, a scheduled check: a timer, a cron, CronCreate, a "
+            "scheduler row; a Monitor on the running work), or read the watcher already there and "
+            "say why it did not fire. The transcript since that prompt shows no such gesture. "
+            "(promise-gate)".format(excerpt))
+    suffix = cfg.get("reason_suffix")
+    return text + " " + suffix if suffix else text
 
 
 def arm_path(session_id):
@@ -363,8 +486,21 @@ def on_prompt():
     payload = trace.read_payload()
     cfg = trace.plugin_settings(payload, root=PLUGIN_ROOT)
     prompt = payload.get("prompt") or ""
+    sid = trace.session_key(payload)
     if target_in(prompt, cfg):
-        set_armed(trace.session_key(payload), " ".join(prompt.split()))
+        set_armed(sid, " ".join(prompt.split()))
+    if stall_in(prompt):
+        set_stall(sid, " ".join(prompt.split()))
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": (
+                "promise-gate: the user noticed a stall before you did. This turn ends only "
+                "after it measured the stall, fixed its cause, and left a watcher that catches "
+                "the next one without the user (a witness, an autofix entry, a timer or cron, a "
+                "scheduler row, a Monitor), or read the watcher already there.")}},
+            ensure_ascii=False))
+    else:
+        set_stall(sid, None)
     return 0
 
 
@@ -383,8 +519,22 @@ def on_stop():
         jobs = pending_jobs(payload.get("transcript_path"),
                             live_shell_tasks(payload)) if deferral else {}
         promise = deferral if jobs else None
+    stall = None
     if not promise:
+        stall = stall_excerpt(trace.session_key(payload))
+        if stall and watcher_gestures(payload.get("transcript_path")):
+            set_stall(trace.session_key(payload), None)
+            stall = None
+    if not promise and not stall:
         trace.chain_clear(HOOK, payload)
+        return 0
+    if stall:
+        if not trace.chain_should_block(HOOK, payload, "stall: " + stall):
+            print(trace.cap_message(HOOK, "stall: " + stall))
+            return 0
+        trace.witness("stop_promise_gate", "Stop", "stall_unwatched", payload)
+        print(json.dumps({"decision": "block", "reason": stall_reason_text(stall, cfg)},
+                         ensure_ascii=False))
         return 0
     detail = ("job: " if jobs else "promise: ") + promise
     if not trace.chain_should_block(HOOK, payload, detail):

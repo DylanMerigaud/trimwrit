@@ -585,3 +585,144 @@ def test_live_shell_tasks_reads_the_measured_payload():
     assert gate.live_shell_tasks(payload) == {"bxpghd8nv": "Sleep for 120 seconds in background"}
     assert gate.live_shell_tasks({}) is None
     assert gate.live_shell_tasks({"background_tasks": []}) == {}
+
+
+# Lesson s:dispatched-work-left-unwatched (growth-cockpit reflect, 0.4.0): eight corrections in
+# which the user saw a stall, a line down or a silent failure before the model did. Each verbatim
+# must arm the stall check.
+STALLS = [
+    "okay mais ca avance pas notre stuff right?",                                      # 0633
+    "but like every lane that works on schedule should have a working auto fix by default. fix all",
+    "why did we auto fix? with a worker listening?",                                   # 0366
+    "alright attant mon go pour lancer la farm. avec listen actif et otp auto par toi pour activer "
+    "le compte une fois que jai register. max 4 comptes/navigateurs a chaque fois. btw je veux plus "
+    "jamais qu'un truc qui bloc les bets soit silance. q",                             # 0313
+    "pk elle sont down? ses 3 lignes... c'est hyper important! pour les invit on est sure que on "
+    "add les recruteurs best startup > texas ceo/cto de bel startup/scalup > sf/ny ?",  # 0224
+    "never fail ciletly si ca fail pop terminal pour fix.",                            # 0197
+    "gros pb que ce soit down. ca doit pop un terminal de fix si il y a des issue sur cron job",
+    "Aussi se serait cool que tu orchestre pour vérifier que tout avances",            # 0059
+    "ca avance bien? je trouve quon xp peu",
+]
+# The other prompts of the 0633 session around it, and the usual short ones.
+NOT_STALLS = ["go", "yup go for it. if there is a mob that goes with a familier try to get it ? if "
+              "it makes sense", "oublie pas que la prio c'est aussi le stuff", "on wipe jcrois",
+              "pas worth non ?", "now?", "daily", "recap", "fin", "ok stop, on reprend demain",
+              "il y a aucune sinergie dj bworker et un fami a monter? idem pour autre instances?"]
+# The answer the model gave to 0633 (session 4505eb30, 2026-11-11 10:38): measured and right,
+# and no watcher left, so the next stall was again the user's to see.
+STALL_FINAL = ("Dylan, exact, le stuff n'avance pas. Sur les 48 dernières heures, le journal des "
+               "combats ne montre aucun équipement tombé, à part les 11 Marcassins. **Suite "
+               "(reco)** : remplacer le bonus stuff par un vrai plan de craft.")
+# Its turn at 10:45 the same session: the plan run in the background, the result deferred in
+# words no pattern read then.
+DEFER_0633 = ("Je recalcule son plan maintenant ; la lecture de l'HDV prend quelques minutes, le "
+              "résultat arrive dans ce fil. **Suite (reco)** : à la fin du calcul, je choisis la "
+              "zone qui couvre le plus d'ingrédients manquants.")
+
+
+def read(use, command):
+    return [{"type": "assistant", "isSidechain": False, "message": {"role": "assistant", "content": [
+        {"type": "tool_use", "id": use, "name": "Bash", "input": {"command": command}}]}},
+            {"type": "user", "isSidechain": False, "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": use, "content": "ok"}]}}]
+
+
+def tool(use, name, args):
+    return [{"type": "assistant", "isSidechain": False, "message": {"role": "assistant", "content": [
+        {"type": "tool_use", "id": use, "name": name, "input": args}]}}]
+
+
+def stall_rows(extra=()):
+    return ([user(STALLS[0])] + read("u1", "head -c 600 data/fights.jsonl")
+            + read("u2", "grep -n CM_SETS_WANTED tc/level_plan.py") + list(extra)
+            + [said(STALL_FINAL)])
+
+
+@pytest.mark.parametrize("text", STALLS)
+def test_every_verbatim_of_the_lesson_arms_the_stall_check(text):
+    assert gate.stall_in(text)
+
+
+@pytest.mark.parametrize("text", NOT_STALLS)
+def test_an_ordinary_prompt_is_no_stall(text):
+    assert gate.stall_in(text) is None
+
+
+@pytest.mark.parametrize("text", STALLS)
+def test_replay_each_verbatim_a_turn_with_no_watcher_is_blocked(tmp_path, text):
+    r = prompt(tmp_path, "stall", text)
+    assert r.returncode == 0, r.stderr
+    ctx = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert "watcher" in ctx
+    rows_ = [user(text)] + read("u1", "tail -5 cron.log") + [said(STALL_FINAL)]
+    reason = blocked(stop_on(tmp_path, rows_, session="stall", final=STALL_FINAL))
+    assert "noticed a stall" in reason and reason.endswith("(promise-gate)")
+
+
+def test_replay_of_0633_is_blocked_and_counted(tmp_path):
+    prompt(tmp_path, "s633", STALLS[0])
+    reason = blocked(stop_on(tmp_path, stall_rows(), session="s633", final=STALL_FINAL))
+    assert "ca avance pas notre stuff" in reason
+    refusals = rows(os.path.join(str(tmp_path), "door-refusals.jsonl"))
+    assert [(x["door"], x["reason_class"]) for x in refusals] == \
+        [("stop_promise_gate", "stall_unwatched")]
+
+
+@pytest.mark.parametrize("gesture", [
+    tool("w1", "Monitor", {"command": "until grep -q done f; do sleep 10; done"}),
+    tool("w1", "CronCreate", {"cron": "*/30 * * * *", "prompt": "check gear drops"}),
+    tool("w1", "Bash", {"command": "systemctl --user enable --now com.x.gearwatch.timer"}),
+    tool("w1", "Bash", {"command": "python3 scripts/autofix.py status"}),
+    tool("w1", "Bash", {"command": "python3 cockpit.py channel dofus gear --run 'x'"}),
+    tool("w1", "Write", {"file_path": "/r/tc/gear_watch.py", "content": "x"}),
+    tool("w1", "Edit", {"file_path": "/r/scripts/stuff_health.py", "old_string": "a",
+                        "new_string": "b"}),
+])
+def test_a_watcher_gesture_since_the_prompt_lets_the_turn_end(tmp_path, gesture):
+    prompt(tmp_path, "w", STALLS[0])
+    silent(stop_on(tmp_path, stall_rows(gesture), session="w", final=STALL_FINAL))
+    # the marker is spent: the next stop of the session is free
+    silent(stop_on(tmp_path, [user("go"), said("ok")], session="w", final="ok"))
+
+
+def test_a_watcher_before_the_stall_prompt_does_not_count(tmp_path):
+    prompt(tmp_path, "b", STALLS[0])
+    rows_ = ([user("go")] + tool("w0", "Monitor", {"command": "sleep 1"})
+             + stall_rows())
+    blocked(stop_on(tmp_path, rows_, session="b", final=STALL_FINAL))
+
+
+def test_a_watcher_of_a_subagent_does_not_count(tmp_path):
+    prompt(tmp_path, "sub", STALLS[0])
+    side = tool("w9", "Monitor", {"command": "sleep 1"})
+    side[0]["isSidechain"] = True
+    blocked(stop_on(tmp_path, stall_rows(side), session="sub", final=STALL_FINAL))
+
+
+def test_the_next_ordinary_prompt_clears_the_stall(tmp_path):
+    prompt(tmp_path, "c", STALLS[0])
+    r = prompt(tmp_path, "c", "yup go for it")
+    assert r.stdout.strip() == ""
+    silent(stop_on(tmp_path, [user("yup go for it"), said("fait")], session="c", final="fait"))
+
+
+def test_an_unarmed_session_never_hears_of_a_stall(tmp_path):
+    silent(stop_on(tmp_path, stall_rows(), session="none", final=STALL_FINAL))
+
+
+def test_the_stall_block_caps_like_the_others(tmp_path):
+    prompt(tmp_path, "cap", STALLS[0])
+    for active in (False, True, True):
+        blocked(stop_on(tmp_path, stall_rows(), session="cap", final=STALL_FINAL, active=active))
+    r = stop_on(tmp_path, stall_rows(), session="cap", final=STALL_FINAL, active=True)
+    assert "systemMessage" in json.loads(r.stdout)
+
+
+def test_the_0633_deferral_is_read_now(tmp_path):
+    assert gate.deferral_in(DEFER_0633, CFG)
+    rows_ = ([user("yup go for it. if there is a mob that goes with a familier try to get it ?")]
+             + launch("toolu_glad", "bbazjejla", "Rerun glad plan with longer timeout")
+             + [said(DEFER_0633)])
+    reason = blocked(stop_on(tmp_path, rows_, session="d633", final=DEFER_0633))
+    assert "bbazjejla" in reason

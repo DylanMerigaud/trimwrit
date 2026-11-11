@@ -54,6 +54,27 @@ others were followed by notifications only, or by the end of the session), and 1
 prompts asked for the state of the work ("on en est ou?", "t'en est ou", "where are we now", "le
 sub agent a fini?").
 
+## A stall the user noticed first (every session, since 0.4.0)
+
+Eight corrections from 2026-09-20 to 2026-11-11 share one shape: work the model had set going (a
+scheduled line, a cron, a pop, a plan steering a goal) stalled or went down, and the user saw it
+first ("pk elle sont down?", "never fail ciletly", "why did we auto fix? with a worker
+listening?", "okay mais ca avance pas notre stuff right?"). The model then answered well,
+measured and right, and left nothing behind, so the next stall was again the user's to see.
+
+So a prompt that notices a stall (not advancing, down, silent failure, a missing auto fix) arms a
+per-session `.stall` marker and gets a context line saying what the turn owes. The Stop hook
+refuses to end that turn until the transcript since the prompt shows a watcher gesture by the main
+thread: a Monitor, CronCreate, ScheduleWakeup or RemoteTrigger call; a Bash command that installs
+or reads a watcher (a systemd timer, a crontab, a health witness, an autofix entry, a scheduler
+row, a pop); or a write to a file named for watching (`*health*`, `*watch*`, `*.timer`). A gesture
+spends the marker; the next ordinary prompt clears it; the chain cap applies.
+
+Replayed on the real transcript of correction 0633: the answer to "ca avance pas notre stuff" is
+blocked, and the turn seven minutes later that ended on "le résultat arrive dans ce fil" while
+its own plan run was in the background (a deferral no pattern read before 0.4.0) is blocked too.
+Measured on 794 distinct past prompts: 10 arm it, all progress or outage questions.
+
 ## Install
 
 ```
