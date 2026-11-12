@@ -45,7 +45,8 @@ def test_other_errors_wait_60(tmp_path):
     assert "(server_error)" in out.stdout
 
 
-@pytest.mark.parametrize("category", ["authentication_failed", "billing_error"])
+@pytest.mark.parametrize("category", ["authentication_failed", "billing_error", "account_on_hold",
+                                      "oauth_org_not_allowed", "cloud_credential_error"])
 def test_credential_and_billing_errors_are_never_resumed(tmp_path, category):
     out, log = run(tmp_path, category, SCREEN)
     assert out.returncode == 0 and out.stdout == ""

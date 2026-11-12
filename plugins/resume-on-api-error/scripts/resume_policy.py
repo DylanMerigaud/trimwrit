@@ -37,7 +37,8 @@ MAX_DELAY_S = 3600
 RESET_S = 6 * 3600
 TAIL_BYTES = 4 * 1024 * 1024
 
-CREDENTIAL = re.compile(r"^(authentication_failed|billing|insufficient|invalid_api_key)")
+CREDENTIAL = re.compile(r"^(authentication_failed|billing|insufficient|invalid_api_key"
+                        r"|account_on_hold|oauth_org_not_allowed|cloud_credential_error)")
 TRANSIENT = re.compile(r"^(rate_limit|overloaded|server_error|unknown|api_error|timeout)$"
                        r"|connection|network|timeout", re.I)
 SAFEGUARDS = re.compile(r"safeguards flagged|anthropic\.com/legal/aup|usage policy", re.I)
