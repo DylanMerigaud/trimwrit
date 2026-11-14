@@ -71,6 +71,28 @@ per family, one slice per member) says so in two optional keys, each {name: {"pa
 validated the same way. The facet keys `covers` {axis: [values]} and `by_facet` {axis: {value:
 {"n", "metric"}}} (trimwrit/facets.py) are validated when present.
 
+THE STANDARD. A standard bank's run.py declares constants and hooks, then hands its run to the
+library; it holds no runner of its own:
+
+  MODEL         a full model id (FULL_ID_RE, no alias, no "latest"), or None (deterministic)
+  EFFORT        one of EFFORTS or "model-default" when MODEL is set, None when it is not
+  BAR           {metric: threshold in [0, 1]}, optional n_min; the same text in CODEBOOK.md s.2
+  LABEL_SOURCE  who labeled the rows that carry no label_source (never the judged model)
+  FIELDS        optional {canonical: row key} for id, input, expected, why, split, label_source
+  JOBS, WAIVE   optional: threads, and dated 90-day waivers of WAIVABLE_IN_BANK rules
+  answer(case, model=MODEL, effort=EFFORT) and grade(case, got); optional score, ideal, mutate,
+  cache_key, stamp
+  if __name__ == "__main__": sys.exit(bank.main(__file__))
+
+Each hole is a Refusal (exit EXIT_REFUSED, 65) naming one of RULES and its exact fix. `lint`
+(trimwrit/bank_lint.py, static, never imports the bank) refuses bespoke-runner, model-not-pinned,
+corpus-untyped, label-by-judged-model, corpus-too-small (under MIN_CASES), no-holdout (fewer than
+max(HOLDOUT_MIN, n / 5) holdout cases, see `splits`), bar-moved and
+corpus-changed-since-release. `self_check` adds grader-cannot-fail: the grader must accept the
+right answer and refuse a wrong one (`mutate`, else `default_mutation`) on up to MUTATION_SAMPLE
+cases. `bank.main` refuses at run time cost-not-recorded, no-repeat and the resolved values lint
+could not read.
+
 `trimwrit bank new <slug>` lays out a bank on this kit; `trimwrit bank check` reads every
 RELEASE.json under a directory against the envelope.
 
@@ -114,6 +136,55 @@ NOT_INPUTS = (RELEASE, RUNS, "__pycache__", ".pytest_cache")
 
 class BankError(ValueError):
     """A bank file that cannot be read as written, or a release that breaks the envelope."""
+
+
+# ------------------------------------------------------------------ the standard: refusals
+
+RULES = ("bar-moved", "grader-cannot-fail", "label-by-judged-model", "no-holdout",
+         "corpus-too-small", "bespoke-runner", "corpus-changed-since-release",
+         "model-not-pinned", "cost-not-recorded", "no-repeat", "corpus-untyped")
+# the rules a run.py WAIVE may name (dated, 90 days); every other rule holds in every bank
+WAIVABLE_IN_BANK = ("corpus-too-small", "no-holdout")
+EXIT_REFUSED = 65
+# a full model id: words joined by '-', ending in version numbers (claude-sonnet-5-5); an alias
+# (opus, sonnet, claude-opus) or a "latest" pointer is not one
+FULL_ID_RE = re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)*-\d+(-\d+)*$")
+MIN_CASES = 30
+HOLDOUT_MIN = 5
+HOLDOUT_SHARE = 0.25
+MUTATION_SAMPLE = 20
+# what inputs_sha leaves out besides NOT_INPUTS: a bank's own tests are not its inputs
+TEST_FILE_RE = re.compile(r"^(test_.*\.py|.*_test\.py|conftest\.py)$")
+
+
+class Refusal(BankError):
+    """One hole of the standard in one bank: the `rule` (one of RULES), the `bank`, `what` is
+    wrong, and the exact `fix` (a command, or an edit naming the file and the line)."""
+
+    def __init__(self, rule, bank, what, fix):
+        if rule not in RULES:
+            raise ValueError("rule {!r}: one of {}".format(rule, ", ".join(RULES)))
+        self.rule = rule
+        self.bank = str(bank)
+        self.what = what
+        self.fix = fix
+        super().__init__(str(self))
+
+    def __str__(self):
+        return "{}: {}: {} (fix: {})".format(self.bank, self.rule, self.what, self.fix)
+
+    def __repr__(self):
+        return "Refusal({!r}, {!r}, {!r}, {!r})".format(self.rule, self.bank, self.what, self.fix)
+
+    def __eq__(self, other):
+        return isinstance(other, Refusal) and self.as_dict() == other.as_dict()
+
+    def __hash__(self):
+        return hash((self.rule, self.bank, self.what, self.fix))
+
+    def as_dict(self):
+        return {"refused": "bank-standard", "rule": self.rule, "bank": self.bank,
+                "what": self.what, "fix": self.fix}
 
 
 # ------------------------------------------------------------------ cases, shas, runs
@@ -177,6 +248,92 @@ def bank_sha(bank):
             h.update(fh.read())
         h.update(b"\0")
     return h.hexdigest()[:12]
+
+
+def inputs_sha(bank):
+    """12 hex naming the bank's inputs as `bank_sha` does, leaving out the bank's own tests
+    (test_*.py, *_test.py, conftest.py): a test added beside a released corpus does not void the
+    release, an edited CORPUS.jsonl does."""
+    h = hashlib.sha256()
+    bank = str(bank)
+    for rel in input_files(bank):
+        if TEST_FILE_RE.match(os.path.basename(rel)):
+            continue
+        h.update(rel.encode("utf-8") + b"\0")
+        with open(os.path.join(bank, rel), "rb") as fh:
+            h.update(fh.read())
+        h.update(b"\0")
+    return h.hexdigest()[:12]
+
+
+def bar_sha(bar):
+    """12 hex naming a bar: sha of its JSON with sorted keys."""
+    return sha(json.dumps(bar, sort_keys=True))
+
+
+def splits(cases):
+    """{id: "dev" | "holdout"} of `cases`: a case's own `split` ("test" is read as "holdout"),
+    else derived and stable: the cases without one, sorted by (sha(str(id)), str(id)), the first
+    quarter (rounded up) are "holdout", the rest "dev"."""
+    out = {}
+    without = []
+    for c in cases:
+        s = c.get("split")
+        if s == "test":
+            s = "holdout"
+        if s in ("dev", "holdout"):
+            out[c.get("id")] = s
+        else:
+            without.append(c)
+    without.sort(key=lambda c: (sha(str(c.get("id"))), str(c.get("id"))))
+    cut = -(-len(without) // int(round(1 / HOLDOUT_SHARE)))
+    for i, c in enumerate(without):
+        out.setdefault(c.get("id"), "holdout" if i < cut else "dev")
+    return out
+
+
+def _flip(value):
+    """A wrong answer of the same type as `value` (default_mutation's fallback)."""
+    if isinstance(value, bool):
+        return not value
+    if isinstance(value, (int, float)):
+        return value + 1
+    if isinstance(value, str):
+        return "" if value else "mutated"
+    if isinstance(value, list):
+        return [] if value else ["mutated"]
+    if isinstance(value, dict):
+        if not value:
+            return {"mutated": True}
+        return {k: _flip(v) for k, v in value.items()}
+    return "mutated"
+
+
+def _dump(value):
+    return json.dumps(value, sort_keys=True, default=repr)
+
+
+def default_mutation(case, ideal, ideals):
+    """A wrong answer for `case` whose right answer is `ideal`: the most frequent of `ideals`
+    (the corpus's right answers) that differs from `ideal`, ties broken by the smallest JSON;
+    when none differs, a flip of `ideal`'s type (str: "" or "mutated", bool: not, number: + 1,
+    None: "mutated", list: [] or ["mutated"], dict: each value flipped)."""
+    counts = {}
+    for v in ideals:
+        try:
+            if v == ideal:
+                continue
+        except Exception:  # noqa: BLE001  (an incomparable answer differs)
+            pass
+        key = _dump(v)
+        if key in counts:
+            counts[key][0] += 1
+        else:
+            counts[key] = [1, v]
+    if counts:
+        best = min(counts, key=lambda k: (-counts[k][0], k))
+        return counts[best][1]
+    return _flip(ideal)
 
 
 def now_iso(now=None):
@@ -725,3 +882,9 @@ def lay_out(root, files):
             os.chmod(path, 0o755)
         written.append(rel)
     return written
+
+
+# ------------------------------------------------------------------ the standard: re-exports
+# at the very end, after every definition, so the import cycle with bank_lint resolves
+
+from .bank_lint import declared, lint, load_module, resolve_case, self_check  # noqa: E402,F401
