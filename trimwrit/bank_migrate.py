@@ -13,7 +13,9 @@ THE PARITY REPLAY. After the migrated bank ran once on bank.main, `parity` loads
 (a copy kept with `trimwrit bank migrate --legacy-out`), feeds it the answers the new run
 recorded instead of asking the producer again, captures the release it would have written, and
 compares `passed`, `n` and every BAR metric with the new schema 2 RELEASE.json. Nothing the old
-runner writes reaches the bank: its rows go to a temp dir and its release is captured.
+runner writes through the kit reaches the bank (the kit's writers are swapped for the time of the
+replay, whatever name the runner reaches them by): its rows go to a temp dir and its release is
+captured. A runner that opens RELEASE.json itself is not stopped.
 
 Standard library only, Python 3.9 syntax.
 """
@@ -118,9 +120,15 @@ def _migrated(old, label_source):
         if hook not in defs:
             raise b.BankError("run.py defines no top level {}(): migrate reads a scaffold "
                               "shaped run.py, write the standard shape by hand".format(hook))
+    nl = "\r\n" if "\r\n" in old else "\n"
     lines = old.splitlines(True)
     if lines and not lines[-1].endswith(("\n", "\r")):
-        lines[-1] += "\n"
+        lines[-1] += nl
+
+    def rest_of(node):
+        """What follows `node` on its last line (a trailing comment, the line ending)."""
+        tail = lines[node.end_lineno - 1][node.end_col_offset:]
+        return tail if tail.strip() else nl
     ed = _Edits(lines)
     labels = []   # (line, label) in source order
     blocks = []
@@ -139,7 +147,7 @@ def _migrated(old, label_source):
             rest = [a for a in node.names if a not in parse]
             if rest:
                 ed.put(node.lineno, node.end_lineno,
-                       "import " + ", ".join(_alias_text(a) for a in rest) + "\n")
+                       "import " + ", ".join(_alias_text(a) for a in rest) + rest_of(node))
             else:
                 ed.remove(node.lineno, node.end_lineno)
             labels.append((node.lineno, "import argparse"))
@@ -165,26 +173,30 @@ def _migrated(old, label_source):
     if (values["MODEL"] is None and "EFFORT" in assigns and effort is not None
             and effort is not bank_lint.ABSENT and effort is not bank_lint.NOT_LITERAL):
         node = assigns["EFFORT"]
-        ed.put(node.lineno, node.end_lineno, "EFFORT = None\n")
+        ed.put(node.lineno, node.end_lineno, "EFFORT = None" + rest_of(node))
         labels.append((node.lineno, "EFFORT = {!r} (MODEL is None)".format(effort)))
     has_sys = any(isinstance(n, ast.Import) and any(a.name == "sys" and not a.asname
                                                     for a in n.names) for n in tree.body)
     if not has_sys:
-        ed.insert(_import_anchor(tree), "import sys\n")
+        ed.insert(_import_anchor(tree, lines), "import sys" + nl)
     if label_source is not None and "LABEL_SOURCE" not in assigns:
-        line = "LABEL_SOURCE = {!r}\n".format(label_source)
+        line = "LABEL_SOURCE = {!r}".format(label_source) + nl
         if "BAR" in assigns:
             ed.insert(assigns["BAR"].end_lineno, line)
         else:
-            ed.insert(_start(defs["answer"]) - 1, line + "\n\n")
-    new = ed.text().rstrip() + TAIL
+            ed.insert(_start(defs["answer"]) - 1, line + nl + nl)
+    new = ed.text().rstrip() + TAIL.replace("\n", nl)
     return new, [label for _, label in sorted(labels)]
 
 
-def _import_anchor(tree):
+def _import_anchor(tree, lines):
     """The line after which `import sys` goes: the end of the last plain import of the leading
-    imports, else the end of the module docstring, else 0 (the top)."""
+    imports, else the end of the module docstring, else below the leading comment lines (a
+    shebang, a coding line), else 0 (the top)."""
     anchor = 0
+    while anchor < len(lines) and lines[anchor].startswith("#"):
+        anchor += 1
+    comments = anchor
     for i, node in enumerate(tree.body):
         if i == 0 and isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) \
                 and isinstance(node.value.value, str):
@@ -196,7 +208,17 @@ def _import_anchor(tree):
             anchor = node.end_lineno
         elif not isinstance(node, ast.ImportFrom):
             break
-    return anchor
+    return max(anchor, comments)
+
+
+def _main_references(text):
+    """The lines of `text` that still read the name `main` (the removed runner)."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return []
+    return sorted({n.lineno for n in ast.walk(tree)
+                   if isinstance(n, ast.Name) and n.id == "main"})
 
 
 def _swap(value, old, new):
@@ -243,6 +265,12 @@ def migrate(bank_dir, label_source=None, write=False):
         left = [r.as_dict() for r in b.lint(bank_dir)]
     else:
         left = _lint_text(bank_dir, new)
+    for line in _main_references(new):
+        left.append(b.Refusal(
+            "bespoke-runner", bank_dir,
+            "main is still referenced at line {} of the migrated run.py".format(line),
+            "remove that use of main() from {}: bank.main(__file__) is the whole runner"
+            .format(path)).as_dict())
     return {"bank": bank_dir, "lines_before": len(old.splitlines()),
             "lines_after": len(new.splitlines()), "removed": removed, "old_text": old,
             "new_text": new, "refusals_left": left}
@@ -254,16 +282,17 @@ class _KitProxy(object):
     """The kit as the old runner sees it during a replay: every name of trimwrit.bank, except
     the writers (their release captured, their rows sent to a temp dir) and the probes (none)."""
 
-    def __init__(self, real, tmp, captured):
+    def __init__(self, real, tmp, captured, release_doc):
         self._real = real
         self._tmp = tmp
         self._captured = captured
+        self._release_doc = release_doc
 
     def __getattr__(self, name):
         return getattr(self._real, name)
 
     def release_doc(self, bank, **kw):
-        doc = self._real.release_doc(bank, **kw)
+        doc = self._release_doc(bank, **kw)
         self._captured.append(doc)
         return doc
 
@@ -299,7 +328,8 @@ def _replay(bank_dir, legacy_run, answers):
         return answers[key]
 
     with tempfile.TemporaryDirectory() as tmp, \
-            bank_lint.isolated_imports(os.path.abspath(bank_dir)):
+            bank_lint.isolated_imports(os.path.abspath(bank_dir)), \
+            _kit_patched(b, tmp, captured) as proxy:
         sys.path.insert(0, os.path.abspath(bank_dir))
         name = "{}legacy_{}_{}".format(bank_lint.MODULE_PREFIX, b.sha(str(legacy_run)),
                                        next(_counter))
@@ -311,9 +341,13 @@ def _replay(bank_dir, legacy_run, answers):
         try:
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 code = compile(_read(str(legacy_run)), str(legacy_run), "exec")
-                exec(code, module.__dict__)  # noqa: S102
+                try:
+                    exec(code, module.__dict__)  # noqa: S102
+                except SystemExit as exc:
+                    return None, "the old runner exited at import (SystemExit: {!r}){}".format(
+                        exc.code, _last_line(err)), err.getvalue()
                 module.answer = lookup
-                module.bank = _KitProxy(b, tmp, captured)
+                module.bank = proxy
                 try:
                     module.main([])
                 except SystemExit:
@@ -322,9 +356,33 @@ def _replay(bank_dir, legacy_run, answers):
             return None, "the old runner raised {}: {}".format(type(exc).__name__, exc), \
                 err.getvalue()
     if not captured:
-        return None, "the old runner wrote no release (no write_release or release_doc call)", \
-            err.getvalue()
+        return None, "the old runner wrote no release (no write_release or release_doc call)" \
+            + _last_line(err), err.getvalue()
     return captured[-1], None, err.getvalue()
+
+
+def _last_line(err):
+    lines = err.getvalue().strip().splitlines()
+    return "; its last stderr line: {}".format(lines[-1][:200]) if lines else ""
+
+
+KIT_PATCHED = ("write_release", "release_doc", "run_path", "smaller", "cheaper_effort")
+
+
+@contextlib.contextmanager
+def _kit_patched(b, tmp, captured):
+    """The proxy, with the real kit's writers and probes swapped for the proxy's for the time of
+    the replay: a runner reaching the kit by another name (import trimwrit.bank as kit, from
+    trimwrit.bank import write_release) writes nothing in the bank either."""
+    saved = {name: getattr(b, name) for name in KIT_PATCHED}
+    proxy = _KitProxy(b, tmp, captured, saved["release_doc"])
+    try:
+        for name in KIT_PATCHED:
+            setattr(b, name, getattr(proxy, name))
+        yield proxy
+    finally:
+        for name, fn in saved.items():
+            setattr(b, name, fn)
 
 
 def _same(a, c):

@@ -157,6 +157,32 @@ def _calls_bank_main(node):
     return False
 
 
+def _is_bank_main(call):
+    """True when `call` is bank.main(__file__) or trimwrit.bank.main(__file__), nothing more."""
+    if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+            and call.func.attr == "main" and not call.keywords and len(call.args) == 1):
+        return False
+    a = call.args[0]
+    if not (isinstance(a, ast.Name) and a.id == "__file__"):
+        return False
+    v = call.func.value
+    return (isinstance(v, ast.Name) and v.id == "bank") or (
+        isinstance(v, ast.Attribute) and v.attr == "bank" and isinstance(v.value, ast.Name)
+        and v.value.id == "trimwrit")
+
+
+def _exact_guard(node):
+    """True when the guard's body is exactly `sys.exit(bank.main(__file__))`: bank.main then
+    reads the flags from the command line, and nothing runs before it."""
+    if len(node.body) != 1 or not isinstance(node.body[0], ast.Expr):
+        return False
+    call = node.body[0].value
+    return (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
+            and call.func.attr == "exit" and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == "sys" and not call.keywords and len(call.args) == 1
+            and _is_bank_main(call.args[0]))
+
+
 def _top_defs(tree):
     return {n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
 
@@ -284,7 +310,15 @@ class _Lint(object):
                             "delete the {}() call from {}: bank.main(__file__) writes the runs "
                             "and the release".format(_func_name(node), rel))
         guards = [n for n in tree.body if _is_main_guard(n)]
-        if not any(_calls_bank_main(g) for g in guards):
+        calling = [g for g in guards if _calls_bank_main(g)]
+        if calling and not any(_exact_guard(g) for g in calling):
+            self.refuse("bespoke-runner",
+                        "the __main__ guard at line {} is not exactly "
+                        "sys.exit(bank.main(__file__))".format(calling[0].lineno),
+                        "make the guard `sys.exit(bank.main(__file__))` in {}: bank.main reads "
+                        "the flags from the command line, and nothing else runs under the guard"
+                        .format(rel))
+        elif not calling:
             self.refuse("bespoke-runner",
                         "run.py has no top level 'if __name__ == \"__main__\":' calling "
                         "bank.main(...)",

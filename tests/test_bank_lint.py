@@ -367,3 +367,32 @@ def test_the_guard_accepts_trimwrit_bank_main_and_its_fix_names_the_imports(tmp_
         "if __name__ == \"__main__\":\n    sys.exit(bank.main(__file__))\n", ""))
     hits = [r for r in bank.lint(two, today=TODAY) if r.rule == "bespoke-runner"]
     assert hits and "'import sys'" in hits[0].fix and "'from trimwrit import bank'" in hits[0].fix
+
+
+@pytest.mark.parametrize("guard", [
+    "sys.exit(bank.main(__file__, argv=[]))",
+    "sys.exit(bank.main(__file__, ['--no-probe']))",
+    "print('warm up')\n    sys.exit(bank.main(__file__))",
+    "bank.main(__file__)",
+    "sys.exit(bank.main(HERE))",
+])
+def test_the_guard_is_exactly_sys_exit_bank_main_file(tmp_path, guard):
+    d = make(tmp_path)
+    (d / "run.py").write_text((d / "run.py").read_text().replace(
+        "sys.exit(bank.main(__file__))", guard))
+    hits = [r for r in bank.lint(d, today=TODAY) if r.rule == "bespoke-runner"]
+    assert hits and "make the guard `sys.exit(bank.main(__file__))`" in hits[0].fix, guard
+
+
+def test_a_self_check_environment_forces_the_self_check_and_a_model_call_is_loud(
+        tmp_path, monkeypatch, capsys):
+    d = make(tmp_path)
+    monkeypatch.setenv("TRIMWRIT_BANK_SELF_CHECK", "1")
+    assert bank.main(str(d / "run.py"), argv=[]) == 0
+    assert json.loads(capsys.readouterr().out) == {"self_check": "ok"}
+    assert not (d / "RELEASE.json").exists() and not (d / "RUNS").exists()
+    with pytest.raises(bank.BankError, match="self check"):
+        with bank.usage_scope():
+            bank.note_usage({"model": "claude-sonnet-5-5"})
+    with pytest.raises(bank.BankError, match="self check"):
+        bank.note_usage({"model": "claude-sonnet-5-5"})

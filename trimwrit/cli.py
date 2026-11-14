@@ -1320,6 +1320,11 @@ def cmd_bank(args):
     root = os.path.abspath(args.root)
     if args.bank_cmd == "check" and args.strict:
         return _bank_check_strict(root, args)
+    if args.bank_cmd == "check" and (args.waivers or args.json or args.write_waivers
+                                     or args.why or args.shrink_waivers):
+        print("refused: --waivers, --json, --write-waivers, --why and --shrink-waivers read "
+              "the strict check: add --strict", file=sys.stderr)
+        return 2
     if args.bank_cmd == "migrate":
         return _bank_migrate(root, args)
     if args.bank_cmd == "parity":
@@ -1385,8 +1390,12 @@ def _bank_check_strict(root, args):
     (exit 1 on a failing bank); --write-waivers lays the list out once, --shrink-waivers drops
     what no bank triggers any more."""
     from . import bank_check  # noqa: PLC0415
-    path = os.path.join(root, args.waivers) if args.waivers else os.path.join(
-        root, bank_check.WAIVERS_DIR, bank_check.WAIVERS_FILE)
+    default = os.path.join(root, bank_check.WAIVERS_DIR, bank_check.WAIVERS_FILE)
+    path = os.path.join(root, args.waivers) if args.waivers else default
+    if os.path.realpath(path) != os.path.realpath(default):
+        print("note: bank.main reads only the nearest .trimwrit/bank-waivers.json above a bank; "
+              "{} is read by this check alone, its keys relative to {}".format(path, root),
+              file=sys.stderr)
     if args.write_waivers:
         if os.path.exists(path):
             print("refused: {}: the waiver list only shrinks: use --shrink-waivers or remove "

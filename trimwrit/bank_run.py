@@ -61,6 +61,13 @@ ENVELOPE_TOKENS = (("inputTokens", "input_tokens"), ("outputTokens", "output_tok
                    ("cacheReadInputTokens", "cache_read_tokens"),
                    ("cacheCreationInputTokens", "cache_write_tokens"))
 PHASES = ("main", "repeats", "probe")
+# set by `trimwrit bank check --strict` around `run.py --self-check`: bank.main takes the self
+# check path whatever argv says, and a model call (note_usage) raises
+SELF_CHECK_ENV = "TRIMWRIT_BANK_SELF_CHECK"
+
+
+def _forced_self_check():
+    return os.environ.get(SELF_CHECK_ENV) == "1"
 UPPER_SUFFIX = "_max"  # a BAR metric named *_max is an upper bound (bank_lint.bar_op)
 
 
@@ -141,7 +148,11 @@ def note_usage(envelope):
     `--output-format json` envelope (total_cost_usd, modelUsage {model: {inputTokens,
     outputTokens, cacheReadInputTokens, cacheCreationInputTokens, costUSD}}) or a normalized
     dict {model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd}.
-    Outside any scope a no-op. Never raises: a malformed input counts the call, zero tokens."""
+    Outside any scope a no-op. Never raises on a malformed input (the call counts, zero
+    tokens); raises BankError under TRIMWRIT_BANK_SELF_CHECK=1: a self check calls no model."""
+    if _forced_self_check():
+        raise _bank.BankError("a model call during a self check ({}=1): the self check must "
+                              "never call answer() or the producer".format(SELF_CHECK_ENV))
     try:
         stack = getattr(_local, "stack", None)
         if not stack:
@@ -443,6 +454,8 @@ def main(run_file, argv=None, module=None, engine_impls=None):
     `engine_impls` stands in for ENGINES (tests)."""
     from .bank_lint import _dated_bar_line, import_refusal, lint, self_check  # noqa: PLC0415
     args = _parser().parse_args(argv)
+    if _forced_self_check():
+        args.self_check = True
     run_file = os.path.abspath(str(run_file))
     bank_dir = os.path.dirname(run_file)
     t0 = time.monotonic()

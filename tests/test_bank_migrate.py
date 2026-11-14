@@ -299,3 +299,79 @@ def test_the_migrate_and_parity_commands(tmp_path, capsys):
     assert cli(["--root", str(tmp_path), "bank", "parity", "old-evals", "--legacy",
                 str(upper), "--json"]) == 1
     assert json.loads(capsys.readouterr().out)["parity"] is False
+
+
+# ------------------------------------------------------------------ review T4 fixes
+
+def _plain(d, text):
+    d.mkdir()
+    (d / "run.py").write_bytes(text.encode("utf-8"))
+    return d
+
+
+def test_import_sys_goes_below_a_shebang_and_a_coding_line(tmp_path):
+    d = _plain(tmp_path / "x-evals", "#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\n"
+               "from trimwrit import bank\n\ndef answer(case):\n    return 1\n\n\n"
+               "def grade(case, got):\n    return got == 1\n")
+    new = bank.migrate(str(d))["new_text"]
+    assert new.startswith("#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\nimport sys\n"), new
+
+
+def test_migrate_keeps_a_trailing_comment_and_the_line_ending(tmp_path):
+    src = ("import argparse, json  # the flags and the rows\nimport sys\nfrom trimwrit import bank\n"
+           "\n\ndef answer(case):\n    return 1\n\n\ndef grade(case, got):\n    return got == 1\n"
+           "\n\ndef main():\n    return 0\n\n\nif __name__ == \"__main__\":\n    sys.exit(main())\n")
+    new = bank.migrate(str(_plain(tmp_path / "lf-evals", src)))["new_text"]
+    assert new.startswith("import json  # the flags and the rows\n")
+    crlf = bank.migrate(str(_plain(tmp_path / "crlf-evals", src.replace("\n", "\r\n"))))
+    assert "\n" not in crlf["new_text"].replace("\r\n", "")
+    assert crlf["new_text"].endswith('sys.exit(bank.main(__file__))\r\n')
+
+
+def test_a_remaining_reference_to_main_is_reported(tmp_path):
+    d = old_bank(tmp_path)
+    (d / "run.py").write_text((d / "run.py").read_text().replace(
+        "def grade(case, got):", "def cli():\n    return main()\n\n\ndef grade(case, got):"))
+    res = bank.migrate(str(d), label_source=LABEL)
+    hits = [r for r in res["refusals_left"] if "main is still referenced at line" in r["what"]]
+    assert hits and hits[0]["rule"] == "bespoke-runner"
+
+
+def test_a_runner_reaching_the_kit_by_another_name_writes_nothing_in_the_bank(tmp_path):
+    """M-3: `import trimwrit.bank as kit` and `from trimwrit.bank import write_release` reach
+    the same capture."""
+    d = old_bank(tmp_path)
+    legacy = tmp_path / "legacy_run.py"
+    legacy.write_text((d / "run.py").read_text()
+                      .replace("from trimwrit import bank  # noqa: E402",
+                               "from trimwrit import bank  # noqa: E402\n"
+                               "import trimwrit.bank as kit  # noqa: E402\n"
+                               "from trimwrit.bank import run_path  # noqa: E402")
+                      .replace("doc = bank.write_release(", "doc = kit.write_release(")
+                      .replace("open(bank.run_path(HERE, stamp)", "open(run_path(HERE, stamp)"))
+    bank.migrate(str(d), label_source=LABEL, write=True)
+    assert run_main(d)[0] == 0
+    doc = bank.read_release(str(d))
+    p = bank.parity(str(d), str(legacy))
+    assert p["parity"] is True, p
+    assert bank.read_release(str(d)) == doc and os.listdir(str(d / "RUNS")) == [
+        doc["run"] + ".jsonl"]
+    assert bank.write_release.__module__ == "trimwrit.bank", "the kit is restored"
+
+
+def test_a_legacy_exit_at_import_and_a_silent_miss_say_why(tmp_path):
+    d = old_bank(tmp_path)
+    bank.migrate(str(d), label_source=LABEL, write=True)
+    assert run_main(d)[0] == 0
+    old = old_bank(tmp_path, name="exit-evals") / "run.py"
+    exits = tmp_path / "exits.py"
+    exits.write_text(old.read_text().replace("HERE = os.path", "sys.exit(3)\nHERE = os.path"))
+    p = bank.parity(str(d), str(exits))
+    assert p["parity"] is False and any("SystemExit" in x for x in p["diffs"])
+    quiet = tmp_path / "quiet.py"
+    quiet.write_text(old.read_text().replace(
+        "    cases = bank.corpus(HERE)",
+        "    print('refused: the old door is shut', file=sys.stderr)\n    return 2"))
+    p = bank.parity(str(d), str(quiet))
+    assert p["parity"] is False
+    assert any("wrote no release" in x and "the old door is shut" in x for x in p["diffs"])

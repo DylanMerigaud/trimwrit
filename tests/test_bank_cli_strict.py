@@ -171,3 +171,94 @@ def test_discovery_reads_evals_dirs_markers_and_nested_banks(tmp_path):
                      "career/post-evals/icp/reframe"] and excluded == []
     refusals = bank.lint(str(c / "named-evals"))
     assert any(r.rule == "corpus-untyped" and r.what == "no CORPUS.jsonl" for r in refusals)
+
+
+# ------------------------------------------------------------------ review T4 fixes
+
+def _marking(d, mark):
+    """run.py of `d` with answer() appending a line to `mark` (outside the bank) per call."""
+    text = (d / "run.py").read_text().replace(
+        "def answer(case):\n",
+        "def answer(case):\n    open(%r, 'a').write(case['id'] + '\\n')\n" % str(mark))
+    (d / "run.py").write_text(text)
+
+
+def test_a_guard_with_its_own_argv_never_answers_under_check_strict(tmp_path):
+    """I-1: a guard bank.main(__file__, argv=[]) ignores --self-check; check --strict must still
+    never answer a case."""
+    root = tmp_path / "proj"
+    (root / ".git").mkdir(parents=True)
+    d = make(root / "career", "argv-evals")
+    mark = tmp_path / "answered.log"
+    _marking(d, mark)
+    (d / "run.py").write_text((d / "run.py").read_text().replace(
+        "sys.exit(bank.main(__file__))", "sys.exit(bank.main(__file__, argv=[]))"))
+    res = bank.check_strict(str(root))
+    e = res["banks"]["career/argv-evals"]
+    assert e["status"] == "failing" and not mark.exists()
+    hit = [r for r in e["refusals"] if r["rule"] == "bespoke-runner"]
+    assert hit and "make the guard `sys.exit(bank.main(__file__))`" in hit[0]["fix"]
+    # past the lint gate too: the subprocess's environment forces the self check
+    from trimwrit import bank_check
+    refusals = bank_check.run_self_check(str(d), cwd=str(root))
+    assert not mark.exists(), "answer() was called by a self check"
+    assert "bespoke-runner" in {r["rule"] for r in refusals}
+
+
+def test_a_listed_bank_is_self_checked_and_keeps_what_bank_main_still_refuses(tmp_path):
+    """I-2: the reviewer's probe, a non literal MODEL waived on model-not-pinned."""
+    root = tmp_path / "proj"
+    (root / ".git").mkdir(parents=True)
+    d = make(root / "career", "alias-evals")
+    (d / "run.py").write_text((d / "run.py").read_text()
+                              .replace("MODEL = None\nEFFORT = None",
+                                       "MODEL = 'claude-' + 'sonnet'\nEFFORT = 'medium'")
+                              .replace("def answer(case):",
+                                       "def answer(case, model=MODEL, effort=EFFORT):"))
+    make(root / "career", "lax-evals", grade="True")
+    make(root / "career", "fine-evals")
+    write(root, {"since": "2026-11-14", "why": "migration",
+                 "banks": {"career/alias-evals": ["model-not-pinned"],
+                           "career/lax-evals": ["grader-cannot-fail"],
+                           "career/fine-evals": ["grader-cannot-fail", "model-not-pinned",
+                                                 "cost-not-recorded"]}})
+    res = bank.check_strict(str(root))["banks"]
+    assert res["career/alias-evals"]["status"] == "waived"
+    assert res["career/alias-evals"]["may_shrink"] == []
+    assert res["career/lax-evals"]["status"] == "waived"
+    assert res["career/lax-evals"]["may_shrink"] == []
+    assert res["career/fine-evals"]["may_shrink"] == ["grader-cannot-fail", "model-not-pinned"], \
+        "seen by the self check: may shrink; a run-only rule never"
+
+
+def test_banks_given_are_normalised(tmp_path):
+    root = tree(tmp_path, WAIVERS)
+    res = bank.check_strict(str(root), banks=["./career/small-evals/"], self_check=False)
+    assert list(res["banks"]) == ["career/small-evals"]
+    assert res["banks"]["career/small-evals"]["status"] == "waived"
+
+
+def test_a_listed_bank_discovery_misses_is_not_stale_while_its_directory_exists(tmp_path):
+    w = json.loads(json.dumps(WAIVERS))
+    w["banks"]["career/drafts/notes"] = ["bespoke-runner"]     # under an excluded directory
+    w["banks"]["career/gone-evals"] = ["no-holdout"]
+    root = tree(tmp_path, w)
+    res = bank.check_strict(str(root), self_check=False)
+    assert res["stale_waivers"] == ["career/gone-evals"]
+
+
+def test_the_waiver_flags_need_strict(tmp_path, capsys):
+    root = tree(tmp_path, WAIVERS)
+    for argv in (["--write-waivers", "--why", "x"], ["--shrink-waivers"], ["--waivers", "w.json"],
+                 ["--json"]):
+        assert cli(["--root", str(root), "bank", "check", "--dir", "career"] + argv) == 2, argv
+        assert "add --strict" in capsys.readouterr().err
+
+
+def test_a_waiver_list_bank_main_will_not_read_is_named(tmp_path, capsys):
+    root = tree(tmp_path)
+    other = root / "elsewhere.json"
+    other.write_text(json.dumps(WAIVERS))
+    strict(root, "--waivers", "elsewhere.json")
+    err = capsys.readouterr().err
+    assert "bank.main reads only" in err and ".trimwrit/bank-waivers.json" in err

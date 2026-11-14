@@ -117,10 +117,12 @@ MARKERS = ("RELEASE.json", "CORPUS.jsonl", "CODEBOOK.md")
 BANK_SUFFIX = "-evals"
 SKIP_DIRS = ("RUNS", "__pycache__")
 SELF_CHECK_TIMEOUT = 120
-# rules the static lint never sees: only a run (cost-not-recorded, no-repeat) or the grader
-# mutation of --self-check (grader-cannot-fail) shows them, so the static check of a waived
-# bank never reads one as "no longer triggered"
-DYNAMIC_RULES = ("grader-cannot-fail", "cost-not-recorded", "no-repeat")
+# rules only a release run shows: never read as "no longer triggered"
+RUN_ONLY_RULES = ("cost-not-recorded", "no-repeat")
+# rules the static lint may miss (the grader mutation, constants assigned from an expression, a
+# stray model id seen at run time): read as "no longer triggered" only after --self-check ran
+SELF_CHECK_RULES = ("grader-cannot-fail", "model-not-pinned")
+SELF_CHECK_ENV = "TRIMWRIT_BANK_SELF_CHECK"  # the same as bank_run.SELF_CHECK_ENV
 
 
 def empty_waivers():
@@ -160,13 +162,17 @@ def _refusal(rule, bank_dir, what, fix):
 def run_self_check(bank_dir, cwd=None, timeout=SELF_CHECK_TIMEOUT):
     """[as_dict] of the refusals `python3 <bank>/run.py --self-check` prints on stderr (one JSON
     line each). A run that times out, or exits neither 0 nor 65 with refusals, is a
-    bespoke-runner refusal saying so."""
+    bespoke-runner refusal saying so. The subprocess runs with TRIMWRIT_BANK_SELF_CHECK=1:
+    bank.main then takes the self check path whatever argv its guard passes, and note_usage
+    raises. A model call made at module level of run.py (at import, before bank.main) stays
+    unguarded: the lint cannot see it and the environment cannot stop it."""
     import subprocess  # noqa: PLC0415
     import sys  # noqa: PLC0415
     run_file = os.path.join(str(bank_dir), "run.py")
     try:
         p = subprocess.run([sys.executable, run_file, "--self-check"], cwd=cwd or str(bank_dir),
-                           capture_output=True, text=True, timeout=timeout)
+                           capture_output=True, text=True, timeout=timeout,
+                           env=dict(os.environ, **{SELF_CHECK_ENV: "1"}))
     except subprocess.TimeoutExpired:
         return [_refusal("bespoke-runner", str(bank_dir),
                          "run.py --self-check did not finish in {} s".format(timeout),
@@ -195,11 +201,12 @@ def _check(root, found, w, self_check, run=run_self_check):
     for rel in found:
         d = os.path.join(root, rel)
         refs = [r.as_dict() for r in b.lint(d)]
-        entry = rel in w["banks"] or rel in w["custom_runners"] or rel in w["hand_look"]
         ran = False
-        if (self_check and not entry and os.path.isfile(os.path.join(d, "run.py"))
+        if (self_check and os.path.isfile(os.path.join(d, "run.py"))
                 and not any(r["rule"] == "bespoke-runner" for r in refs)):
-            # a bank whose guard calls bank.main: --self-check is the library's, no model call
+            # a guard that is exactly sys.exit(bank.main(__file__)), run under
+            # TRIMWRIT_BANK_SELF_CHECK=1: the library's self check, no model call; listed banks
+            # too, so what bank.main still refuses at resolved values is never read as gone
             seen = {(r["rule"], r["what"]) for r in refs}
             for r in run(d, cwd=root):
                 if (r["rule"], r["what"]) not in seen:
@@ -212,8 +219,8 @@ def _check(root, found, w, self_check, run=run_self_check):
         triggered = {r["rule"] for r in refs}
         waived = sorted(triggered & listed)
         failing = [r for r in refs if r["rule"] not in listed]
-        seeable = [r for r in listed if r not in DYNAMIC_RULES
-                   or (ran and r == "grader-cannot-fail")]
+        seeable = [r for r in listed if r not in RUN_ONLY_RULES
+                   and (ran or r not in SELF_CHECK_RULES)]
         status = "failing" if failing else ("waived" if waived else "standard")
         out[rel] = {"status": status, "refusals": refs, "waived": waived,
                     "may_shrink": sorted(r for r in seeable if r not in triggered)}
@@ -224,14 +231,15 @@ def check_strict(root, rel_dir="career", waivers_path=None, self_check=True, ban
                  run=run_self_check):
     """The strict check of every bank under root/rel_dir (`discover`), or of the bank paths
     `banks` (relative to root) when given, against the waiver list `waivers_path` (default
-    root/.trimwrit/bank-waivers.json when it exists). Each bank: bank.lint; a bank with no entry
-    in the list whose run.py hands its run to bank.main also runs `run.py --self-check` (the
-    grader mutation) when `self_check`. A custom runner's bespoke-runner refusals are dropped; a
+    root/.trimwrit/bank-waivers.json when it exists). Each bank: bank.lint; a bank whose static
+    lint shows no bespoke-runner (its guard is exactly sys.exit(bank.main(__file__))) also runs
+    `run.py --self-check` (run_self_check) when `self_check`. A custom runner's bespoke-runner refusals are dropped; a
     refusal of a rule the list waives for that bank is waived, any other is failing. Returns
     {"banks": {rel: {"status": "standard"|"waived"|"failing"|"excluded", "refusals":
     [as_dict], "waived": [rules], "may_shrink": [rules listed but no longer triggered]}},
     "counts": {...}, "waiver_length": rules in the list, "waived_banks": banks in the list,
-    "stale_waivers": [listed banks under rel_dir no longer found], "waivers": path or None}."""
+    "stale_waivers": [listed banks under rel_dir whose directory is gone], "waivers": path or
+    None}."""
     root = os.path.abspath(str(root))
     if waivers_path is None:
         default = os.path.join(root, WAIVERS_DIR, WAIVERS_FILE)
@@ -240,15 +248,16 @@ def check_strict(root, rel_dir="career", waivers_path=None, self_check=True, ban
     if banks is None:
         found, excluded = discover(root, rel_dir, w["exclude"])
     else:
-        found, excluded = sorted(b.strip("/") for b in banks), []
+        found, excluded = sorted({rel_of(os.path.join(root, b), root) for b in banks}), []
     result = _check(root, found, w, self_check, run=run)
     for rel in excluded:
         result[rel] = {"status": "excluded", "refusals": [], "waived": [], "may_shrink": []}
     stale = []
     if banks is None:
         prefix = rel_of(os.path.join(root, rel_dir), root)
-        stale = sorted(rel for rel in w["banks"] if rel not in result and (
-            prefix == "." or rel == prefix or rel.startswith(prefix + "/")))
+        stale = sorted(rel for rel in w["banks"] if rel not in result
+                       and not os.path.isdir(os.path.join(root, rel)) and (
+                           prefix == "." or rel == prefix or rel.startswith(prefix + "/")))
     st = [e["status"] for e in result.values()]
     counts = {"banks": len(found), "standard": st.count("standard"), "waived": st.count("waived"),
               "failing": st.count("failing"), "excluded": st.count("excluded"),

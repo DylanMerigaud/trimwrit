@@ -891,6 +891,11 @@ corpus carries `id`, `input`, `expected`, `why`, and optionally `split` (dev or 
 A standard run.py declares constants and two hooks, and hands the run to the library:
 
 ```python
+import sys
+
+# a repository that wraps the kit puts its sys.path line here, before the import
+from trimwrit import bank
+
 MODEL = "claude-sonnet-5-5"          # a full model id, or None for a deterministic bank
 EFFORT = "medium"                    # None when MODEL is None
 BAR = {"accuracy": 0.9}              # the same line in CODEBOOK.md section 2; n_min optional
@@ -905,6 +910,13 @@ def grade(case, got):
 if __name__ == "__main__":
     sys.exit(bank.main(__file__))
 ```
+
+`bank.note_usage` takes the `claude -p --output-format json` envelope as it comes back, or a dict
+{model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd}; called on
+the thread that runs answer(), it counts that call against its case.
+
+The guard is exactly `sys.exit(bank.main(__file__))`: bank.main reads the flags from the
+command line, and nothing else runs under the guard.
 
 Optional: `FIELDS` (canonical key to row key), `JOBS`, `WAIVE`, and the hooks `score(rows)`,
 `ideal(case)`, `mutate(case, ideal)`, `cache_key(case)`, `stamp()`. No other function is
@@ -939,12 +951,12 @@ the grader mutation. Each refusal names its rule, what it saw, and the exact fix
 
 | rule | refuses | lifted by |
 |---|---|---|
-| `bar-moved` | a BAR not written in CODEBOOK.md section 2, or changed since the release with no dated line | the line `accuracy >= 0.9` in section 2; `- <date>: bar changed from ... to ..., because ...` in section 3 |
+| `bar-moved` | a BAR not written in CODEBOOK.md section 2, changed since the release with no dated line, or a BAR with 2+ metrics and no score() | the line `accuracy >= 0.9` in section 2; `- <date>: bar changed from ... to ..., because ...` in section 3 |
 | `grader-cannot-fail` | a grader that refuses the expected answer, or accepts a wrong one | compare `got` with `case["expected"]`, or define `mutate(case, ideal)` |
 | `label-by-judged-model` | rows with no label source, or labeled by the judged model or its family | `LABEL_SOURCE`, or relabel by a person or another family |
 | `no-holdout` | fewer holdout cases than max(5, a fifth of n) | `"split": "holdout"` on more rows, or a dated `WAIVE` |
 | `corpus-too-small` | fewer than 30 cases | more labeled cases, or a dated `WAIVE` |
-| `bespoke-runner` | its own main, argparse, a release writer, no `bank.main` guard, no answer or grade | the shape above (`trimwrit bank migrate`) |
+| `bespoke-runner` | its own main, argparse, a release writer, a guard other than `sys.exit(bank.main(__file__))`, no answer or grade | the shape above (`trimwrit bank migrate`), or a `custom_runners` entry in the waiver list |
 | `corpus-changed-since-release` | inputs edited after the release (the release reads as not released) | rerun `python3 run.py` |
 | `model-not-pinned` | an alias or latest pointer, a missing EFFORT, a model a deterministic bank calls | a full model id and its effort, or `MODEL = None` |
 | `cost-not-recorded` | a model bank whose answers report no call | call through a path that calls `bank.note_usage` |
@@ -967,9 +979,12 @@ A project migrating many banks keeps the rules each does not meet yet in
  "exclude": ["career/drafts"]}
 ```
 
-`bank.main` reads the nearest list above the bank: a refusal of a rule listed for that bank is
-printed as `{"waived": ...}` and named under `waived` in the release, never an exit 65. Any
-other rule is refused as before.
+A key is the bank's path relative to the directory holding `.trimwrit/`. `bank.main` reads the
+nearest list walking up from the bank, and stops at a directory holding `.git`. A refusal of a
+rule listed for that bank is printed as `{"waived": ...}` and named under `waived` in the
+release, never an exit 65; a `custom_runners` entry waives `bespoke-runner`; `hand_look` waives
+nothing (the strict check only counts it). Any other rule is refused as before. `check --strict
+--waivers F` reads another file, but bank.main never does.
 
 ```
 trimwrit bank check --strict --dir career [--waivers F] [--json]
@@ -978,8 +993,10 @@ trimwrit bank check --strict --dir career --shrink-waivers
 ```
 
 `check --strict` finds every bank under the directory (a `*-evals` directory, or one holding
-RELEASE.json, CORPUS.jsonl or CODEBOOK.md), lints each, runs `run.py --self-check` for a bank
-with no waiver entry, and prints one line per failing refusal, then the counts: on the
+RELEASE.json, CORPUS.jsonl or CODEBOOK.md), lints each, runs `run.py --self-check` for each bank
+whose guard is the standard one (under `TRIMWRIT_BANK_SELF_CHECK=1`: bank.main takes the self
+check whatever argv says and a model call raises; a model call at module level is not stopped),
+and prints one line per failing refusal, then the counts: on the
 standard, waived, failing, custom runners, hand look, excluded, and the waived rules a bank no
 longer triggers. Exit 1 on a failing bank. `--write-waivers` writes the list once from today's
 refusals; it refuses when the list exists, because the list only shrinks. `--shrink-waivers`
