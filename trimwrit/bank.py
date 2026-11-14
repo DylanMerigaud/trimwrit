@@ -77,12 +77,19 @@ library; it holds no runner of its own:
   MODEL         a full model id (FULL_ID_RE, no alias, no "latest"), or None (deterministic)
   EFFORT        one of EFFORTS or "model-default" when MODEL is set, None when it is not
   BAR           {metric: threshold in [0, 1]}, optional n_min; the same text in CODEBOOK.md s.2
+                ("metric >= value"; a metric named *_max is an upper bound: "metric <= value",
+                passed needs the score at or under it)
   LABEL_SOURCE  who labeled the rows that carry no label_source (never the judged model)
   FIELDS        optional {canonical: row key} for id, input, expected, why, split, label_source
   JOBS, WAIVE   optional: threads, and dated 90-day waivers of WAIVABLE_IN_BANK rules
   answer(case, model=MODEL, effort=EFFORT) and grade(case, got); optional score, ideal, mutate,
   cache_key, stamp
   if __name__ == "__main__": sys.exit(bank.main(__file__))
+
+answer() never writes into the bank directory outside RUNS/: the release names the inputs as they
+stood when the run started (inputs_sha), so a file answer() leaves beside CORPUS.jsonl voids the
+release the moment it is written. A model call reports itself with note_usage(envelope) on the
+thread that runs answer().
 
 Each hole is a Refusal (exit EXIT_REFUSED, 65) naming one of RULES and its exact fix. `lint`
 (trimwrit/bank_lint.py, static, never imports the bank) refuses bespoke-runner, model-not-pinned,
@@ -269,7 +276,11 @@ def inputs_sha(bank):
 
 
 def bar_sha(bar):
-    """12 hex naming a bar: sha of its JSON with sorted keys."""
+    """12 hex naming a bar: sha of its JSON with sorted keys, every number but n_min read as a
+    float, so {"x": 0} and {"x": 0.0} name the same bar."""
+    if isinstance(bar, dict):
+        bar = {k: (float(v) if k != "n_min" and isinstance(v, (int, float))
+                   and not isinstance(v, bool) else v) for k, v in bar.items()}
     return sha(json.dumps(bar, sort_keys=True))
 
 

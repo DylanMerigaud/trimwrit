@@ -55,6 +55,7 @@ ENVELOPE_TOKENS = (("inputTokens", "input_tokens"), ("outputTokens", "output_tok
                    ("cacheReadInputTokens", "cache_read_tokens"),
                    ("cacheCreationInputTokens", "cache_write_tokens"))
 PHASES = ("main", "repeats", "probe")
+UPPER_SUFFIX = "_max"  # a BAR metric named *_max is an upper bound (bank_lint.bar_op)
 
 
 # ------------------------------------------------------------------ the usage sink
@@ -94,7 +95,11 @@ def usage_scope():
     try:
         yield acc
     finally:
-        stack.remove(acc)
+        # by identity: two scopes still empty are equal dicts, and remove() would take the outer
+        for i in range(len(stack) - 1, -1, -1):
+            if stack[i] is acc:
+                del stack[i]
+                break
 
 
 def _normalize(envelope):
@@ -203,12 +208,20 @@ def _engine(name, engine_impls):
 # ------------------------------------------------------------------ the cache
 
 class _Cache(object):
-    """RUNS/cache.jsonl: rows {"key", "got"}, read once per run; a fresh answer appended."""
+    """RUNS/cache.jsonl: rows {"key", "got", "model", "effort"}, read once per run; a fresh
+    answer appended. A row hits when its key is cache_key(case) and its model and effort are
+    the bank's MODEL and EFFORT. A legacy row (no "model", written by a bank's own runner before
+    it migrated) hits only when `legacy_ok`: the previous RELEASE.json names the same model and
+    effort."""
 
-    def __init__(self, bank_dir, key_fn):
+    def __init__(self, bank_dir, key_fn, model=None, effort=None, legacy_ok=False):
         self.key_fn = key_fn
+        self.model = model
+        self.effort = effort
+        self.legacy_ok = legacy_ok
         self.path = os.path.join(bank_dir, _bank.RUNS, CACHE_FILE)
         self.rows = {}
+        self.legacy = {}
         self.torn = 0
         self.lock = threading.Lock()
         if key_fn is None or not os.path.isfile(self.path):
@@ -225,20 +238,27 @@ class _Cache(object):
                 if not isinstance(row, dict) or "key" not in row or "got" not in row:
                     self.torn += 1
                     continue
-                self.rows[_key_text(row["key"])] = row["got"]
+                text = _key_text(row["key"])
+                if "model" not in row:
+                    self.legacy[text] = row["got"]
+                elif row.get("model") == model and row.get("effort") == effort:
+                    self.rows[text] = row["got"]
 
     def lookup(self, case):
-        """(hit, key, got): hit True when the cache holds case's key."""
+        """(hit, key, got): hit True when the cache holds case's key for MODEL and EFFORT."""
         key = self.key_fn(case)
         text = _key_text(key)
         with self.lock:
             if text in self.rows:
                 return True, key, self.rows[text]
+            if self.legacy_ok and text in self.legacy:
+                return True, key, self.legacy[text]
         return False, key, None
 
     def store(self, key, got):
         try:
-            line = json.dumps({"key": key, "got": got}, sort_keys=True, ensure_ascii=False)
+            line = json.dumps({"key": key, "got": got, "model": self.model,
+                               "effort": self.effort}, sort_keys=True, ensure_ascii=False)
         except (TypeError, ValueError):
             return  # an answer JSON cannot hold is answered afresh next time
         with self.lock:
@@ -349,6 +369,11 @@ def _default_score(metric):
     return score
 
 
+def _model_match(m, model):
+    """True when the noted id `m` is `model` (or a variant of it: model-..., model[...])."""
+    return m == model or m.startswith(model + "-") or m.startswith(model + "[")
+
+
 def _passed(bar, scores, n, gates):
     if n <= 0:
         return False
@@ -358,7 +383,9 @@ def _passed(bar, scores, n, gates):
                 return False
             continue
         got = scores.get(k)
-        if got is None or isinstance(got, bool) or not isinstance(got, (int, float)) or got < v:
+        if got is None or isinstance(got, bool) or not isinstance(got, (int, float)):
+            return False
+        if (got > v) if str(k).endswith(UPPER_SUFFIX) else (got < v):
             return False
     return all(v is True for v in gates.values())
 
@@ -408,15 +435,15 @@ def main(run_file, argv=None, module=None, engine_impls=None):
     0 passed, 1 below the bar, 65 refused (each Refusal as JSON on stderr), 2 no such engine.
     `module` is run.py imported (default: __main__ when it is run_file, else imported by path);
     `engine_impls` stands in for ENGINES (tests)."""
-    from .bank_lint import _dated_bar_line, self_check  # noqa: PLC0415
+    from .bank_lint import _dated_bar_line, import_refusal, lint, self_check  # noqa: PLC0415
     args = _parser().parse_args(argv)
     run_file = os.path.abspath(str(run_file))
     bank_dir = os.path.dirname(run_file)
     t0 = time.monotonic()
     try:
         module = _module(run_file, module)
-    except Exception:  # noqa: BLE001  (self_check names an import that raises)
-        return _refuse(self_check(bank_dir))
+    except Exception as exc:  # noqa: BLE001  (an import that raises is a refusal)
+        return _refuse(lint(bank_dir) + [import_refusal(bank_dir, exc)])
 
     # 1. the self check (lint at the resolved values, the grader mutation)
     refusals = self_check(bank_dir, module=module)
@@ -437,6 +464,13 @@ def main(run_file, argv=None, module=None, engine_impls=None):
             "no-repeat", bank_dir,
             "--repeats {}: a release run repeats a sample at least once".format(args.repeats),
             "rerun python3 {} without --repeats (default {})".format(run_file, REPEATS)))
+    if not partial and args.repeat_sample < 1:
+        refusals.append(_bank.Refusal(
+            "no-repeat", bank_dir,
+            "--repeat-sample {}: a release run repeats at least one case".format(
+                args.repeat_sample),
+            "rerun python3 {} without --repeat-sample (default {})".format(
+                run_file, REPEAT_SAMPLE)))
     model = getattr(module, "MODEL", None)
     effort = getattr(module, "EFFORT", None)
     bar = getattr(module, "BAR", None)
@@ -499,8 +533,16 @@ def main(run_file, argv=None, module=None, engine_impls=None):
         cases = [c for c in cases if str(c.get("id")) in want]
     if args.split:
         cases = [c for c in cases if c.get("split") == args.split]
-    cache = _Cache(bank_dir, getattr(module, "cache_key", None)
-                   if callable(getattr(module, "cache_key", None)) else None)
+    reserved = set(_bank.ENVELOPE_2) | {"gates", "downshift"}
+    stamp_fn = getattr(module, "stamp", None)
+    stamped = dict(stamp_fn() or {}) if callable(stamp_fn) else {}
+    clash = sorted(set(stamped) & reserved)
+    if clash:
+        raise _bank.BankError("stamp() keys {} would overwrite the release".format(clash))
+    key_fn = getattr(module, "cache_key", None)
+    legacy_ok = prev is not None and prev.get("model") == model and (
+        "effort" not in prev or prev.get("effort") == effort)
+    cache = _Cache(bank_dir, key_fn if callable(key_fn) else None, model, effort, legacy_ok)
     main_res = _phase(engine, cases, answer, jobs, cache)
 
     # 4. grade each row
@@ -539,8 +581,8 @@ def main(run_file, argv=None, module=None, engine_impls=None):
             "set 'MODEL = \"<the full model id answer() calls>\"' and EFFORT in {}".format(
                 run_file)))
     if model is not None:
-        silent = [str(r["id"]) for r in rows
-                  if not r["cached"] and "error" not in r and r["usage"]["calls"] == 0]
+        answered = [r for r in rows if not r["cached"] and not main_res[r["id"]]["error"]]
+        silent = [str(r["id"]) for r in answered if r["usage"]["calls"] == 0]
         if silent:
             refusals.append(_bank.Refusal(
                 "cost-not-recorded", bank_dir,
@@ -548,11 +590,16 @@ def main(run_file, argv=None, module=None, engine_impls=None):
                     len(silent), ", ".join(silent[:5])),
                 "call the model through a path that calls trimwrit.bank.note_usage(envelope), "
                 "e.g. growth-cockpit career/evals-core/headless.py"))
-        stray = sorted(m for m in noted if not m.startswith(model))
+        # per case: a call that never reached MODEL; side models beside it stay allowed
+        stray = [r for r in answered if r["usage"]["calls"]
+                 and not any(_model_match(m, model) for m in r["usage"]["models"])]
         if stray:
+            first = stray[0]
             refusals.append(_bank.Refusal(
                 "model-not-pinned", bank_dir,
-                "MODEL is {!r} but answer() called {}".format(model, ", ".join(stray)),
+                "{} cases never called MODEL {}: case {} called {}".format(
+                    len(stray), model, first["id"],
+                    ", ".join(first["usage"]["models"]) or "an unnamed model"),
                 "make answer() call the model it is given (model=MODEL) in {}".format(run_file)))
     if refusals:
         return _refuse(refusals)
@@ -560,6 +607,13 @@ def main(run_file, argv=None, module=None, engine_impls=None):
     score_rows = rows
     scores = dict(score_fn(score_rows))
     gates = scores.pop("gates", None) or {}
+    clash = sorted(set(scores) & (reserved | set(stamped)))
+    if clash:
+        return _refuse([_bank.Refusal(
+            "bespoke-runner", bank_dir,
+            "score() returns {}, {} the release owns".format(
+                ", ".join(repr(k) for k in clash), "a key" if len(clash) == 1 else "keys"),
+            "rename {} in score() of {}".format(", ".join(repr(k) for k in clash), run_file))])
     passed = _passed(bar, scores, n, gates)
     summary = {"passed": passed, "n": n}
     summary.update({m: scores.get(m) for m in metrics})
@@ -656,20 +710,10 @@ def main(run_file, argv=None, module=None, engine_impls=None):
            "effort": effort, "inputs_sha": inputs, "bar_sha": _bank.bar_sha(bar),
            "bar_since": bar_since, "usage": usage, "repeats": repeats, "splits": split_scores,
            "engine": engine_name, "standard": STANDARD}
-    reserved = set(_bank.ENVELOPE_2) | {"gates", "downshift"}
-    clash = sorted(set(scores) & reserved)
-    if clash:
-        raise _bank.BankError("score() keys {} would overwrite the release".format(clash))
     doc.update(scores)
     if gates:
         doc["gates"] = gates
-    stamp_fn = getattr(module, "stamp", None)
-    if callable(stamp_fn):
-        extra = dict(stamp_fn() or {})
-        clash = sorted(set(extra) & (reserved | set(scores)))
-        if clash:
-            raise _bank.BankError("stamp() keys {} would overwrite the release".format(clash))
-        doc.update(extra)
+    doc.update(stamped)
     if downshift is not None:
         doc["downshift"] = downshift
     doc["wall_s"] = round(time.monotonic() - t0, 1)

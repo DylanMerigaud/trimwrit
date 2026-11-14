@@ -4,6 +4,7 @@ sha, the default mutation, the waivers and the release checks. No model call."""
 import datetime
 import json
 import os
+import sys
 import textwrap
 
 import pytest
@@ -265,3 +266,80 @@ def test_the_release_checks_read_a_schema_2_release(tmp_path):
     found = rules(bank.lint(d, today=TODAY))
     assert "bar-moved" not in found
     assert "corpus-changed-since-release" in found              # the codebook is an input
+
+
+# ------------------------------------------------------------------ review fixes (tasks 2 and 3)
+
+def test_self_check_isolates_each_bank_s_imports(tmp_path):
+    good = make(tmp_path, name="good", tail="import grading\ngrade = grading.grade\n")
+    (good / "grading.py").write_text("def grade(case, got):\n    return got == case['expected']\n")
+    bad = make(tmp_path, name="bad", tail="import grading\ngrade = grading.grade\n")
+    (bad / "grading.py").write_text("def grade(case, got):\n    return True\n")
+    path_before = list(sys.path)
+    assert bank.self_check(good, today=TODAY) == []
+    assert "grading" not in sys.modules and sys.path == path_before
+    assert "grader-cannot-fail" in rules(bank.self_check(bad, today=TODAY)), \
+        "bad gets its own grading.py, never good's"
+    assert "grading" not in sys.modules and sys.path == path_before
+
+
+def test_isolated_imports_restores_sys_path_and_sys_modules(tmp_path):
+    (tmp_path / "iso_probe_mod.py").write_text("X = 1\n")
+    before = list(sys.path)
+    with bank_lint.isolated_imports():
+        sys.path.insert(0, str(tmp_path))
+        import iso_probe_mod  # noqa: F401
+        assert "iso_probe_mod" in sys.modules
+    assert "iso_probe_mod" not in sys.modules and sys.path == before
+
+
+def test_a_waiver_dated_after_today_is_refused(tmp_path):
+    head = HEAD + ("\nWAIVE = {'corpus-too-small': {'since': '2099-01-01', 'why': 'rare'}}")
+    d = make(tmp_path, head=head, n=10, rows=[
+        {"id": "c%02d" % i, "input": {"x": i}, "expected": "yes" if i % 2 else "no",
+         "why": "parity", "split": "holdout" if i < 5 else "dev"} for i in range(10)])
+    hits = [r.what for r in bank.lint(d, today=TODAY) if r.rule == "corpus-too-small"]
+    assert any("after today" in w for w in hits), hits
+
+
+def test_an_upper_bound_metric_reads_as_le_in_the_codebook(tmp_path):
+    head = HEAD.replace("BAR = {'accuracy': 0.9}", "BAR = {'missed_max': 0}")
+    d = make(tmp_path, head=head, book=BOOK.replace("accuracy >= 0.9", "missed_max >= 0.0"))
+    hits = [r for r in bank.lint(d, today=TODAY) if r.rule == "bar-moved"]
+    assert hits and "missed_max <= 0.0" in hits[0].fix
+    two = make(tmp_path, name="two", head=head,
+               book=BOOK.replace("accuracy >= 0.9", "missed_max <= 0.0"))
+    assert "bar-moved" not in rules(bank.lint(two, today=TODAY))
+    assert bank_lint.bar_op("missed_max") == "<=" and bank_lint.bar_op("accuracy") == ">="
+
+
+def test_bar_sha_reads_numbers_as_floats_but_n_min():
+    assert bank.bar_sha({"x": 0}) == bank.bar_sha({"x": 0.0})
+    assert bank.bar_sha({"x": 1, "n_min": 30}) == bank.bar_sha({"x": 1.0, "n_min": 30})
+    assert bank.bar_sha({"x": 0.9, "n_min": 30}) != bank.bar_sha({"x": 0.9, "n_min": 31})
+    assert bank.bar_sha("most cases right") == bank.sha(json.dumps("most cases right"))
+
+
+def test_the_family_word_is_matched_as_a_word(tmp_path):
+    head = HEAD.replace("MODEL = None\nEFFORT = None", "MODEL = 'claude-opus-5-5'\nEFFORT = 'medium'")
+    ok = make(tmp_path, name="ok", head=head.replace(
+        "LABEL_SOURCE = \"the door's own record\"", "LABEL_SOURCE = 'the octopus team, by hand'"))
+    assert "label-by-judged-model" not in rules(bank.lint(ok, today=TODAY))
+    bad = make(tmp_path, name="bad", head=head.replace(
+        "LABEL_SOURCE = \"the door's own record\"", "LABEL_SOURCE = 'an opus pass'"))
+    assert "label-by-judged-model" in rules(bank.lint(bad, today=TODAY))
+
+
+def test_the_guard_accepts_trimwrit_bank_main_and_its_fix_names_the_imports(tmp_path):
+    d = make(tmp_path)
+    text = (d / "run.py").read_text()
+    (d / "run.py").write_text(text.replace("from trimwrit import bank\n",
+                                           "import trimwrit.bank\nfrom trimwrit import bank\n")
+                              .replace("sys.exit(bank.main(__file__))",
+                                       "sys.exit(trimwrit.bank.main(__file__))"))
+    assert "bespoke-runner" not in rules(bank.lint(d, today=TODAY))
+    two = make(tmp_path, name="two")
+    (two / "run.py").write_text((two / "run.py").read_text().replace(
+        "if __name__ == \"__main__\":\n    sys.exit(bank.main(__file__))\n", ""))
+    hits = [r for r in bank.lint(two, today=TODAY) if r.rule == "bespoke-runner"]
+    assert hits and "'import sys'" in hits[0].fix and "'from trimwrit import bank'" in hits[0].fix

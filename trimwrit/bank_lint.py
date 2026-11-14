@@ -10,6 +10,7 @@ that needs its value, and `self_check` (or bank.main) checks the resolved value.
 Standard library only, Python 3.9 syntax.
 """
 import ast
+import contextlib
 import datetime
 import importlib.util
 import itertools
@@ -28,6 +29,16 @@ DATED_BAR_RE = re.compile(r"^- (\d{4}-\d{2}-\d{2}):.*\bbar\b", re.IGNORECASE | r
 SECTION2_RE = re.compile(r"^##\s*2\b.*$", re.MULTILINE)
 NEXT_SECTION_RE = re.compile(r"^##\s", re.MULTILINE)
 RUN_FILE = "run.py"
+# what a guard fix tells run.py to hold: the imports it needs, then the guard
+GUARD = ("'import sys' and 'from trimwrit import bank' (or the project's own import binding "
+         "`bank`) at the top, and at the end 'if __name__ == \"__main__\": "
+         "sys.exit(bank.main(__file__))'")
+UPPER_SUFFIX = "_max"
+
+
+def bar_op(metric):
+    """'<=' for an upper bound (a metric named *_max), '>=' for every other BAR metric."""
+    return "<=" if str(metric).endswith(UPPER_SUFFIX) else ">="
 CODEBOOK_FILE = "CODEBOOK.md"
 
 
@@ -131,10 +142,16 @@ def _is_main_guard(node):
 
 
 def _calls_bank_main(node):
+    """True when `node` calls bank.main(...) or trimwrit.bank.main(...)."""
     for sub in ast.walk(node):
-        if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
-                and sub.func.attr == "main" and isinstance(sub.func.value, ast.Name)
-                and sub.func.value.id == "bank"):
+        if not (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
+                and sub.func.attr == "main"):
+            continue
+        v = sub.func.value
+        if isinstance(v, ast.Name) and v.id == "bank":
+            return True
+        if (isinstance(v, ast.Attribute) and v.attr == "bank" and isinstance(v.value, ast.Name)
+                and v.value.id == "trimwrit"):
             return True
     return False
 
@@ -169,6 +186,11 @@ def resolve_case(row, fields, split=None, label_source=None):
     if label_source is not None and not case.get("label_source"):
         case["label_source"] = label_source
     return case
+
+
+def _has_word(text, word):
+    """True when `word` stands in `text` as a word ("opus" in "an opus pass", not in "corpus")."""
+    return re.search(r"(?<![a-z0-9])" + re.escape(word) + r"(?![a-z0-9])", text) is not None
 
 
 def _lacks(case, key):
@@ -234,16 +256,14 @@ class _Lint(object):
         if tree is None:
             self.refuse("bespoke-runner", err,
                         "write {} declaring MODEL, EFFORT, BAR, LABEL_SOURCE, answer(case, "
-                        "model=MODEL, effort=EFFORT), grade(case, got) and ending with "
-                        "'if __name__ == \"__main__\": sys.exit(bank.main(__file__))' "
-                        "(trimwrit bank new lays one out)".format(rel))
+                        "model=MODEL, effort=EFFORT), grade(case, got), with {} "
+                        "(trimwrit bank new lays one out)".format(rel, GUARD))
             return None
         defs = _top_defs(tree)
         if "main" in defs:
             self.refuse("bespoke-runner",
                         "run.py defines its own main() at line {}".format(defs["main"].lineno),
-                        "delete def main from {} and end it with 'if __name__ == \"__main__\": "
-                        "sys.exit(bank.main(__file__))'".format(rel))
+                        "delete def main from {} and give it {}".format(rel, GUARD))
         for node in ast.walk(tree):
             if isinstance(node, ast.Import) and any(a.name.split(".")[0] == "argparse"
                                                     for a in node.names):
@@ -267,8 +287,7 @@ class _Lint(object):
             self.refuse("bespoke-runner",
                         "run.py has no top level 'if __name__ == \"__main__\":' calling "
                         "bank.main(...)",
-                        "add at the end of {}: 'if __name__ == \"__main__\": "
-                        "sys.exit(bank.main(__file__))'".format(rel))
+                        "give {} {}".format(rel, GUARD))
         for hook, line in (("answer", "def answer(case, model=MODEL, effort=EFFORT):"),
                            ("grade", "def grade(case, got):")):
             if hook not in defs:
@@ -406,7 +425,7 @@ class _Lint(object):
                         "add 'LABEL_SOURCE = \"<who labeled the rows>\"' to {}".format(self.run))
         if not isinstance(model, str) or not model:
             return
-        family = next((f for f in FAMILIES if f in model.lower()), None)
+        family = next((f for f in FAMILIES if _has_word(model.lower(), f)), None)
         sources = {}
         for c in cases:
             src = c.get("label_source")
@@ -418,7 +437,7 @@ class _Lint(object):
         for src, ids in sorted(sources.items()):
             low = src.lower()
             hit = model.lower() if model.lower() in low else (
-                family if family and family in low else None)
+                family if family and _has_word(low, family) else None)
             if hit:
                 where = ("LABEL_SOURCE in " + self.run) if src == default else (
                     "label_source on those lines of CORPUS.jsonl")
@@ -469,7 +488,7 @@ class _Lint(object):
         except OSError:
             self.refuse("bar-moved", "no CODEBOOK.md: the bar is declared nowhere a reader sees",
                         "write {} with a section '## 2. The bar' holding {}".format(
-                            book_path, ", ".join("'{} >= {}'".format(k, repr(float(v)))
+                            book_path, ", ".join("'{} {} {}'".format(k, bar_op(k), repr(float(v)))
                                                  for k, v in bar.items() if k != "n_min")))
             return
         section = _section2(book)
@@ -477,13 +496,14 @@ class _Lint(object):
             if k == "n_min":
                 continue
             forms = _fmt_bar_values(v)
-            if not any("{} >= {}".format(k, f) in section for f in forms):
+            op = bar_op(k)
+            if not any("{} {} {}".format(k, op, f) in section for f in forms):
                 self.refuse("bar-moved",
-                            "BAR says {} >= {} but CODEBOOK.md section 2 does not".format(
-                                k, forms[0]),
-                            "write the line '{} >= {}' in {} section 2, and a dated line "
+                            "BAR says {} {} {} but CODEBOOK.md section 2 does not".format(
+                                k, op, forms[0]),
+                            "write the line '{} {} {}' in {} section 2, and a dated line "
                             "'- {}: bar changed from ... to ..., because ...' under section 3 "
-                            "if it moved".format(k, forms[0], book_path,
+                            "if it moved".format(k, op, forms[0], book_path,
                                                  self.today.isoformat()))
         doc = b.read_release(self.bank_dir)
         if doc is None or doc.get("schema") != 2 or not isinstance(doc.get("bar_sha"), str):
@@ -563,6 +583,9 @@ def _waiver_problem(entry, today):
     why = entry.get("why")
     if not isinstance(why, str) or not why.strip():
         return "why is empty"
+    if since > today:
+        return "since {} is after today ({}): date a waiver the day it is granted".format(
+            since.isoformat(), today.isoformat())
     end = since + datetime.timedelta(days=WAIVER_DAYS)
     if today > end:
         return "since {} expired on {} ({} days)".format(since.isoformat(), end.isoformat(),
@@ -645,28 +668,53 @@ def _right(result):
     return bool(result)
 
 
+@contextlib.contextmanager
+def isolated_imports():
+    """Run the body with sys.path and sys.modules restored afterwards: the entries the body adds
+    to sys.path are dropped and the modules it imports are forgotten, so a bank's run.py and the
+    siblings it imports by bare name (grading.py) never serve the next bank of the process."""
+    path = list(sys.path)
+    names = set(sys.modules)
+    try:
+        yield
+    finally:
+        sys.path[:] = path
+        for name in [n for n in sys.modules if n not in names]:
+            sys.modules.pop(name, None)
+
+
+def import_refusal(bank_dir, exc):
+    """The bespoke-runner Refusal of a run.py whose import raised `exc`."""
+    run_file = os.path.join(str(bank_dir), RUN_FILE)
+    return _bank().Refusal("bespoke-runner", str(bank_dir),
+                           "run.py raises on import ({}: {})".format(type(exc).__name__, exc),
+                           "make {} importable without side effects: move work under "
+                           "answer() or the __main__ guard".format(run_file))
+
+
 def self_check(bank_dir, today=None, module=None):
-    """lint(bank_dir) plus what an import sees: run.py imported (`load_module`, or `module`
-    when given), the constants lint could not read checked at their resolved values, then the
-    grader mutation on up to MUTATION_SAMPLE cases (bank.probe_sample order): grade(case,
-    ideal(case)) must be right, grade(case, mutate(case, ideal)) wrong (default ideal: the
-    case's expected; default mutate: bank.default_mutation)."""
-    b = _bank()
+    """lint(bank_dir) plus what an import sees: run.py imported (`load_module` inside
+    `isolated_imports`, or `module` when given), the constants lint could not read checked at
+    their resolved values, then the grader mutation on up to MUTATION_SAMPLE cases
+    (bank.probe_sample order): grade(case, ideal(case)) must be right, grade(case, mutate(case,
+    ideal)) wrong (default ideal: the case's expected; default mutate: bank.default_mutation)."""
     bank_dir = str(bank_dir)
     run_file = os.path.join(bank_dir, RUN_FILE)
-    if module is None:
-        if not os.path.isfile(run_file):
-            return lint(bank_dir, today)
+    if module is not None:
+        return _self_check(bank_dir, today, module)
+    if not os.path.isfile(run_file):
+        return lint(bank_dir, today)
+    with isolated_imports():
         try:
             module = load_module(run_file)
         except Exception as exc:  # noqa: BLE001  (an import that raises is a refusal, not a crash)
-            out = lint(bank_dir, today)
-            out.append(b.Refusal("bespoke-runner", bank_dir,
-                                 "run.py raises on import ({}: {})".format(
-                                     type(exc).__name__, exc),
-                                 "make {} importable without side effects: move work under "
-                                 "answer() or the __main__ guard".format(run_file)))
-            return out
+            return lint(bank_dir, today) + [import_refusal(bank_dir, exc)]
+        return _self_check(bank_dir, today, module)
+
+
+def _self_check(bank_dir, today, module):
+    b = _bank()
+    run_file = os.path.join(bank_dir, RUN_FILE)
     vals = declared(bank_dir)
     resolved = {k: getattr(module, k) for k, v in vals.items()
                 if v is NOT_LITERAL and hasattr(module, k)}

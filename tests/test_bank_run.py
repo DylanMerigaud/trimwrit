@@ -382,3 +382,176 @@ def test_note_usage_reads_the_claude_envelope_and_never_raises():
     assert (acc["cache_read_tokens"], acc["cache_write_tokens"]) == (7, 3)
     assert acc["cost_usd"] == pytest.approx(0.02)
     assert acc["models"] == {"claude-sonnet-5-5"}
+
+
+# ------------------------------------------------------------------ review fixes (tasks 2 and 3)
+
+ENVELOPE = ('bank.note_usage({"total_cost_usd": 0.002, "modelUsage": {'
+            'model: {"inputTokens": 10, "outputTokens": 5, "costUSD": 0.0015}, '
+            '"claude-haiku-4-5": {"inputTokens": 3, "outputTokens": 1, "costUSD": 0.0005}}})')
+KEYED = "def cache_key(case):\n    return [case['id'], case['input']]\n"
+
+
+def test_a_side_model_beside_model_is_allowed_and_counted(tmp_path):
+    d = make_bank(tmp_path, model="claude-sonnet-5-5", effort="medium",
+                  body=ENVELOPE + "\n" + PARITY)
+    code, _, _, refusals = run(d)
+    assert code == 0 and refusals == []
+    usage = release(d)["usage"]
+    assert usage["models"] == ["claude-haiku-4-5", "claude-sonnet-5-5"]
+    assert usage["cost_usd"] == pytest.approx(48 * 0.002)
+
+
+def test_a_model_id_that_only_shares_a_prefix_is_not_model(tmp_path):
+    d = make_bank(tmp_path, model="claude-sonnet-5-5", effort="medium",
+                  body=NOTE.replace('"model": model', '"model": "claude-sonnet-5-50"') + "\n"
+                  + PARITY)
+    code, _, _, refusals = run(d)
+    assert code == 65 and [r["rule"] for r in refusals] == ["model-not-pinned"]
+    assert "never called MODEL claude-sonnet-5-5" in refusals[0]["what"]
+    two = tmp_path / "two"
+    two.mkdir()
+    d2 = make_bank(two, model="claude-sonnet-5-5", effort="medium",
+                   body=NOTE.replace('"model": model', '"model": "claude-sonnet-5-5[1m]"') + "\n"
+                   + PARITY)
+    assert run(d2)[0] == 0
+
+
+def test_nested_usage_scopes_both_count_and_exit_cleanly():
+    with bank.usage_scope() as outer:
+        with bank.usage_scope() as inner:
+            pass
+        bank.note_usage({"model": "m", "input_tokens": 1})
+    assert inner["calls"] == 0 and outer["calls"] == 1
+    with bank.usage_scope() as outer:
+        with bank.usage_scope() as inner:
+            bank.note_usage({"model": "m"})
+        bank.note_usage({"model": "m"})
+    assert (outer["calls"], inner["calls"]) == (2, 1)
+
+
+def test_a_score_key_the_release_owns_is_refused_before_repeats_and_probes(tmp_path):
+    log = tmp_path / "calls.log"
+    d = make_bank(tmp_path, body=counting(log), extra=(
+        "def score(rows):\n"
+        "    right = sum(1 for r in rows if r['right'])\n"
+        "    return {'accuracy': right / len(rows), 'n': len(rows)}\n"))
+    code, _, _, refusals = run(d)
+    assert code == 65 and [r["rule"] for r in refusals] == ["bespoke-runner"]
+    assert "'n'" in refusals[0]["what"] and "rename 'n' in score()" in refusals[0]["fix"]
+    assert calls(log) == 40, "the main phase only: no repeat was spent"
+    assert not (d / "RELEASE.json").exists()
+
+
+def test_a_colliding_stamp_raises_before_any_call(tmp_path):
+    log = tmp_path / "calls.log"
+    d = make_bank(tmp_path, body=counting(log), extra="def stamp():\n    return {'model': 'x'}\n")
+    with pytest.raises(bank.BankError, match="stamp"):
+        run(d)
+    assert calls(log) == 0
+
+
+def test_a_model_change_misses_the_cache(tmp_path):
+    log = tmp_path / "calls.log"
+    body = counting(log).replace(PARITY, NOTE + "\n" + PARITY)
+    d = make_bank(tmp_path, model="claude-sonnet-5-5", effort="medium", body=body, extra=KEYED)
+    assert run(d, "--no-probe")[0] == 0
+    log.unlink()
+    assert run(d, "--no-probe")[0] == 0
+    assert calls(log) == 8, "same model and effort: the cache answers the main phase"
+    log.unlink()
+    text = (d / "run.py").read_text().replace("MODEL = 'claude-sonnet-5-5'",
+                                              "MODEL = 'claude-haiku-4-5'")
+    (d / "run.py").write_text(text)
+    assert run(d, "--no-probe")[0] == 0
+    assert calls(log) == 40 + 8, "another model: every case answered afresh"
+    rows = [json.loads(x) for x in (d / "RUNS" / bank.CACHE_FILE).read_text().splitlines()]
+    assert {(r["model"], r["effort"]) for r in rows} == {("claude-sonnet-5-5", "medium"),
+                                                         ("claude-haiku-4-5", "medium")}
+
+
+def _legacy_cache(d):
+    (d / "RUNS").mkdir()
+    rows = [{"key": ["c%02d" % i, {"x": i}], "got": "yes" if i % 2 else "no"} for i in range(40)]
+    (d / "RUNS" / bank.CACHE_FILE).write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+
+def test_a_legacy_cache_row_hits_only_under_the_same_released_model(tmp_path):
+    log = tmp_path / "calls.log"
+    d = make_bank(tmp_path, body=counting(log), extra=KEYED)
+    _legacy_cache(d)
+    bank.write_release(str(d), passed=True, n=40, bar={"accuracy": 0.9}, model=None)
+    assert run(d)[0] == 0
+    assert calls(log) == 8, "the previous release names the same model: legacy rows hit"
+    two = tmp_path / "two"
+    two.mkdir()
+    log2 = tmp_path / "calls2.log"
+    d2 = make_bank(two, body=counting(log2), extra=KEYED)
+    _legacy_cache(d2)
+    assert run(d2)[0] == 0
+    assert calls(log2) == 40 + 8, "no release vouches for the legacy rows: they never hit"
+    three = tmp_path / "three"
+    three.mkdir()
+    log3 = tmp_path / "calls3.log"
+    d3 = make_bank(three, body=counting(log3), extra=KEYED)
+    _legacy_cache(d3)
+    bank.write_release(str(d3), passed=True, n=40, bar={"accuracy": 0.9},
+                       model="claude-opus-5-5")
+    assert run(d3)[0] == 0
+    assert calls(log3) == 40 + 8, "the release names another model: legacy rows never hit"
+
+
+def test_an_upper_bound_metric_passes_at_or_under_its_threshold(tmp_path):
+    def bank_with(score_value, name):
+        sub = tmp_path / name
+        sub.mkdir()
+        d = make_bank(sub, extra=(
+            "def score(rows):\n"
+            "    return {'missed_max': %r}\n" % score_value))
+        (d / "run.py").write_text((d / "run.py").read_text().replace(
+            "BAR = {'accuracy': 0.9}", "BAR = {'missed_max': 0.1}"))
+        (d / "CODEBOOK.md").write_text((d / "CODEBOOK.md").read_text().replace(
+            "accuracy >= 0.9", "missed_max <= 0.1"))
+        return d
+    ok = bank_with(0.05, "ok")
+    assert bank.lint(ok) == []
+    assert run(ok)[0] == 0 and release(ok)["passed"] is True
+    edge = bank_with(0.1, "edge")
+    assert run(edge)[0] == 0
+    over = bank_with(0.2, "over")
+    code, _, _, refusals = run(over)
+    assert code == 1 and refusals == [] and release(over)["passed"] is False
+
+
+def test_a_release_run_with_repeat_sample_0_is_refused(tmp_path):
+    d = make_bank(tmp_path)
+    code, _, _, refusals = run(d, "--repeat-sample", "0")
+    assert code == 65 and [r["rule"] for r in refusals] == ["no-repeat"]
+    assert not (d / "RELEASE.json").exists()
+
+
+def test_a_raising_grader_does_not_hide_a_missing_cost_record(tmp_path):
+    d = make_bank(tmp_path, model="claude-sonnet-5-5", effort="medium", extra=(
+        "_grade = grade\n"
+        "def grade(case, got):\n"
+        "    if got is None:\n        return False\n"
+        "    if case['id'] == 'c05':\n        raise ValueError('grader broke')\n"
+        "    return _grade(case, got)\n"))
+    code, _, _, refusals = run(d)
+    assert code == 65 and "cost-not-recorded" in [r["rule"] for r in refusals]
+    assert "40 answered cases" in [r for r in refusals if r["rule"] == "cost-not-recorded"][0][
+        "what"]
+
+
+def test_an_import_failure_is_refused_from_the_caught_exception(tmp_path):
+    # raises on the first import only: a second import (inside self_check) would succeed and
+    # leave nothing to report
+    marker = tmp_path / "imported-once"
+    d = make_bank(tmp_path, extra=(
+        "if not os.path.exists(%r):\n"
+        "    open(%r, 'w').close()\n"
+        "    raise RuntimeError('import time work')\n" % (str(marker), str(marker))))
+    code, _, _, refusals = run(d)
+    assert code == 65
+    hits = [r for r in refusals if r["rule"] == "bespoke-runner"]
+    assert hits and "RuntimeError: import time work" in hits[0]["what"]
