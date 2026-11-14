@@ -346,6 +346,11 @@ class _Lint(object):
         path = os.path.join(self.bank_dir, b.CORPUS)
         fix_rows = "give every line of {} the keys id, input, expected and why (or map them " \
                    "with FIELDS in {})".format(path, self.run)
+        if not os.path.isfile(path):
+            self.refuse("corpus-untyped", "no CORPUS.jsonl",
+                        "write {} with one JSON object per line: id, input, expected, why (or "
+                        "map another corpus's keys with FIELDS in {})".format(path, self.run))
+            return
         try:
             rows = b.load(path)
         except (OSError, b.BankError) as exc:

@@ -14,7 +14,9 @@ shows the whole loop as a canvas, plus the one that reads what a rule did after 
   stats      aggregate a ledger of rule evaluations and flag runtime candidates
   map        every harness of every repo as a coverage tree, in one self contained page
   bank       lay out an eval bank on the shared kit (new), read every RELEASE.json (check),
-             reuse or build one (route), which run on a key (explain), per axis (facets)
+             every bank against the standard (check --strict), move one onto it (migrate,
+             parity), reuse or build one (route), which run on a key (explain), per axis
+             (facets)
   preamble   what loads into every session, in tokens, against .trimwrit/budget.json
   relocate   move one rule block out of an always-loaded file into another file
   skills     which skills fire, and which never do while their rule's door keeps refusing
@@ -1316,6 +1318,12 @@ def cmd_bank(args):
     """`bank new`: a bank laid out on trimwrit/bank.py; `bank check`: every RELEASE.json under a
     directory read against the envelope (exit 1 on a problem)."""
     root = os.path.abspath(args.root)
+    if args.bank_cmd == "check" and args.strict:
+        return _bank_check_strict(root, args)
+    if args.bank_cmd == "migrate":
+        return _bank_migrate(root, args)
+    if args.bank_cmd == "parity":
+        return _bank_parity(root, args)
     if args.bank_cmd == "check":
         rows = bank_mod.check_tree(os.path.join(root, args.dir))
         bad = [(b, p) for b, p in rows if p]
@@ -1347,6 +1355,119 @@ def cmd_bank(args):
           "write answer() and grade() in {0}/run.py, name LABEL_SOURCE, then `python3 "
           "{0}/run.py --self-check` must pass before the first real run.".format(bank_rel))
     return 0
+
+
+def _strict_report(res):
+    """The lines of `bank check --strict`: one per failing refusal, the may shrink, the counts."""
+    lines = []
+    for rel, e in sorted(res["banks"].items()):
+        if e["status"] != "failing":
+            continue
+        for r in e["refusals"]:
+            if r["rule"] not in e["waived"]:
+                lines.append("FAIL  {}  {}: {} (fix: {})".format(rel, r["rule"], r["what"],
+                                                                r["fix"]))
+    for rel, e in sorted(res["banks"].items()):
+        for rule in e["may_shrink"]:
+            lines.append("may shrink  {}  {}".format(rel, rule))
+    for rel in res.get("stale_waivers", []):
+        lines.append("may shrink  {}  (no such bank any more)".format(rel))
+    c = res["counts"]
+    lines.append("{} on the standard, {} waived ({} rules), {} failing, {} custom runners, {} "
+                 "hand look, {} excluded, {} may shrink".format(
+                     c["standard"], c["waived"], c["waived_rules"], c["failing"],
+                     c["custom_runners"], c["hand_look"], c["excluded"], c["may_shrink"]))
+    return lines
+
+
+def _bank_check_strict(root, args):
+    """`bank check --strict`: every bank under --dir against the standard and the waiver list
+    (exit 1 on a failing bank); --write-waivers lays the list out once, --shrink-waivers drops
+    what no bank triggers any more."""
+    from . import bank_check  # noqa: PLC0415
+    path = os.path.join(root, args.waivers) if args.waivers else os.path.join(
+        root, bank_check.WAIVERS_DIR, bank_check.WAIVERS_FILE)
+    if args.write_waivers:
+        if os.path.exists(path):
+            print("refused: {}: the waiver list only shrinks: use --shrink-waivers or remove "
+                  "entries by hand".format(path), file=sys.stderr)
+            return 2
+        if not (args.why or "").strip():
+            print("refused: --write-waivers needs --why TEXT: the reason every waiver carries",
+                  file=sys.stderr)
+            return 2
+        found, excluded = bank_check.discover(root, args.dir)
+        res = {"banks": bank_check._check(root, found, bank_check.empty_waivers(), True)}
+        doc = bank_check.waivers_from(res, time.strftime("%Y-%m-%d", time.gmtime()), args.why)
+        bank_check.write_waivers(path, doc)
+        print("wrote {}: {} banks, {} rules waived".format(
+            os.path.relpath(path, root), len(doc["banks"]),
+            sum(len(v) for v in doc["banks"].values())))
+        return 0
+    if args.shrink_waivers and not os.path.isfile(path):
+        print("refused: no waiver list at {}".format(path), file=sys.stderr)
+        return 2
+    res = bank_mod.check_strict(root, args.dir, waivers_path=path if os.path.isfile(path)
+                                else None)
+    if args.shrink_waivers:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+        before = res["waiver_length"]
+        doc, removed = bank_check.shrink(doc, res)
+        bank_check.write_waivers(path, doc)
+        for rel, rule in removed:
+            print("shrunk  {}  {}".format(rel, rule))
+        print("waiver list: {} -> {} rules".format(
+            before, sum(len(v) for v in doc.get("banks", {}).values())))
+    if args.json:
+        print(json.dumps(res, indent=2, sort_keys=True))
+    else:
+        for line in _strict_report(res):
+            print(line)
+    return 1 if res["counts"]["failing"] else 0
+
+
+def _bank_migrate(root, args):
+    """`bank migrate`: the codemod of a scaffold shaped run.py; prints the diff (or writes)."""
+    import difflib  # noqa: PLC0415
+    bank_dir = os.path.join(root, args.bank)
+    if args.legacy_out:
+        legacy = os.path.join(root, args.legacy_out)
+        with open(os.path.join(bank_dir, "run.py"), encoding="utf-8", newline="") as fh:
+            old = fh.read()
+        os.makedirs(os.path.dirname(os.path.abspath(legacy)), exist_ok=True)
+        with open(legacy, "w", encoding="utf-8", newline="") as fh:
+            fh.write(old)
+    res = bank_mod.migrate(bank_dir, label_source=args.label_source, write=args.write)
+    if args.json:
+        print(json.dumps({k: v for k, v in res.items() if k not in ("old_text", "new_text")},
+                         indent=2, sort_keys=True))
+        return 0
+    if not args.write:
+        sys.stdout.writelines(difflib.unified_diff(
+            res["old_text"].splitlines(True), res["new_text"].splitlines(True),
+            "a/" + args.bank + "/run.py", "b/" + args.bank + "/run.py"))
+    print("{} run.py: {} -> {} lines, removed: {}".format(
+        "wrote" if args.write else "would write", res["lines_before"], res["lines_after"],
+        ", ".join(res["removed"]) or "nothing"))
+    for r in res["refusals_left"]:
+        print("left  {}: {} (fix: {})".format(r["rule"], r["what"], r["fix"]))
+    return 0
+
+
+def _bank_parity(root, args):
+    """`bank parity`: the old runner replayed on the new run's answers (exit 0 parity, 1 not)."""
+    res = bank_mod.parity(os.path.join(root, args.bank), os.path.join(root, args.legacy),
+                          rows_path=os.path.join(root, args.rows) if args.rows else None)
+    if args.json:
+        print(json.dumps(res, indent=2, sort_keys=True))
+    else:
+        print("parity: {}  old {}  new {}".format("yes" if res["parity"] else "NO",
+                                                  json.dumps(res["old"], sort_keys=True),
+                                                  json.dumps(res["new"], sort_keys=True)))
+        for d in res["diffs"]:
+            print("      " + d)
+    return 0 if res["parity"] else 1
 
 
 def _bank_route(root, args):
@@ -1670,9 +1791,35 @@ def main(argv=None):
                     help="who labels the rows (LABEL_SOURCE; never the model the bank judges)")
     bn.add_argument("--dir", default=None, help="the bank directory (default: banks/<slug>)")
     bn.set_defaults(func=cmd_bank)
-    bc = bsub.add_parser("check", help="every RELEASE.json under --dir against the envelope")
+    bc = bsub.add_parser("check", help="every RELEASE.json under --dir against the envelope; "
+                                       "--strict: every bank against the standard")
     bc.add_argument("--dir", default=".", help="directory to read (default: the root)")
+    bc.add_argument("--strict", action="store_true",
+                    help="lint every bank (and --self-check those with no waiver) against the "
+                         "standard and the waiver list; exit 1 on a failing bank")
+    bc.add_argument("--waivers", default=None,
+                    help="the waiver list (default .trimwrit/bank-waivers.json)")
+    bc.add_argument("--json", action="store_true", help="--strict: print the result")
+    bc.add_argument("--write-waivers", action="store_true",
+                    help="--strict: write the waiver list from today's refusals (once)")
+    bc.add_argument("--why", default=None, help="--write-waivers: the reason of the list")
+    bc.add_argument("--shrink-waivers", action="store_true",
+                    help="--strict: drop the waived rules no bank triggers any more")
     bc.set_defaults(func=cmd_bank)
+    bm = bsub.add_parser("migrate", help="turn a scaffold shaped run.py into the standard shape")
+    bm.add_argument("bank", help="the bank directory")
+    bm.add_argument("--write", action="store_true", help="write run.py (default: print the diff)")
+    bm.add_argument("--label-source", default=None, help="LABEL_SOURCE to declare when absent")
+    bm.add_argument("--legacy-out", default=None,
+                    help="write the old run.py there first (for bank parity)")
+    bm.add_argument("--json", action="store_true")
+    bm.set_defaults(func=cmd_bank)
+    bp = bsub.add_parser("parity", help="replay the old runner on the new run's answers")
+    bp.add_argument("bank", help="the bank directory")
+    bp.add_argument("--legacy", required=True, help="the old run.py (bank migrate --legacy-out)")
+    bp.add_argument("--rows", default=None, help="the rows (default RUNS/<release run>.jsonl)")
+    bp.add_argument("--json", action="store_true")
+    bp.set_defaults(func=cmd_bank)
     br = bsub.add_parser("route", help="reuse, extend or build a bank for a key, through the "
                                        "project's registry (.trimwrit/bank.json)")
     br.add_argument("key", help="the key to route ('-' for none)")
