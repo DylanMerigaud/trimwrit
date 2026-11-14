@@ -1804,8 +1804,9 @@ def main(argv=None):
                                        "--strict: every bank against the standard")
     bc.add_argument("--dir", default=".", help="directory to read (default: the root)")
     bc.add_argument("--strict", action="store_true",
-                    help="lint every bank (and --self-check those with no waiver) against the "
-                         "standard and the waiver list; exit 1 on a failing bank")
+                    help="lint every bank against the standard and the waiver list, and run "
+                         "the self check (run.py --self-check) of every bank whose static lint "
+                         "shows no bespoke-runner; exit 1 on a failing bank")
     bc.add_argument("--waivers", default=None,
                     help="the waiver list (default .trimwrit/bank-waivers.json)")
     bc.add_argument("--json", action="store_true", help="--strict: print the result")

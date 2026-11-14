@@ -5,6 +5,8 @@ import contextlib
 import io
 import json
 import os
+import subprocess
+import sys
 import textwrap
 import threading
 
@@ -173,16 +175,25 @@ def test_an_unknown_engine_exits_2(tmp_path):
     assert not (d / "RELEASE.json").exists()
 
 
-def test_the_inspect_engine_without_inspect_ai_names_the_install(tmp_path):
-    try:
-        import inspect_ai  # noqa: F401
-    except ImportError:
-        pass
-    else:
-        pytest.skip("inspect-ai is installed here")
+def test_the_inspect_engine_without_inspect_ai_names_the_install(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "inspect_ai", None)  # what a default install sees
     d = make_bank(tmp_path)
     code, _, err, _ = run(d, "--engine", "inspect")
-    assert code == 2 and "pip install inspect-ai in a separate venv" in err
+    assert code == 2
+    assert err.strip().splitlines() == [
+        "the inspect engine needs inspect-ai in a separate venv: python3 -m venv v && "
+        "v/bin/pip install inspect-ai, then v/bin/python {}/run.py --engine inspect".format(d)]
+    assert not (d / "RELEASE.json").exists()
+    assert not (d / "RUNS").exists()
+
+
+def test_nothing_in_trimwrit_imports_inspect_ai_at_load():
+    code = ("import sys; import trimwrit.bank, trimwrit.bank_run, trimwrit.cli; "
+            "bad = sorted(m for m in sys.modules if m.split('.')[0] == 'inspect_ai' "
+            "or m == 'trimwrit.bank_inspect'); print(bad)")
+    out = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True,
+                         text=True, check=True).stdout
+    assert out.strip() == "[]"
 
 
 def test_run_local_keeps_the_order_and_catches_an_error():

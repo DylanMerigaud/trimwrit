@@ -14,6 +14,9 @@ case's call, so the call is attributed to its case on whatever thread the engine
 THE ENGINE SEAM. An engine is `run(cases, call, jobs) -> [(case, got, error)]`, in the order of
 `cases`. `call(case)` is self contained: it opens its own usage scope around the cache lookup and
 the answer and records that case's usage under a lock, so an engine may run it on any thread.
+`--engine inspect` reaches trimwrit/bank_inspect.py (Inspect AI, installed in a separate venv,
+never a dependency of trimwrit) through importlib: it is called with `log_dir=<bank>/RUNS/inspect`
+and the release names the log of its main phase under `engine_log`.
 
 THE PROJECT'S WAIVER LIST. A bank the project migrates rule by rule keeps running: the nearest
 `.trimwrit/bank-waivers.json` above the bank (trimwrit/bank_check.py) names, per bank, the rules
@@ -54,7 +57,9 @@ STANDARD = 1
 CACHE_FILE = "cache.jsonl"  # the same as bank.CACHE_FILE
 DEFAULT_JOBS = 4
 EXIT_ENGINE = 2
-INSPECT_HINT = "pip install inspect-ai in a separate venv to run --engine inspect"
+INSPECT_HINT = ("the inspect engine needs inspect-ai in a separate venv: python3 -m venv v && "
+                "v/bin/pip install inspect-ai, then v/bin/python {bank}/run.py --engine inspect")
+INSPECT_LOGS = "inspect"  # the inspect engine writes its logs under <bank>/RUNS/inspect
 TOKEN_KEYS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")
 # the claude envelope's modelUsage names -> the normalized counters
 ENVELOPE_TOKENS = (("inputTokens", "input_tokens"), ("outputTokens", "output_tokens"),
@@ -192,9 +197,10 @@ def _error_text(exc):
     return "{}: {}".format(type(exc).__name__, exc)
 
 
-def run_local(cases, call, jobs):
+def run_local(cases, call, jobs, log_dir=None):
     """The default engine: `call` mapped over `cases` on `jobs` threads; [(case, got, error)] in
-    the order of `cases`, error None or the text of what `call` raised (got None then)."""
+    the order of `cases`, error None or the text of what `call` raised (got None then). It keeps
+    no log: `log_dir` is accepted for the seam and ignored."""
     out = []
     with ThreadPoolExecutor(max_workers=max(1, int(jobs or 1))) as pool:
         futures = [(case, pool.submit(call, case)) for case in cases]
@@ -209,16 +215,19 @@ def run_local(cases, call, jobs):
 ENGINES = {"trimwrit": run_local}
 
 
-def _engine(name, engine_impls):
-    """(run, None) or (None, why) for the engine `name`."""
+def _engine(name, engine_impls, bank_dir):
+    """(run, None) or (None, why) for the engine `name`. The inspect engine is imported here and
+    only here, and refused with INSPECT_HINT when inspect_ai does not import."""
     impls = ENGINES if engine_impls is None else engine_impls
     if name in impls:
         return impls[name], None
     if name == "inspect":
         try:
-            return importlib.import_module("trimwrit.bank_inspect").run, None
-        except ImportError as exc:
-            return None, "{} ({})".format(INSPECT_HINT, exc)
+            mod = importlib.import_module("trimwrit.bank_inspect")
+            importlib.import_module("inspect_ai")
+        except ImportError:
+            return None, INSPECT_HINT.format(bank=bank_dir)
+        return mod.run, None
     return None, "engine {!r}: one of {}".format(name, ", ".join(sorted(set(impls) | {"inspect"})))
 
 
@@ -291,9 +300,10 @@ def _key_text(key):
 
 # ------------------------------------------------------------------ one phase
 
-def _phase(engine, cases, answer, jobs, cache=None):
+def _phase(engine, cases, answer, jobs, cache=None, engine_kw=None):
     """Answer `cases` through `engine`: {id: {"got", "error", "usage", "cached"}}. `cache` (a
-    _Cache with a key function) is read and fed only when given (the main phase)."""
+    _Cache with a key function) is read and fed only when given (the main phase). `engine_kw`
+    (the inspect engine's log_dir) is passed to the engine as keywords."""
     store = {}
     lock = threading.Lock()
 
@@ -314,7 +324,7 @@ def _phase(engine, cases, answer, jobs, cache=None):
                 with lock:
                     store[case["id"]] = (dict(acc, models=set(acc["models"])), cached)
 
-    results = engine(cases, call, jobs)
+    results = engine(cases, call, jobs, **(engine_kw or {}))
     out = {}
     for case, got, error in results:
         usage, cached = store.get(case["id"], (_zero(), False))
@@ -558,7 +568,7 @@ def main(run_file, argv=None, module=None, engine_impls=None):
 
     # 3. the main phase
     engine_name = args.engine
-    engine, why = _engine(engine_name, engine_impls)
+    engine, why = _engine(engine_name, engine_impls, bank_dir)
     if engine is None:
         print(why, file=sys.stderr)
         return EXIT_ENGINE
@@ -571,7 +581,7 @@ def main(run_file, argv=None, module=None, engine_impls=None):
         cases = [c for c in cases if str(c.get("id")) in want]
     if args.split:
         cases = [c for c in cases if c.get("split") == args.split]
-    reserved = set(_bank.ENVELOPE_2) | {"gates", "downshift", "waived"}
+    reserved = set(_bank.ENVELOPE_2) | {"gates", "downshift", "waived", "engine_log"}
     stamp_fn = getattr(module, "stamp", None)
     stamped = dict(stamp_fn() or {}) if callable(stamp_fn) else {}
     clash = sorted(set(stamped) & reserved)
@@ -581,7 +591,13 @@ def main(run_file, argv=None, module=None, engine_impls=None):
     legacy_ok = prev is not None and prev.get("model") == model and (
         "effort" not in prev or prev.get("effort") == effort)
     cache = _Cache(bank_dir, key_fn if callable(key_fn) else None, model, effort, legacy_ok)
-    main_res = _phase(engine, cases, answer, jobs, cache)
+    engine_kw = engine_log = None
+    if engine_name == "inspect":
+        engine_kw = {"log_dir": os.path.join(bank_dir, _bank.RUNS, INSPECT_LOGS)}
+    main_res = _phase(engine, cases, answer, jobs, cache, engine_kw)
+    if engine_kw is not None:
+        engine_log = getattr(sys.modules.get(getattr(engine, "__module__", None)), "LAST_LOG",
+                             None)
 
     # 4. grade each row
     rows = []
@@ -671,7 +687,7 @@ def main(run_file, argv=None, module=None, engine_impls=None):
     rates = [round(sum(1 for c in sample if by_id[c["id"]]["right"]) / len(sample), 4)
              if sample else None]
     for _ in range(args.repeats):
-        res = _phase(engine, sample, answer, jobs)
+        res = _phase(engine, sample, answer, jobs, engine_kw=engine_kw)
         ok = 0
         for case in sample:
             r = res[case["id"]]
@@ -759,6 +775,8 @@ def main(run_file, argv=None, module=None, engine_impls=None):
         doc["downshift"] = downshift
     if waived:
         doc["waived"] = sorted(waived)
+    if engine_log:
+        doc["engine_log"] = str(engine_log)
     doc["wall_s"] = round(time.monotonic() - t0, 1)
     problems = _bank.envelope_problems(doc)
     if problems:
