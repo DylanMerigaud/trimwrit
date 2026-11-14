@@ -113,6 +113,8 @@ CORPUS = "CORPUS.jsonl"
 RELEASE = "RELEASE.json"
 RUNS = "RUNS"
 PROBE_EXT = ".probe.jsonl"
+# the answer cache of a standard bank (bank.main, a run.py defining cache_key): RUNS/cache.jsonl
+CACHE_FILE = "cache.jsonl"
 # the downshift ladder: a top-tier model graded by a bank -> the ONE smaller model its probe asks.
 # Only top-tier models are here: a sonnet or a haiku bank is already the cheap one, no probe.
 SMALLER = {
@@ -357,8 +359,9 @@ def run_path(bank, stamp, ext=".jsonl"):
 def latest_run(bank, pattern="*"):
     """The newest file of `bank`/RUNS matching `pattern`, or None. A probe file
     (<stamp>.probe.jsonl, <stamp>.effort-probe.jsonl) is left out unless `pattern` names the
-    probe: it is not the run."""
+    probe: it is not the run. The answer cache (CACHE_FILE) is never a run."""
     found = sorted(p for p in glob.glob(os.path.join(bank, RUNS, pattern)) if os.path.isfile(p)
+                   and os.path.basename(p) != CACHE_FILE
                    and (not os.path.basename(p).endswith((PROBE_EXT, PROBE_EFFORT_EXT))
                         or "probe" in pattern))
     return found[-1] if found else None
@@ -366,15 +369,28 @@ def latest_run(bank, pattern="*"):
 
 # ------------------------------------------------------------------ the release
 
+# the keys a schema 2 release (bank.main, trimwrit/bank_run.py) adds to ENVELOPE
+ENVELOPE_2 = ENVELOPE + ("effort", "inputs_sha", "bar_sha", "bar_since", "usage", "wall_s",
+                         "repeats", "splits", "engine", "standard")
+USAGE_COUNTERS = ("calls", "cached", "input_tokens", "output_tokens", "cache_read_tokens",
+                  "cache_write_tokens", "cost_usd")
+HEX12_RE = re.compile(r"^[0-9a-f]{12}$")
+
+
 def envelope_problems(doc):
-    """[str] of what keeps `doc` from carrying the envelope; [] when it does."""
+    """[str] of what keeps `doc` from carrying the envelope; [] when it does. Schema 1 is the
+    eight keys above; schema 2 (a standard bank's release, bank.main) also every key of
+    ENVELOPE_2, typed."""
     if not isinstance(doc, dict):
         return ["not a JSON object"]
-    out = ["no `{}`".format(k) for k in ENVELOPE if k not in doc]
+    keys = ENVELOPE_2 if doc.get("schema") == 2 else ENVELOPE
+    out = ["no `{}`".format(k) for k in keys if k not in doc]
     if out:
         return out
-    if doc["schema"] != SCHEMA:
-        out.append("schema {!r}, expected {}".format(doc["schema"], SCHEMA))
+    if doc["schema"] == 2:
+        out += _schema2_problems(doc)
+    elif doc["schema"] != SCHEMA:
+        out.append("schema {!r}, expected {} or 2".format(doc["schema"], SCHEMA))
     if not isinstance(doc["passed"], bool):
         out.append("`passed` is not true or false")
     if not isinstance(doc["n"], int) or isinstance(doc["n"], bool) or doc["n"] < 0:
@@ -403,6 +419,84 @@ def envelope_problems(doc):
 
 def _is_count(v):
     return isinstance(v, int) and not isinstance(v, bool) and v >= 0
+
+
+def _is_number(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _is_full_id(model):
+    return isinstance(model, str) and bool(FULL_ID_RE.match(model)) and "latest" not in model
+
+
+def _usage_problems(where, u):
+    if not isinstance(u, dict):
+        return ["`{}` is not an object".format(where)]
+    out = []
+    for k in USAGE_COUNTERS:
+        v = u.get(k)
+        if k == "cost_usd":
+            if not _is_number(v) or v < 0:
+                out.append("`{}.cost_usd` is not a number".format(where))
+        elif not _is_count(v):
+            out.append("`{}.{}` is not a count".format(where, k))
+    return out
+
+
+def _schema2_problems(doc):
+    """[str] of what keeps a schema 2 `doc` (every key of ENVELOPE_2 present) typed."""
+    out = []
+    model, effort = doc["model"], doc["effort"]
+    if model is not None and not _is_full_id(model):
+        out.append("`model` {!r} is neither null nor a full model id".format(model))
+    if (model is None) != (effort is None):
+        out.append("`effort` {!r} with `model` {!r}: effort is null iff model is null".format(
+            effort, model))
+    elif effort is not None and effort not in EFFORTS + ("model-default",):
+        out.append("`effort` {!r} is not one of {}".format(effort, ", ".join(EFFORTS)))
+    for key in ("inputs_sha", "bar_sha"):
+        if not isinstance(doc[key], str) or not HEX12_RE.match(doc[key]):
+            out.append("`{}` is not 12 hex".format(key))
+    try:
+        datetime.date.fromisoformat(doc["bar_since"])
+    except (TypeError, ValueError):
+        out.append("`bar_since` is not an ISO date")
+    usage = doc["usage"]
+    out += _usage_problems("usage", usage)
+    if isinstance(usage, dict):
+        if not isinstance(usage.get("models"), list):
+            out.append("`usage.models` is not a list")
+        phases = usage.get("phases")
+        if not isinstance(phases, dict):
+            out.append("`usage.phases` is not an object")
+        else:
+            for ph in ("main", "repeats", "probe"):
+                out += _usage_problems("usage.phases." + ph, phases.get(ph))
+    if not _is_number(doc["wall_s"]) or doc["wall_s"] < 0:
+        out.append("`wall_s` is not a number of seconds")
+    rep = doc["repeats"]
+    if not isinstance(rep, dict):
+        out.append("`repeats` is not an object")
+    else:
+        k = rep.get("k")
+        if not _is_count(k) or k < 1:
+            out.append("`repeats.k` is not an int >= 1")
+        for key in ("sample", "flips"):
+            if not _is_count(rep.get(key)):
+                out.append("`repeats.{}` is not a count".format(key))
+        for key in ("ids", "rates"):
+            if not isinstance(rep.get(key), list):
+                out.append("`repeats.{}` is not a list".format(key))
+    if not isinstance(doc["splits"], dict):
+        out.append("`splits` is not an object")
+    if not isinstance(doc["engine"], str) or not doc["engine"]:
+        out.append("`engine` is not an engine name")
+    if not _is_count(doc["standard"]) or doc["standard"] < 1:
+        out.append("`standard` is not a version number")
+    if "gates" in doc and not (isinstance(doc["gates"], dict)
+                               and all(isinstance(v, bool) for v in doc["gates"].values())):
+        out.append("`gates` is not {name: true or false}")
+    return out
 
 
 def _slice_problems(key, value):
@@ -480,6 +574,12 @@ def write_release(bank, *, passed, n, bar, model, run=None, at=None, extra=None,
     `types` and `instances` are the slices of the module docstring."""
     doc = release_doc(bank, passed=passed, n=n, bar=bar, model=model, run=run, at=at,
                       extra=extra, types=types, instances=instances)
+    return _write_release_file(bank, doc)
+
+
+def _write_release_file(bank, doc):
+    """Write `doc` to `bank`/RELEASE.json atomically, ASCII, indent 1, sorted keys; return it.
+    The one writer of both schemas (write_release, bank_run's schema 2 release)."""
     fd, tmp = tempfile.mkstemp(dir=bank, prefix=".RELEASE.", suffix=".tmp")
     try:
         # ASCII on disk: a verbatim the bank carries keeps its characters as \u escapes, so the
@@ -507,9 +607,12 @@ def read_release(bank):
 
 def released(bank):
     """True only when the bank's RELEASE.json carries the envelope and says passed: the one
-    reading a producer's door makes of its bank."""
+    reading a producer's door makes of its bank. A schema 2 release also needs the bank's
+    inputs unchanged since the run (`inputs_sha`): an edited corpus voids it."""
     doc = read_release(bank)
-    return doc is not None and not envelope_problems(doc) and doc["passed"] is True
+    if doc is None or envelope_problems(doc) or doc["passed"] is not True:
+        return False
+    return doc["schema"] != 2 or doc["inputs_sha"] == inputs_sha(bank)
 
 
 def released_slice(bank, kind, name):
@@ -888,3 +991,5 @@ def lay_out(root, files):
 # at the very end, after every definition, so the import cycle with bank_lint resolves
 
 from .bank_lint import declared, lint, load_module, resolve_case, self_check  # noqa: E402,F401
+from .bank_run import (ENGINES, REPEAT_SAMPLE, REPEATS, SCHEMA_STANDARD, STANDARD,  # noqa: E402,F401
+                       main, note_usage, run_local, usage_scope)

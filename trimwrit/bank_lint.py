@@ -628,7 +628,11 @@ def load_module(run_file):
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     try:
-        spec.loader.exec_module(module)
+        # compiled from the source, never through __pycache__: a run.py edited within the same
+        # second at the same size (a bar 0.9 -> 0.8) would otherwise import its stale bytecode
+        with open(run_file, "rb") as fh:
+            code = compile(fh.read(), run_file, "exec")
+        exec(code, module.__dict__)  # noqa: S102
     except BaseException:
         sys.modules.pop(name, None)
         raise
