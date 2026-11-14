@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.16.0, 2026-11-14
+
+- **The bank standard: the library owns the run, a bank holds only what it judges.** Asked,
+  verbatim: "the goal is to make it as much rigid as possible so each harness cost less, enforce
+  best practice and avoid each agent using it doesnt know how to use it. enforce best practice."
+  An audit of 225 banks found none within 15 lines of the scaffold, 155 distinct runner function
+  sets and ten holes that passed every check. `bank.main(__file__)` (trimwrit/bank_run.py) now
+  owns the loop, the flags, RUNS files, the probes, repeats, the cost record, the bar lock and the
+  release; a standard run.py declares MODEL, EFFORT, BAR, LABEL_SOURCE and defines `answer` and
+  `grade` (optional hooks: score, ideal, mutate, cache_key, stamp).
+- **Ten holes refused by rule id, each refusal naming its fix** (`bank.Refusal`, exit 65,
+  `{"refused": "bank-standard", "rule", "bank", "what", "fix"}`): `bar-moved` (a bar changed
+  after a run without a dated CODEBOOK line), `grader-cannot-fail` (a mutated expected answer the
+  grader accepts), `label-by-judged-model`, `no-holdout`, `corpus-too-small` (30 cases, a dated
+  in-bank waiver valid 90 days), `bespoke-runner` (an own main, argparse, write_release),
+  `corpus-changed-since-release` (`released()` recomputes `inputs_sha` on a schema 2 release),
+  `model-not-pinned` (an alias, no effort, a deterministic bank that called a model, a case that
+  never called MODEL), `cost-not-recorded` (`bank.note_usage(envelope)`), `no-repeat` (a repeat
+  sample of 8 by default, its flips and stdev in the release), plus `corpus-untyped`.
+- **RELEASE.json schema 2**, written only by `bank.main`: the envelope plus effort, inputs_sha,
+  bar_sha, bar_since, usage (calls, cached, tokens, cost, models, per phase), wall_s, repeats,
+  splits (dev and holdout scores), engine, standard. Schema 1 releases read exactly as before;
+  `bank_sha` keeps its meaning.
+- **`trimwrit bank check --strict`** lints every bank under a directory against a project
+  waiver list (`.trimwrit/bank-waivers.json`: banks waived per rule, custom runners, excluded
+  directories, hand looks) that only shrinks (`--write-waivers` once, `--shrink-waivers`);
+  `bank.main` honours the same list so a bank migrates rule by rule. **`trimwrit bank migrate`**
+  turns a scaffold shaped run.py into the standard, line ranges only; **`trimwrit bank parity`**
+  replays the old runner on the new run's answers and says whether the verdict is the same.
+- **`trimwrit bank new`** lays out the standard shape only, with `--label-source`.
+- **An optional Inspect AI engine** (`--engine inspect`, trimwrit/bank_inspect.py) behind the same
+  seam, for a separate venv: grading, scoring and the release stay the library's. Never a
+  dependency of the default install.
+
 ## promise-gate 0.5.1, 2026-11-14
 
 - A Stop hook's feedback (`Stop hook feedback:`) and a loaded skill's body (`Base directory for this
