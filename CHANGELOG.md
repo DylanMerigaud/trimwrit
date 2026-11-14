@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.16.4, 2026-11-14
+
+- **The usage sink rides contextvars, not the thread.** A producer that fans one case out to
+  its own threads (a gate asking two votes on a pool) had its calls counted nowhere, and
+  `bank.main` refused the run as `cost-not-recorded` at the canary. The open scopes now live in
+  a context variable: a job submitted as `contextvars.copy_context().run(fn, ...)` counts
+  against the case's scope, with no import of trimwrit in the producer; the adds take a lock.
+  A bare submit still counts nowhere, and the canary still refuses it after one case.
+
 ## 0.16.3, 2026-11-14
 
 - `bank migrate` no longer lists the bank's old schema 1 RELEASE.json as a `bespoke-runner`

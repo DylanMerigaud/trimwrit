@@ -441,6 +441,50 @@ def test_nested_usage_scopes_both_count_and_exit_cleanly():
     assert (outer["calls"], inner["calls"]) == (2, 1)
 
 
+def test_a_call_on_a_thread_the_producer_carries_the_context_to_counts_in_its_scope():
+    """The scopes ride contextvars: a job submitted as copy_context().run counts against the
+    open scope, a bare job counts nowhere (2026-11-14, a gate asking two votes on a pool)."""
+    import contextvars
+    from concurrent.futures import ThreadPoolExecutor
+
+    def call():
+        bank.note_usage({"model": "m", "input_tokens": 3})
+    with bank.usage_scope() as acc:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            for f in [pool.submit(contextvars.copy_context().run, call) for _ in range(2)]:
+                f.result()
+    assert (acc["calls"], acc["input_tokens"]) == (2, 6)
+    with bank.usage_scope() as acc:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            pool.submit(call).result()
+    assert acc["calls"] == 0
+
+
+FANOUT = (
+    "import contextvars\n"
+    "from concurrent.futures import ThreadPoolExecutor\n"
+    "def vote():\n"
+    "    " + NOTE + "\n"
+    "with ThreadPoolExecutor(max_workers=2) as pool:\n"
+    "    for f in [pool.submit(SUBMIT, vote) for _ in range(2)]:\n"
+    "        f.result()\n" + PARITY)
+
+
+def test_a_producer_fanning_out_with_the_context_records_its_cost(tmp_path):
+    carried = make_bank(tmp_path, model="claude-sonnet-5-5", effort="medium",
+                        body=FANOUT.replace("SUBMIT", "contextvars.copy_context().run"),
+                        name="carried")
+    code, _, _, refusals = run(carried, "--no-probe")
+    assert (code, refusals) == (0, [])
+    doc = json.loads((carried / "RELEASE.json").read_text())
+    assert doc["usage"]["phases"]["main"]["calls"] == 2 * doc["n"]
+    bare = make_bank(tmp_path, model="claude-sonnet-5-5", effort="medium",
+                     body=FANOUT.replace("SUBMIT", "(lambda f: f())"), name="bare")
+    code, _, _, refusals = run(bare, "--no-probe")
+    assert code == bank.EXIT_REFUSED
+    assert [r["rule"] for r in refusals] == ["cost-not-recorded"]
+
+
 def test_a_score_key_the_release_owns_is_refused_before_repeats_and_probes(tmp_path):
     log = tmp_path / "calls.log"
     d = make_bank(tmp_path, body=counting(log), extra=(

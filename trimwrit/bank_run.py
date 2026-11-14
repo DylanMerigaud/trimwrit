@@ -9,7 +9,14 @@ scores, and writes a schema 2 RELEASE.json (the keys of bank.ENVELOPE_2).
 
 THE USAGE SINK. A model call the bank makes reports itself with `note_usage(envelope)` (a claude
 `--output-format json` envelope, or a normalized dict); `main` opens a `usage_scope()` around each
-case's call, so the call is attributed to its case on whatever thread the engine runs it.
+case's call, so the call is attributed to its case on whatever thread the engine runs it. The
+open scopes ride a context variable (contextvars), not the thread: a producer that fans one
+case out to its own threads (two votes in parallel) carries them by submitting each job as
+`contextvars.copy_context().run(fn, ...)`, the standard library idiom, so its calls count
+against the case without the producer importing trimwrit. A job submitted bare runs in an
+empty context and its calls count nowhere: the canary then refuses the run as
+cost-not-recorded after one case (measured 2026-11-14, growth-cockpit
+career/final-answer-evals, whose gate asks two coverage votes on a pool).
 
 THE ENGINE SEAM. An engine is `run(cases, call, jobs) -> [(case, got, error)]`, in the order of
 `cases`. `call(case)` is self contained: it opens its own usage scope around the cache lookup and
@@ -28,6 +35,7 @@ Standard library only, Python 3.9 syntax.
 """
 import argparse
 import contextlib
+import contextvars
 import datetime
 import importlib
 import json
@@ -78,7 +86,11 @@ UPPER_SUFFIX = "_max"  # a BAR metric named *_max is an upper bound (bank_lint.b
 
 # ------------------------------------------------------------------ the usage sink
 
-_local = threading.local()
+# the open scopes of this context, innermost last: a tuple, replaced (never mutated) on enter
+# and exit, so a copied context sees the scopes open when it was copied
+_scopes = contextvars.ContextVar("trimwrit_bank_usage_scopes", default=())
+# the accumulators are shared by every context copied from the scope's: one lock for the adds
+_sink_lock = threading.Lock()
 
 
 def _zero():
@@ -102,22 +114,16 @@ def _float(v):
 
 @contextlib.contextmanager
 def usage_scope():
-    """A scope collecting the calls `note_usage` reports on this thread; yields its accumulator
+    """A scope collecting the calls `note_usage` reports in this context (this thread, and the
+    threads a job copied it to with contextvars.copy_context().run); yields its accumulator
     ({calls, cached, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-    cost_usd, models (a set)}). Scopes nest: a call counts in every open scope of its thread."""
+    cost_usd, models (a set)}). Scopes nest: a call counts in every open scope of its context."""
     acc = _zero()
-    stack = getattr(_local, "stack", None)
-    if stack is None:
-        stack = _local.stack = []
-    stack.append(acc)
+    token = _scopes.set(_scopes.get() + (acc,))
     try:
         yield acc
     finally:
-        # by identity: two scopes still empty are equal dicts, and remove() would take the outer
-        for i in range(len(stack) - 1, -1, -1):
-            if stack[i] is acc:
-                del stack[i]
-                break
+        _scopes.reset(token)
 
 
 def _normalize(envelope):
@@ -149,7 +155,7 @@ def _normalize(envelope):
 
 
 def note_usage(envelope):
-    """Count one model call in every open `usage_scope` of this thread: `envelope` is a claude
+    """Count one model call in every open `usage_scope` of this context: `envelope` is a claude
     `--output-format json` envelope (total_cost_usd, modelUsage {model: {inputTokens,
     outputTokens, cacheReadInputTokens, cacheCreationInputTokens, costUSD}}) or a normalized
     dict {model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd}.
@@ -159,19 +165,20 @@ def note_usage(envelope):
         raise _bank.BankError("a model call during a self check ({}=1): the self check must "
                               "never call answer() or the producer".format(SELF_CHECK_ENV))
     try:
-        stack = getattr(_local, "stack", None)
+        stack = _scopes.get()
         if not stack:
             return
         try:
             models, tokens, cost = _normalize(envelope)
         except Exception:  # noqa: BLE001  (the sink never breaks the producer's call)
             models, tokens, cost = [], dict.fromkeys(TOKEN_KEYS, 0), 0.0
-        for acc in stack:
-            acc["calls"] += 1
-            for k, v in tokens.items():
-                acc[k] += v
-            acc["cost_usd"] += cost
-            acc["models"].update(models)
+        with _sink_lock:
+            for acc in stack:
+                acc["calls"] += 1
+                for k, v in tokens.items():
+                    acc[k] += v
+                acc["cost_usd"] += cost
+                acc["models"].update(models)
     except Exception:  # noqa: BLE001
         return
 
