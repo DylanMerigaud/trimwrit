@@ -1,5 +1,18 @@
 # Changelog
 
+## bare-id-gate 0.2.0, 2026-11-14
+
+- **A long final message carries one plain-words line.** Four closing blocks in five days drew
+  "pas compris c'est quoi en mot simple le pb", "jai pas compris concrtement ca fait quoi 30
+  mots", "moi qui connais pas le truc... jai pas compris" and "peut pas faire sans worker
+  cloudflare? juste cdn ?". A final message of 80 words of prose or more now needs a line headed
+  "En clair :" or "In plain words:" (also "Concretement", "En mots simples", "In plain terms",
+  "Plainly"), at most 40 words, with no code span, path, code name, command flag, acronym
+  outside a short list of everyday ones (PDF, TVA, CEO, UTC...) or id. Refusal class
+  `jargon_not_plain_words`. The four replays are refused (`tests/gates/plain_words_replays.json`).
+  Measured on 28,388 turn-final messages of 14 days: 17,223 (61 percent) have 80 words or more
+  and no such line today, and 36 of the 37 messages a "pas compris" answered are among them.
+
 ## 0.16.0, 2026-11-14
 
 - **The bank standard: the library owns the run, a bank holds only what it judges.** Asked,

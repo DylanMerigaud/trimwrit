@@ -364,3 +364,62 @@ def test_javascript_reads_the_grader_like_python():
                                            "t": texts}))
     assert out.returncode == 0, out.stderr
     assert json.loads(out.stdout) == [bool(forbid().search(t)) for t in texts]
+
+
+# ---- plain words (lesson s:explained-in-jargon-not-plain-words, 2026-11-14) ----------------
+# Each replay is the closing block a correction answered, verbatim, and the correction that
+# followed it ("pas compris c'est quoi en mot simple le pb", "jai pas compris concrtement ca
+# fait quoi 30 mots", "moi qui connais pas le truc... jai pas compris", "now? jai pas comrpis?
+# peut pas faire sans worker cloudflare? juste cdn ?").
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "plain_words_replays.json"),
+          encoding="utf-8") as _fh:
+    REPLAYS = json.load(_fh)
+PLAIN_FR = ("**En clair :** les robots qui visitent nos vieux domaines ne coutent plus rien, la "
+            "facture reste a 0 euro et tu n'as rien a faire.")
+PLAIN_EN = "In plain words: the old domains no longer cost anything and nothing waits on you."
+
+
+def test_the_four_replays_are_refused():
+    assert len(REPLAYS) == 4
+    for r in REPLAYS:
+        assert gate.word_count(r["final_message"]) >= gate.MIN_WORDS
+        assert gate.plain_words_miss(r["final_message"], BARE) == "missing", r["correction"]
+
+
+@pytest.mark.parametrize("line", [PLAIN_FR, PLAIN_EN, "Concretement : la carte part en PDF "
+                                  "lundi, il te reste le go sur le paiement de 80 euros."])
+def test_a_plain_line_clears_every_replay(line):
+    for r in REPLAYS:
+        assert gate.plain_words_miss(r["final_message"] + "\n\n" + line, BARE) is None
+
+
+@pytest.mark.parametrize("line,why", [
+    ("In plain words: the CDN Worker no longer runs on parked domains.", "an acronym (CDN)"),
+    ("En clair : `bank_pop_max` passe a 1 dans ollama_guard.", "a code span"),
+    ("En clair : on passe le reglage a 1 dans ollama_guard.", "a code name (ollama_guard)"),
+    ("En clair : relance avec --max 1 et c'est bon.", "a command flag (--max)"),
+    ("En clair : scripts/bet_video.py tourne seul.", "a link or a path"),
+    ("En clair : le fix est sur main (commit b6bef2fd).", "an internal id (b6bef2fd)"),
+    ("En clair : " + " ".join(["mot"] * 45), "45 words, over 40"),
+    ("**En clair :**", "it is empty"),
+])
+def test_a_plain_line_in_jargon_is_refused(line, why):
+    miss = gate.plain_words_miss(REPLAYS[3]["final_message"] + "\n\n" + line, BARE)
+    assert miss and why in miss, miss
+
+
+def test_a_short_message_or_a_json_result_needs_no_plain_line():
+    assert gate.plain_words_miss("Fait, rien en vol. Le fix est sur main (b6bef2fd).") is None
+    assert gate.plain_words_miss(json.dumps({"result": REPLAYS[0]["final_message"]})) is None
+
+
+def test_a_long_message_without_plain_words_blocks_through_the_hook(tmp_path):
+    path = make_transcript(tmp_path, REPLAYS[3]["final_message"])
+    reason = blocked(run_py(NAME, SCRIPT, stop(path, "pw"), tmp_path))
+    assert "In plain words:" in reason and "En clair :" in reason
+    assert reason.endswith("(bare-id-gate, plain words) " + RESEND)
+    refusals = rows(os.path.join(str(tmp_path), "door-refusals.jsonl"))
+    assert [x["reason_class"] for x in refusals] == ["jargon_not_plain_words"]
+    ok = make_transcript(tmp_path, REPLAYS[3]["final_message"] + "\n\n" + PLAIN_EN, "ok.jsonl")
+    r = run_py(NAME, SCRIPT, stop(ok, "pw-ok"), tmp_path)
+    assert (r.returncode, r.stdout.strip()) == (0, "")

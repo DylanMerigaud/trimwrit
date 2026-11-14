@@ -224,6 +224,103 @@ def reason_text(found, cfg):
     return text + " " + suffix if suffix else text
 
 
+# ---- plain words -------------------------------------------------------------------------
+# 2026-11-14, lesson s:explained-in-jargon-not-plain-words: four closing blocks in five days
+# (a print margin, a quota queue, a sales video, a Cloudflare setup) drew "pas compris c'est quoi
+# en mot simple le pb", "jai pas compris concrtement ca fait quoi 30 mots", "moi qui connais pas
+# le truc... jai pas compris", "now? jai pas comrpis? peut pas faire sans worker cloudflare?".
+# Each was correct and none said, in words a person who never saw the tool follows, what the
+# thing does for the user. A long final message carries one line headed by a plain marker, that
+# line says it in at most PLAIN_MAX_WORDS words, with no code, file, setting name or acronym.
+MIN_WORDS = 80
+PLAIN_MAX_WORDS = 40
+MARKERS = ["en clair", "en mots simples", "concr\u00e8tement", "concretement", "in plain words",
+           "in plain terms", "plainly"]
+MARKER = re.compile(r"^[ \t]*(?:[-*+][ \t]+)?(?:\*\*|__)?[ \t]*(?:" + "|".join(MARKERS) + r")"
+                    r"[ \t]*(?:\*\*|__)?[ \t]*:[ \t]*(?:\*\*|__)?[ \t]*(.*)$", re.I | re.M)
+WORD = re.compile(r"[^\W_]+(?:['\u2019][^\W_]+)?")
+# Words a reader knows without the tool: units of money, time zones, countries, documents.
+COMMON_CAPS = {"OK", "PDF", "US", "USA", "UK", "EU", "UE", "FR", "EN", "ES", "TVA", "TTC", "HT",
+               "CEO", "CTO", "SMS", "TV", "AM", "PM", "UTC", "CST", "CET", "IA", "AI", "EUR",
+               "USD", "PS", "RIB", "SIRET", "CV"}
+JARGON = [
+    ("a code span", re.compile(r"`")),
+    ("a link or a path", re.compile(r"https?://|www\.|[\w.~-]+/[\w.~/-]+")),
+    ("a code name", re.compile(r"(?<![\w-])(?:[A-Za-z]\w*_\w+|[a-z]+[A-Z][A-Za-z]*\w*"
+                               r"|\w+\.(?:py|sh|js|ts|json|jsonl|md|db|toml|ya?ml|html|txt))"
+                               r"(?![\w-])")),
+    ("a command flag", re.compile(r"(?<![\w-])--[a-z][\w-]*")),
+    ("an acronym", re.compile(r"(?<![\w-])[A-Z]{2,6}s?(?![\w-])")),
+]
+
+
+def word_count(text):
+    return len(WORD.findall(prose(text)))
+
+
+def plain_lines(text):
+    """The bodies of the lines headed by a plain marker, a paragraph each (the marker line and
+    the lines that follow it up to a blank line), fences left out."""
+    t = FENCE.sub(_blank, text or "")
+    out = []
+    for m in MARKER.finditer(t):
+        body = [m.group(1)]
+        for line in t[m.end():].split("\n")[1:]:
+            if not line.strip() or MARKER.match(line):
+                break
+            body.append(line)
+        out.append(" ".join(b.strip() for b in body).strip(" *_"))
+    return out
+
+
+def jargon_in(body, cfg=None):
+    """[why] for one plain line: too long, empty, or holding a word only the tool's user reads."""
+    why = []
+    n = len(WORD.findall(body))
+    if n == 0:
+        why.append("it is empty")
+    if n > PLAIN_MAX_WORDS:
+        why.append("{} words, over {}".format(n, PLAIN_MAX_WORDS))
+    for name, rx in JARGON:
+        hits = [m.group(0) for m in rx.finditer(body)
+                if name != "an acronym" or m.group(0).rstrip("s") not in COMMON_CAPS]
+        if hits:
+            why.append("{} ({})".format(name, ", ".join(sorted(set(hits))[:3])))
+    ids = [m.group(0) for _, rx in families(_settings(cfg)) for m in rx.finditer(body)]
+    if ids:
+        why.append("an internal id ({})".format(", ".join(ids[:3])))
+    return why
+
+
+def plain_words_miss(text, cfg=None):
+    """None when `text` needs no plain line or holds a good one, else the reason as a string.
+    Pure. A message under MIN_WORDS words of prose or a JSON document needs none."""
+    if not text or text.lstrip().startswith(("{", "[")) or word_count(text) < MIN_WORDS:
+        return None
+    bodies = plain_lines(text)
+    if not bodies:
+        return "missing"
+    whys = [jargon_in(b, cfg) for b in bodies]
+    if any(not w for w in whys):
+        return None
+    return "; ".join(whys[0])
+
+
+def plain_reason(miss):
+    head = ("The final message explains at length and never says, in plain words, what it is "
+            "about." if miss == "missing" else
+            "The plain-words line of the final message is not plain: {}.".format(miss))
+    return (head + " The user often does not know the tool, the setting or the mechanism you "
+            "just worked in, and a correct message he cannot follow forces him to ask \"what "
+            "does it do, concretely\". Add ONE line headed \"En clair :\" (a French reply) or "
+            "\"In plain words:\" (an English one), at most {} words, that a person who never saw "
+            "the tool understands: what the thing is or what went wrong, what it changes for him "
+            "(money, time, a site up or down, a mail sent or not), and whether he has anything to "
+            "do. No code, no file or setting name, no command, no acronym, no id; name a tool by "
+            "what it does (\"the service that serves our pages\", not \"the CDN Worker\"). "
+            "(bare-id-gate, plain words)".format(PLAIN_MAX_WORDS))
+
+
 def on_stop():
     payload = trace.read_payload()
     if payload.get("hook_event_name") != "Stop":
@@ -232,15 +329,26 @@ def on_stop():
     families(cfg)  # a bad extra is a loud crash even on a clean message
     final = transcript.final_text(payload)
     found = bare_ids(final, cfg)
-    if not found:
+    miss = plain_words_miss(final, cfg)
+    if not found and not miss:
         trace.chain_clear(HOOK, payload)
         return 0
-    detail = "bare id: " + ", ".join(tok for _, tok in found[:5])
+    details, reasons = [], []
+    if found:
+        details.append("bare id: " + ", ".join(tok for _, tok in found[:5]))
+        reasons.append(reason_text(found, cfg))
+    if miss:
+        details.append("plain words: " + miss)
+        reasons.append(plain_reason(miss))
+    detail = "; ".join(details)
     if not trace.chain_should_block(HOOK, payload, detail):
         print(trace.cap_message(HOOK, detail))
         return 0
-    trace.witness("bare_id_gate", "Stop", "internal_id_bare", payload)
-    print(trace.stop_block(reason_text(found, cfg), payload, final))
+    if found:
+        trace.witness("bare_id_gate", "Stop", "internal_id_bare", payload)
+    if miss:
+        trace.witness("bare_id_gate", "Stop", "jargon_not_plain_words", payload)
+    print(trace.stop_block(" ".join(reasons), payload, final))
     return 0
 
 
@@ -248,9 +356,12 @@ def main():
     trace.configure(sys.argv)
     if "--print" in sys.argv:
         payload = trace.read_payload() if not sys.stdin.isatty() else {}
-        found = bare_ids(transcript.final_text(payload), None)
+        final = transcript.final_text(payload)
+        found = bare_ids(final, None)
+        miss = plain_words_miss(final, None)
         print("bare-id-gate: " + ("would refuse on {}".format(", ".join(t for _, t in found))
                                   if found else "no bare id, silent"))
+        print("bare-id-gate plain words: " + ("would refuse, " + miss if miss else "silent"))
         return 0
     return trace.run(HOOK, "Stop", on_stop, TIMEOUT_S)
 

@@ -61,6 +61,19 @@ Noah Brandt, head of engineering at Eve (INT-0438)**"), kept the key inside the 
 and dropped the sha, which the user needs for nothing. A delta on three runs is a direction, not a
 rate.
 
+## Plain words (0.2.0)
+
+The same hook refuses a final message of 80 words of prose or more that holds no line headed
+"En clair :" or "In plain words:" (also "Concretement", "En mots simples", "In plain terms",
+"Plainly"), or whose plain line is not plain: over 40 words, or holding a code span, a path or a
+link, a code name (`snake_case`, `camelCase`, `file.py`), a command flag, an acronym outside a
+short everyday list (PDF, TVA, CEO, UTC...) or an id. The user asked "c'est quoi en mot simple le
+pb" after four correct closing blocks in five days that never said, in words someone who never
+saw the tool follows, what the thing does for him. The refusal tells the model to write that one
+line: what the thing is or what went wrong, what it changes for the user, whether he has
+anything to do. Refusal class `jargon_not_plain_words`. Proof: the four closing blocks those
+corrections answered are replayed verbatim in `tests/gates/plain_words_replays.json` and refused.
+
 ## Install
 
 ```
