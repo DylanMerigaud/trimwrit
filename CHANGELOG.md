@@ -1,5 +1,11 @@
 # Changelog
 
+## promise-gate 0.5.1, 2026-11-14
+
+- A Stop hook's feedback (`Stop hook feedback:`) and a loaded skill's body (`Base directory for this
+  skill:`) are harness text, never a prompt the user typed: neither arms nor clears a stall
+  (replay of a 2026-11-14 session: both armed one on words they quote).
+
 ## promise-gate 0.5.0 and every plugin's patch, 2026-11-14
 
 - **Every Stop refusal asks for the whole answer again.** The user reads only the model's next

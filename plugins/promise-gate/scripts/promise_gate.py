@@ -193,7 +193,10 @@ _COMPILED = {}
 JOB_SHOWN = 3
 TASK_ID = re.compile(r"<task-id>([^<\s]+)</task-id>")
 NOT_A_PROMPT = ("<task-notification>", "<local-command", "<system-reminder>",
-                "This session is being continued", "[Request interrupted")
+                "This session is being continued", "[Request interrupted",
+                # 0.5.1: a hook's feedback and a loaded skill's body are harness text, never typed
+                # (replay of 2026-11-14: both armed a stall on words they quote)
+                "Stop hook feedback:", "Base directory for this skill:")
 
 
 def _alternatives(where, value):

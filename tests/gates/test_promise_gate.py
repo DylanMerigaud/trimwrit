@@ -748,7 +748,9 @@ def gate_stall(tmp_path, session):
 
 @pytest.mark.parametrize("text", [TASK_NOTIFICATION, "  " + TASK_NOTIFICATION,
                                   "<system-reminder>the stall is down</system-reminder>",
-                                  "<local-command-stdout>auto fix</local-command-stdout>"])
+                                  "<local-command-stdout>auto fix</local-command-stdout>",
+                                  "Stop hook feedback:\nThe user noticed a stall before you did",
+                                  "Base directory for this skill: /x\n\nnever fail silently"])
 def test_a_task_notification_arms_nothing(tmp_path, text):
     r = prompt(tmp_path, "tn", text)
     assert (r.returncode, r.stdout.strip()) == (0, ""), r.stderr
