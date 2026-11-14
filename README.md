@@ -869,42 +869,141 @@ summary bucket, `N adopted rule(s) with no case across M repo(s)`, the number th
 exists to make visible. A repo `adopt` has never touched prints `-` in that column, not `0`, so
 a machine nobody has run this on is never mistaken for one with nothing to adopt.
 
-## Eval banks: one kit, not a blank page each time
+## Eval banks: one standard, not a blank page each time
 
 A rule case replays a correction. A **bank** measures a judgment the machine repeats (a
-classifier, a judge, a drafter) on many labeled inputs. `trimwrit bank new` lays one out:
+classifier, a judge, a drafter) on many labeled inputs, against a bar declared before the first
+run. `trimwrit bank new` lays one out:
 
 ```
 trimwrit bank new ticket-route --judges "Does the router send a ticket to the right queue" \
-    --bar "accuracy >= 0.9" --model claude-sonnet-5-5 --producer router.py:route
+    --bar "accuracy >= 0.9" --model claude-sonnet-5-5 --producer router.py:route \
+    --label-source "the support lead, by hand"
 ```
 
-It writes `CODEBOOK.md` (why the judgment, the cases, the bar declared before the first run, dated
-changes), an empty `CORPUS.jsonl`, a `run.py` and its offline test, all on `trimwrit/bank.py`. An
-empty bank fails its own test, so a bank with no cases cannot pass for one. `run.py --offline`
-checks the grader against the expected answers; a real run writes `RUNS/<stamp>.jsonl` and a
-`RELEASE.json` with the same eight keys in every bank (`schema`, `passed`, `at`, `n`, `bar`,
-`model`, `bank_sha`, `run`), the bank's own keys beside them. The producer's door reads
-`bank.released(path)`: true only for that envelope with `passed: true`.
+It writes `CODEBOOK.md` (why the judgment, the six row keys, the bar, dated changes), an empty
+`CORPUS.jsonl`, `run.py` and a test asserting `bank.self_check(HERE) == []`. Every row of the
+corpus carries `id`, `input`, `expected`, `why`, and optionally `split` (dev or holdout) and
+`label_source`; `expected` is never written by the model the bank judges.
 
-A bank that grades a top-tier model (an opus or a fable, `bank.SMALLER`) also runs, after its live
-run, a downshift probe: the same question on a deterministic sample of up to 20 cases, asked of
-ONE smaller model (opus to sonnet, fable to opus) through `answer(case, model=...)`. The rows go to
-`RUNS/<stamp>.probe.jsonl`, the comparison under `downshift` in `RELEASE.json` (both rates on the
-same cases, the cases where they agree, each diff), and one line says it, e.g. `probe
-claude-sonnet-5-5 on 20 cases: 18/20 vs claude-opus-5-5 19/20, 2 diffs (ids ...)`. The probe never
-changes `passed`; `--no-probe` skips it.
+### The run.py shape
 
-A bank whose producer runs above medium effort (`EFFORT` in run.py, `bank new --effort`, the
-ladder `bank.EFFORT_LADDER`: xhigh to high, high to medium) also runs an effort probe: the SAME
-model one effort lower, on the same sampled cases, through `answer(case, model=..., effort=...)`.
-Rows to `RUNS/<stamp>.effort-probe.jsonl`, the comparison under `downshift.effort` in
-`RELEASE.json`, one line, e.g. `probe effort high on 20 cases: 18/20 vs xhigh 19/20
-(claude-opus-5-5), 2 diffs (ids ...)`. It never changes `passed`; `--no-probe` skips both probes.
+A standard run.py declares constants and two hooks, and hands the run to the library:
 
-`trimwrit bank check --dir <path>` reads every `RELEASE.json` under a directory and exits 1 on one
-without the envelope. The repository this came from held 15 of them in 15 shapes, and its door
-read `passed` while one bank wrote `released: false`.
+```python
+MODEL = "claude-sonnet-5-5"          # a full model id, or None for a deterministic bank
+EFFORT = "medium"                    # None when MODEL is None
+BAR = {"accuracy": 0.9}              # the same line in CODEBOOK.md section 2; n_min optional
+LABEL_SOURCE = "the support lead, by hand"
+
+def answer(case, model=MODEL, effort=EFFORT):   # answer(case) when MODEL is None
+    ...                                          # the producer's own call; it reports its cost
+                                                 # with bank.note_usage(envelope)
+def grade(case, got):
+    return got == case["expected"]
+
+if __name__ == "__main__":
+    sys.exit(bank.main(__file__))
+```
+
+Optional: `FIELDS` (canonical key to row key), `JOBS`, `WAIVE`, and the hooks `score(rows)`,
+`ideal(case)`, `mutate(case, ideal)`, `cache_key(case)`, `stamp()`. No other function is
+called. A run.py with its own `main`, argparse, or a call to `write_release`, `release_doc` or
+`run_path` is refused.
+
+`bank.main` (trimwrit/bank_run.py) is the whole runner. `python3 run.py` runs a release: the
+self check, every case answered and graded, a repeat sample, the downshift probes, then
+`RUNS/<stamp>.jsonl` and a schema 2 `RELEASE.json` (the eight envelope keys plus effort,
+inputs_sha, bar_sha, bar_since, usage, wall_s, repeats, splits, engine, standard). Exit 0 passed,
+1 below the bar, 65 refused (each refusal one JSON line on stderr), 2 no such engine. Its flags:
+
+| flag | does |
+|---|---|
+| `--self-check` (`--offline`) | lint plus the grader mutation; no model call, nothing written |
+| `--ids a,b`, `--split dev\|holdout` | a partial run: graded and printed, no release |
+| `--repeats K`, `--repeat-sample S` | repeat passes (default 1) over a sample (default 8) |
+| `--no-probe`, `--probe-sample N` | skip or size the downshift probes (default 20) |
+| `--jobs N` | engine threads (default `JOBS`, else 4) |
+| `--engine trimwrit\|inspect` | `inspect` runs on Inspect AI, installed in a separate venv |
+| `--json` | print the release |
+
+The downshift probes are the old scaffold's: a bank grading a top-tier model (`bank.SMALLER`:
+opus to sonnet, fable to opus) asks ONE smaller model the same question on a deterministic
+sample, and a bank above medium effort (`bank.EFFORT_LADDER`) asks the same model one effort
+lower. Their summaries go under `downshift` and `downshift.effort`; no probe changes `passed`.
+
+### The rules
+
+`bank.lint(bank)` reads the bank statically (it imports nothing); `bank.self_check(bank)` adds
+the grader mutation. Each refusal names its rule, what it saw, and the exact fix.
+
+| rule | refuses | lifted by |
+|---|---|---|
+| `bar-moved` | a BAR not written in CODEBOOK.md section 2, or changed since the release with no dated line | the line `accuracy >= 0.9` in section 2; `- <date>: bar changed from ... to ..., because ...` in section 3 |
+| `grader-cannot-fail` | a grader that refuses the expected answer, or accepts a wrong one | compare `got` with `case["expected"]`, or define `mutate(case, ideal)` |
+| `label-by-judged-model` | rows with no label source, or labeled by the judged model or its family | `LABEL_SOURCE`, or relabel by a person or another family |
+| `no-holdout` | fewer holdout cases than max(5, a fifth of n) | `"split": "holdout"` on more rows, or a dated `WAIVE` |
+| `corpus-too-small` | fewer than 30 cases | more labeled cases, or a dated `WAIVE` |
+| `bespoke-runner` | its own main, argparse, a release writer, no `bank.main` guard, no answer or grade | the shape above (`trimwrit bank migrate`) |
+| `corpus-changed-since-release` | inputs edited after the release (the release reads as not released) | rerun `python3 run.py` |
+| `model-not-pinned` | an alias or latest pointer, a missing EFFORT, a model a deterministic bank calls | a full model id and its effort, or `MODEL = None` |
+| `cost-not-recorded` | a model bank whose answers report no call | call through a path that calls `bank.note_usage` |
+| `no-repeat` | `--repeats 0` on a release, a deterministic bank answering differently on a repeat | the default repeats; a pure `answer()` |
+| `corpus-untyped` | no CORPUS.jsonl, a row lacking id, input, expected or why, a duplicate id, a bad split | the keys on every row, or `FIELDS` |
+
+`WAIVE = {"corpus-too-small": {"since": "2026-11-14", "why": "..."}}` in run.py lifts
+`corpus-too-small` or `no-holdout` only, for 90 days from `since`.
+
+### Moving a project's banks: waivers, check --strict, migrate, parity
+
+A project migrating many banks keeps the rules each does not meet yet in
+`.trimwrit/bank-waivers.json`:
+
+```json
+{"since": "2026-11-14", "why": "the standard landed",
+ "banks": {"career/x-evals": ["no-holdout"]},
+ "custom_runners": {"career/y-evals": "its own loop"},
+ "hand_look": {"career/z-evals": "read by a person"},
+ "exclude": ["career/drafts"]}
+```
+
+`bank.main` reads the nearest list above the bank: a refusal of a rule listed for that bank is
+printed as `{"waived": ...}` and named under `waived` in the release, never an exit 65. Any
+other rule is refused as before.
+
+```
+trimwrit bank check --strict --dir career [--waivers F] [--json]
+trimwrit bank check --strict --dir career --write-waivers --why "the standard landed"
+trimwrit bank check --strict --dir career --shrink-waivers
+```
+
+`check --strict` finds every bank under the directory (a `*-evals` directory, or one holding
+RELEASE.json, CORPUS.jsonl or CODEBOOK.md), lints each, runs `run.py --self-check` for a bank
+with no waiver entry, and prints one line per failing refusal, then the counts: on the
+standard, waived, failing, custom runners, hand look, excluded, and the waived rules a bank no
+longer triggers. Exit 1 on a failing bank. `--write-waivers` writes the list once from today's
+refusals; it refuses when the list exists, because the list only shrinks. `--shrink-waivers`
+drops the rules no bank triggers any more. `bank.check_strict(root, rel_dir)` returns the same
+result for a project's own test.
+
+```
+trimwrit bank migrate career/x-evals --write --label-source "the ops lead" --legacy-out old/run.py
+python3 career/x-evals/run.py
+trimwrit bank parity career/x-evals --legacy old/run.py
+```
+
+`migrate` rewrites a run.py laid out by the old scaffold: it removes its `main`, its `__main__`
+guard and `import argparse`, adds `import sys` and `LABEL_SOURCE` when missing, sets `EFFORT =
+None` when `MODEL` is None, and appends the `bank.main` guard; every other line stays byte
+identical. Without `--write` it prints the diff and the refusals left. `parity` replays the old
+runner on the answers of the new run (no producer call), captures the release it would have
+written, and compares `passed`, `n` and every BAR metric with the new RELEASE.json: exit 0 when
+they agree, 1 with each difference when not.
+
+`trimwrit bank check --dir <path>` (not strict) still reads every `RELEASE.json` under a
+directory and exits 1 on one without the envelope. The producer's door reads
+`bank.released(path)`: true only for an enveloped release with `passed: true`, and for schema 2
+only while its inputs are the ones graded.
 
 ### Reuse or build, and which banks run
 
@@ -1067,7 +1166,7 @@ instead of passing.
 | `trimwrit audit` | one table for every harness on the machine, and which ones have no case |
 | `trimwrit adopt` | bring the rules written before trimwrit existed into its registry, with no case |
 | `trimwrit map` | every harness of every repo as a coverage tree, in one self contained page |
-| `trimwrit bank` | `new` lays out an eval bank on the shared kit, `check` reads every RELEASE.json against its envelope, `route` says reuse, extend or new for a key, `explain` lists the banks that run on it, `facets` routes it per axis |
+| `trimwrit bank` | `new` lays out a bank on the standard shape, `check` reads every RELEASE.json against its envelope, `check --strict` holds every bank to the standard and the waiver list, `migrate` rewrites an old scaffold run.py, `parity` replays its old runner on the new answers, `route` says reuse, extend or new for a key, `explain` lists the banks that run on it, `facets` routes it per axis |
 
 ## See it
 
