@@ -6,7 +6,9 @@ a top level `def main` parsing argparse flags, writing RUNS/ and RELEASE.json, a
 `if __name__ == "__main__": sys.exit(main())`. `migrate` removes those (and `import argparse`
 when nothing else uses it), makes sure of `import sys`, names LABEL_SOURCE when given, sets
 EFFORT to None in a deterministic bank (MODEL = None), and appends the canonical tail
-`sys.exit(bank.main(__file__))`. It works on the source text by line ranges (ast lineno and
+`sys.exit(bank.main(__file__))`. A model bank with no EFFORT gets EFFORT = "model-default" (what
+`claude -p` runs without --effort) when no python file of the bank names an effort; otherwise
+EFFORT stays absent and its refusal is left for a person. It works on the source text by line ranges (ast lineno and
 end_lineno): every other line, comments included, stays byte identical.
 
 THE PARITY REPLAY. After the migrated bank ran once on bank.main, `parity` loads the OLD run.py
@@ -25,6 +27,7 @@ import io
 import itertools
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -107,9 +110,11 @@ class _Edits(object):
         return "".join(out)
 
 
-def _migrated(old, label_source):
-    """(new text, removed labels) of the run.py source `old`; BankError when it does not parse
-    or lacks answer() or grade()."""
+def _migrated(old, label_source, effort_named=True):
+    """(new text, removed labels, added labels) of the run.py source `old`; BankError when it
+    does not parse or lacks answer() or grade(). A model bank with no EFFORT gets
+    EFFORT = "model-default" unless `effort_named` (a python file of the bank names an effort:
+    then the CLI default is not what runs, and EFFORT stays absent for a person to name)."""
     b = _bank()
     try:
         tree = ast.parse(old)
@@ -175,18 +180,26 @@ def _migrated(old, label_source):
         node = assigns["EFFORT"]
         ed.put(node.lineno, node.end_lineno, "EFFORT = None" + rest_of(node))
         labels.append((node.lineno, "EFFORT = {!r} (MODEL is None)".format(effort)))
+    added = []
+    model = values["MODEL"]
+    if (model is not None and model is not bank_lint.ABSENT and "MODEL" in assigns
+            and "EFFORT" not in assigns and not effort_named):
+        ed.insert(assigns["MODEL"].end_lineno, 'EFFORT = "model-default"' + nl)
+        added.append('EFFORT = "model-default"')
     has_sys = any(isinstance(n, ast.Import) and any(a.name == "sys" and not a.asname
                                                     for a in n.names) for n in tree.body)
     if not has_sys:
         ed.insert(_import_anchor(tree, lines), "import sys" + nl)
+        added.append("import sys")
     if label_source is not None and "LABEL_SOURCE" not in assigns:
         line = "LABEL_SOURCE = {!r}".format(label_source) + nl
+        added.append(line.strip())
         if "BAR" in assigns:
             ed.insert(assigns["BAR"].end_lineno, line)
         else:
             ed.insert(_start(defs["answer"]) - 1, line + nl + nl)
     new = ed.text().rstrip() + TAIL.replace("\n", nl)
-    return new, [label for _, label in sorted(labels)]
+    return new, [label for _, label in sorted(labels)], added
 
 
 def _import_anchor(tree, lines):
@@ -209,6 +222,14 @@ def _import_anchor(tree, lines):
         elif not isinstance(node, ast.ImportFrom):
             break
     return max(anchor, comments)
+
+
+def _names_effort(path):
+    """True when the file at `path` holds the word effort (any case)."""
+    try:
+        return re.search(r"\beffort\b", _read(path), re.IGNORECASE) is not None
+    except (OSError, ValueError):
+        return False
 
 
 def _main_references(text):
@@ -255,8 +276,10 @@ def migrate(bank_dir, label_source=None, write=False):
         old = _read(path)
     except OSError as exc:
         raise b.BankError("{}: no run.py to migrate ({})".format(bank_dir, exc))
+    effort_named = any(_names_effort(os.path.join(bank_dir, f))
+                       for f in bank_lint._bank_python_files(bank_dir))
     try:
-        new, removed = _migrated(old, label_source)
+        new, removed, added = _migrated(old, label_source, effort_named)
     except b.BankError as exc:
         raise b.BankError("{}: {}".format(path, exc))
     if write:
@@ -272,7 +295,8 @@ def migrate(bank_dir, label_source=None, write=False):
             "remove that use of main() from {}: bank.main(__file__) is the whole runner"
             .format(path)).as_dict())
     return {"bank": bank_dir, "lines_before": len(old.splitlines()),
-            "lines_after": len(new.splitlines()), "removed": removed, "old_text": old,
+            "lines_after": len(new.splitlines()), "removed": removed, "added": added,
+            "old_text": old,
             "new_text": new, "refusals_left": left}
 
 

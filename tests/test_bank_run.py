@@ -161,7 +161,7 @@ def test_an_engine_given_in_engine_impls_runs_the_cases_and_names_the_release(tm
                   body=NOTE + "\n" + PARITY)
     code, _, _, refusals = run(d, "--engine", "fake", engine_impls={"fake": fake})
     assert code == 0 and refusals == []
-    assert seen == [40, 8], "the main phase and the repeat both went through the engine"
+    assert seen == [1, 39, 8], "the canary, the main phase and the repeat went through it"
     doc = release(d)
     assert doc["engine"] == "fake"
     assert all(r["usage"]["calls"] == 1 for r in run_rows(d, doc["run"]))
@@ -548,9 +548,16 @@ def test_a_raising_grader_does_not_hide_a_missing_cost_record(tmp_path):
         "    if got is None:\n        return False\n"
         "    if case['id'] == 'c05':\n        raise ValueError('grader broke')\n"
         "    return _grade(case, got)\n"))
+    # the canary case records its call, so the run reaches the full cost check
+    canary = bank.probe_sample(bank.corpus(str(d)), 1)[0]["id"]
+    text = (d / "run.py").read_text().replace(
+        "def answer(case, model=MODEL, effort=EFFORT):\n",
+        "def answer(case, model=MODEL, effort=EFFORT):\n    if case['id'] == %r:\n        %s\n"
+        % (canary, NOTE))
+    (d / "run.py").write_text(text)
     code, _, _, refusals = run(d)
     assert code == 65 and "cost-not-recorded" in [r["rule"] for r in refusals]
-    assert "40 answered cases" in [r for r in refusals if r["rule"] == "cost-not-recorded"][0][
+    assert "39 answered cases" in [r for r in refusals if r["rule"] == "cost-not-recorded"][0][
         "what"]
 
 
@@ -634,3 +641,80 @@ def test_a_release_waived_key_is_a_list_of_rule_ids(tmp_path):
     for bad in ("label-by-judged-model", ["not-a-rule"]):
         assert any("waived" in p for p in bank.envelope_problems(dict(doc, waived=bad))), bad
     assert bank.envelope_problems(dict(doc, waived=["no-holdout"])) == []
+
+
+# ------------------------------------------------------------------ final review fixes
+
+def _waive(root_dir, d, rules):
+    (root_dir / ".git").mkdir(exist_ok=True)
+    (root_dir / ".trimwrit").mkdir(exist_ok=True)
+    rel = os.path.relpath(str(d), str(root_dir)).replace(os.sep, "/")
+    (root_dir / ".trimwrit" / "bank-waivers.json").write_text(json.dumps(
+        {"since": "2026-11-14", "why": "migration", "banks": {rel: rules}}))
+
+
+@pytest.mark.parametrize("model, effort, fix", [
+    ("claude-sonnet-5-5", None, 'EFFORT = "model-default"'),
+    ("opus", "medium", 'MODEL = "<full model id'),
+])
+def test_a_shape_a_schema_2_release_cannot_record_is_refused_before_any_call(
+        tmp_path, model, effort, fix):
+    """C1 (a): waived on model-not-pinned, the bank still cannot write a schema 2 release with
+    that MODEL and EFFORT: refused before the main phase, whatever the waiver says."""
+    log = tmp_path / "calls.log"
+    d = make_bank(tmp_path, model=model, effort=effort, body=NOTE + "\n" + counting(log))
+    _waive(tmp_path, d, ["model-not-pinned"])
+    code, _, _, refusals = run(d)
+    assert code == 65 and calls(log) == 0
+    hits = [r for r in refusals if r["rule"] == "model-not-pinned"]
+    assert hits and fix in hits[0]["fix"]
+    assert not (d / "RELEASE.json").exists()
+
+
+def test_a_silent_model_bank_is_refused_on_its_canary_and_caches_nothing(tmp_path):
+    """M1: no answer of a refused run is reused (its cost was never recorded); the canary stops
+    the run after one call, and the rows answered go to RUNS as evidence."""
+    log = tmp_path / "calls.log"
+    d = make_bank(tmp_path, model="claude-sonnet-5-5", effort="medium", body=counting(log),
+                  extra="def cache_key(case):\n    return case['id']\n")
+    code, _, _, refusals = run(d)
+    assert code == 65 and calls(log) == 1
+    assert [r["rule"] for r in refusals] == ["cost-not-recorded"]
+    assert not (d / "RUNS" / bank.CACHE_FILE).exists()
+    runs = [f for f in os.listdir(str(d / "RUNS")) if f.endswith(".jsonl")]
+    assert len(runs) == 1
+    rows = run_rows(d, runs[0][:-len(".jsonl")])
+    assert len(rows) == 1 and rows[0]["refused"] == "cost-not-recorded"
+    run(d)
+    assert calls(log) == 2, "nothing of the refused run was cached"
+
+
+def test_a_main_phase_refusal_writes_its_rows_first(tmp_path):
+    d = make_bank(tmp_path, model="claude-sonnet-5-5", effort="medium",
+                  body=NOTE.replace('"model": model', '"model": "claude-haiku-4-5"') + "\n"
+                  + PARITY)
+    code, _, _, refusals = run(d)
+    assert code == 65 and refusals[0]["rule"] == "model-not-pinned"
+    runs = [f for f in os.listdir(str(d / "RUNS")) if f.endswith(".jsonl")]
+    assert len(runs) == 1 and not (d / "RELEASE.json").exists()
+
+
+def test_a_malformed_waiver_list_exits_2_with_one_line_naming_it(tmp_path):
+    d = make_bank(tmp_path)
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".trimwrit").mkdir()
+    (tmp_path / ".trimwrit" / "bank-waivers.json").write_text("{not json")
+    code, out, err, _ = run(d)
+    assert code == 2
+    lines = [x for x in err.splitlines() if x.strip()]
+    assert len(lines) == 1 and "bank-waivers.json" in lines[0]
+    assert "fix .trimwrit/bank-waivers.json" in lines[0]
+
+
+def test_a_migrated_bank_with_a_schema_1_release_still_runs_to_schema_2(tmp_path):
+    d = make_bank(tmp_path)
+    bank.write_release(str(d), passed=True, n=1, bar={"accuracy": 0.9}, model=None)
+    assert "bespoke-runner" in {r.rule for r in bank.lint(str(d))}
+    code, _, err, refusals = run(d)
+    assert code == 0 and refusals == [], err
+    assert release(d)["schema"] == 2 and bank.lint(str(d)) == []

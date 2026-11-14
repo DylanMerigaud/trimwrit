@@ -248,6 +248,7 @@ class _Cache(object):
         self.path = os.path.join(bank_dir, _bank.RUNS, CACHE_FILE)
         self.rows = {}
         self.legacy = {}
+        self.pending = []  # fresh answers, appended to the file by flush() once the run holds
         self.torn = 0
         self.lock = threading.Lock()
         if key_fn is None or not os.path.isfile(self.path):
@@ -289,8 +290,18 @@ class _Cache(object):
             return  # an answer JSON cannot hold is answered afresh next time
         with self.lock:
             self.rows[_key_text(key)] = got
-            os.makedirs(os.path.dirname(self.path), exist_ok=True)
-            with open(self.path, "a", encoding="utf-8") as fh:
+            self.pending.append(line)
+
+    def flush(self):
+        """Append the fresh answers to RUNS/cache.jsonl. Called once the cost check held: an
+        answer of a refused run (no cost recorded, another model) is never reused."""
+        with self.lock:
+            lines, self.pending = self.pending, []
+        if not lines:
+            return
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        with open(self.path, "a", encoding="utf-8") as fh:
+            for line in lines:
                 fh.write(line + "\n")
 
 
@@ -455,6 +466,68 @@ def _parser():
     return ap
 
 
+def _shape_refusals(bank_dir, run_file, model, effort):
+    """The model-not-pinned refusals of a MODEL and EFFORT a schema 2 release cannot record
+    (bank.model_problems), each with the line that fixes it."""
+    out = []
+    for problem in _bank.model_problems(model, effort):
+        if problem.startswith("`model`"):
+            fix = ("set 'MODEL = \"<full model id, e.g. claude-sonnet-5-5>\"' in {}: a schema 2 "
+                   "release records the full id the bank grades".format(run_file))
+        elif model is None:
+            fix = "set 'EFFORT = None' in {}: a deterministic bank has no effort".format(run_file)
+        else:
+            fix = ("set 'EFFORT = \"model-default\"' in {} (or the effort the producer runs at: "
+                   "one of {})".format(run_file, ", ".join(_bank.EFFORTS)))
+        out.append(_bank.Refusal("model-not-pinned", bank_dir,
+                                 "a schema 2 release cannot record this run: " + problem, fix))
+    return out
+
+
+def _cost_refusals(bank_dir, run_file, model, results):
+    """cost-not-recorded and model-not-pinned refusals of a model bank's answered cases,
+    `results` [(id, phase result)]: a fresh answer that recorded no call, or whose calls never
+    reached MODEL (side models beside it stay allowed)."""
+    answered = [(i, r) for i, r in results if not r["cached"] and not r["error"]]
+    out = []
+    silent = [str(i) for i, r in answered if r["usage"]["calls"] == 0]
+    if silent:
+        out.append(_bank.Refusal(
+            "cost-not-recorded", bank_dir,
+            "{} answered cases recorded no model call (first: {})".format(
+                len(silent), ", ".join(silent[:5])),
+            "call the model through a path that calls trimwrit.bank.note_usage(envelope), "
+            "e.g. growth-cockpit career/evals-core/headless.py"))
+    stray = [(i, r) for i, r in answered if r["usage"]["calls"]
+             and not any(_model_match(m, model) for m in r["usage"]["models"])]
+    if stray:
+        first_id, first = stray[0]
+        out.append(_bank.Refusal(
+            "model-not-pinned", bank_dir,
+            "{} cases never called MODEL {}: case {} called {}".format(
+                len(stray), model, first_id,
+                ", ".join(sorted(first["usage"]["models"])) or "an unnamed model"),
+            "make answer() call the model it is given (model=MODEL) in {}".format(run_file)))
+    return out
+
+
+def _write_refused(bank_dir, cases, results, refusals):
+    """The rows a refused run answered, to RUNS/<stamp>.refused.jsonl: what was paid for, kept
+    as evidence (never a run, never the cache)."""
+    rows = []
+    for case in cases:
+        r = results.get(case["id"])
+        if r is None:
+            continue
+        row = {"id": case["id"], "split": case.get("split"), "got": r["got"],
+               "cached": r["cached"], "refused": refusals[0].rule,
+               "usage": {k: v for k, v in _public(r["usage"]).items() if k != "cached"}}
+        if r["error"]:
+            row["error"] = r["error"]
+        rows.append(row)
+    _write_rows(_bank.run_path(bank_dir, _bank.run_stamp(), _bank.REFUSED_EXT), rows)
+
+
 # ------------------------------------------------------------------ main
 
 def main(run_file, argv=None, module=None, engine_impls=None):
@@ -486,11 +559,19 @@ def main(run_file, argv=None, module=None, engine_impls=None):
         return 0
     # a release whose inputs changed is refused to its readers (lint, bank.released), never to
     # the run: the rerun is that refusal's fix
-    refusals = [r for r in refusals if r.rule != "corpus-changed-since-release"]
+    # a release not written by bank.main (schema 1) is refused to its readers too: the rerun
+    # writes the schema 2 one
+    refusals = [r for r in refusals if r.rule != "corpus-changed-since-release"
+                and not getattr(r, "stale_release", False)]
     # the project's waiver list (.trimwrit/bank-waivers.json): a bank migrating rule by rule
     # still runs, each waived refusal printed and named in the release
     from .bank_check import project_waivers  # noqa: PLC0415
-    rel, waivable = project_waivers(bank_dir)
+    try:
+        rel, waivable = project_waivers(bank_dir)
+    except _bank.BankError as exc:
+        # not a rule of the standard (bank.RULES): the project's list, so exit 2 like a bad flag
+        print("refused: {} (fix .trimwrit/bank-waivers.json)".format(exc), file=sys.stderr)
+        return EXIT_ENGINE
     waived = set()
 
     def unwaived(found):
@@ -520,6 +601,9 @@ def main(run_file, argv=None, module=None, engine_impls=None):
                 run_file, REPEAT_SAMPLE)))
     model = getattr(module, "MODEL", None)
     effort = getattr(module, "EFFORT", None)
+    if not partial:
+        # unwaivable: a release run must end in a schema 2 release, which cannot record this
+        refusals += _shape_refusals(bank_dir, run_file, model, effort)
     bar = getattr(module, "BAR", None)
     score_fn = getattr(module, "score", None)
     metrics = _metrics(bar)
@@ -594,7 +678,20 @@ def main(run_file, argv=None, module=None, engine_impls=None):
     engine_kw = engine_log = None
     if engine_name == "inspect":
         engine_kw = {"log_dir": os.path.join(bank_dir, _bank.RUNS, INSPECT_LOGS)}
-    main_res = _phase(engine, cases, answer, jobs, cache, engine_kw)
+    main_res = {}
+    if model is not None and not partial and cases:
+        # the canary: one case answered alone first, so a bank that records no cost (or calls
+        # another model) is refused after one call, not after a paid main phase
+        canary = _bank.probe_sample(cases, 1)[0]
+        main_res = _phase(engine, [canary], answer, jobs, cache, engine_kw)
+        refused = unwaived(_cost_refusals(bank_dir, run_file, model,
+                                          [(canary["id"], main_res[canary["id"]])]))
+        if refused:
+            _write_refused(bank_dir, [canary], main_res, refused)
+            return _refuse(refused)
+    rest = [c for c in cases if c["id"] not in main_res]
+    if rest:
+        main_res.update(_phase(engine, rest, answer, jobs, cache, engine_kw))
     if engine_kw is not None:
         engine_log = getattr(sys.modules.get(getattr(engine, "__module__", None)), "LAST_LOG",
                              None)
@@ -635,29 +732,13 @@ def main(run_file, argv=None, module=None, engine_impls=None):
             "set 'MODEL = \"<the full model id answer() calls>\"' and EFFORT in {}".format(
                 run_file)))
     if model is not None:
-        answered = [r for r in rows if not r["cached"] and not main_res[r["id"]]["error"]]
-        silent = [str(r["id"]) for r in answered if r["usage"]["calls"] == 0]
-        if silent:
-            refusals.append(_bank.Refusal(
-                "cost-not-recorded", bank_dir,
-                "{} answered cases recorded no model call (first: {})".format(
-                    len(silent), ", ".join(silent[:5])),
-                "call the model through a path that calls trimwrit.bank.note_usage(envelope), "
-                "e.g. growth-cockpit career/evals-core/headless.py"))
-        # per case: a call that never reached MODEL; side models beside it stay allowed
-        stray = [r for r in answered if r["usage"]["calls"]
-                 and not any(_model_match(m, model) for m in r["usage"]["models"])]
-        if stray:
-            first = stray[0]
-            refusals.append(_bank.Refusal(
-                "model-not-pinned", bank_dir,
-                "{} cases never called MODEL {}: case {} called {}".format(
-                    len(stray), model, first["id"],
-                    ", ".join(first["usage"]["models"]) or "an unnamed model"),
-                "make answer() call the model it is given (model=MODEL) in {}".format(run_file)))
+        refusals += _cost_refusals(bank_dir, run_file, model,
+                                   [(c["id"], main_res[c["id"]]) for c in cases])
     refusals = unwaived(refusals)
     if refusals:
+        _write_refused(bank_dir, cases, main_res, refusals)
         return _refuse(refusals)
+    cache.flush()
 
     score_rows = rows
     scores = dict(score_fn(score_rows))

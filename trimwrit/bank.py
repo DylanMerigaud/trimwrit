@@ -133,6 +133,8 @@ SMALLER = {
 }
 PROBE_SAMPLE = 20
 PROBE_EFFORT_EXT = ".effort-probe.jsonl"
+# the rows a refused run answered before its refusal (bank.main): evidence, never a run
+REFUSED_EXT = ".refused.jsonl"
 # the effort ladder: the effort a bank's producer runs at -> the ONE cheaper effort its probe
 # asks of the same model. Medium and below are not here: medium is already the default.
 EFFORT_LADDER = {"xhigh": "high", "high": "medium"}
@@ -374,7 +376,8 @@ def latest_run(bank, pattern="*"):
     found = sorted(p for p in glob.glob(os.path.join(bank, RUNS, pattern)) if os.path.isfile(p)
                    and os.path.basename(p) != CACHE_FILE
                    and (not os.path.basename(p).endswith((PROBE_EXT, PROBE_EFFORT_EXT))
-                        or "probe" in pattern))
+                        or "probe" in pattern)
+                   and (not os.path.basename(p).endswith(REFUSED_EXT) or "refused" in pattern))
     return found[-1] if found else None
 
 
@@ -454,10 +457,10 @@ def _usage_problems(where, u):
     return out
 
 
-def _schema2_problems(doc):
-    """[str] of what keeps a schema 2 `doc` (every key of ENVELOPE_2 present) typed."""
+def model_problems(model, effort):
+    """[str] of what keeps (model, effort) from being recorded by a schema 2 release: model null
+    or a full id, effort null iff model is null, else one of EFFORTS or model-default."""
     out = []
-    model, effort = doc["model"], doc["effort"]
     if model is not None and not _is_full_id(model):
         out.append("`model` {!r} is neither null nor a full model id".format(model))
     if (model is None) != (effort is None):
@@ -465,6 +468,12 @@ def _schema2_problems(doc):
             effort, model))
     elif effort is not None and effort not in EFFORTS + ("model-default",):
         out.append("`effort` {!r} is not one of {}".format(effort, ", ".join(EFFORTS)))
+    return out
+
+
+def _schema2_problems(doc):
+    """[str] of what keeps a schema 2 `doc` (every key of ENVELOPE_2 present) typed."""
+    out = model_problems(doc["model"], doc["effort"])
     for key in ("inputs_sha", "bar_sha"):
         if not isinstance(doc[key], str) or not HEX12_RE.match(doc[key]):
             out.append("`{}` is not 12 hex".format(key))

@@ -304,11 +304,7 @@ class _Lint(object):
                             "run.py imports from argparse at line {}".format(node.lineno),
                             "delete the argparse import from {}: bank.main(__file__) parses "
                             "the flags".format(rel))
-            elif isinstance(node, ast.Call) and _func_name(node) in FORBIDDEN_CALLS:
-                self.refuse("bespoke-runner",
-                            "run.py calls {}() at line {}".format(_func_name(node), node.lineno),
-                            "delete the {}() call from {}: bank.main(__file__) writes the runs "
-                            "and the release".format(_func_name(node), rel))
+        self.check_forbidden_calls(tree)
         guards = [n for n in tree.body if _is_main_guard(n)]
         calling = [g for g in guards if _calls_bank_main(g)]
         if calling and not any(_exact_guard(g) for g in calling):
@@ -329,6 +325,27 @@ class _Lint(object):
                 self.refuse("bespoke-runner", "run.py defines no top level {}()".format(hook),
                             "add '{}' to {}".format(line, rel))
         return defs
+
+    def check_forbidden_calls(self, run_tree):
+        """A call of write_release, release_doc or run_path in any python file of the bank
+        (run.py, build.py, ...; tests, RUNS/ and caches left out): bank.main alone writes."""
+        for rel_py in _bank_python_files(self.bank_dir):
+            path = os.path.join(self.bank_dir, rel_py)
+            if rel_py == RUN_FILE:
+                tree = run_tree
+            else:
+                try:
+                    with open(path, encoding="utf-8") as fh:
+                        tree = ast.parse(fh.read(), filename=path)
+                except (OSError, ValueError, SyntaxError):
+                    continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call) and _func_name(node) in FORBIDDEN_CALLS:
+                    self.refuse("bespoke-runner",
+                                "{} calls {}() at line {}".format(rel_py, _func_name(node),
+                                                                  node.lineno),
+                                "delete the {}() call from {}: bank.main(__file__) writes the "
+                                "runs and the release".format(_func_name(node), path))
 
     def value(self, values, name):
         v = values[name]
@@ -562,6 +579,13 @@ class _Lint(object):
     def check_release(self):
         b = _bank()
         doc = b.read_release(self.bank_dir)
+        if doc is not None and doc.get("schema") != 2 and not _runner_waived(self.bank_dir):
+            r = b.Refusal("bespoke-runner", self.bank_dir,
+                          "RELEASE.json is schema {!r}: bank.main did not write it".format(
+                              doc.get("schema")),
+                          "rerun python3 {}".format(self.run))
+            r.stale_release = True  # the rerun is the fix: bank.main never refuses itself on it
+            self.out.append(r)
         if doc is None or doc.get("schema") != 2:
             return
         now = b.inputs_sha(self.bank_dir)
@@ -611,6 +635,31 @@ class _Lint(object):
                 continue
             holds.add(rule)
         self.out = [r for r in self.out if r.rule not in holds] + extra
+
+
+def _bank_python_files(bank_dir):
+    """The .py files of the bank, relative and sorted: tests, RUNS/, caches and dot dirs left
+    out."""
+    b = _bank()
+    out = []
+    for dirpath, dirnames, filenames in os.walk(bank_dir):
+        dirnames[:] = sorted(d for d in dirnames
+                             if d not in b.NOT_INPUTS and not d.startswith("."))
+        for f in filenames:
+            if f.endswith(".py") and not b.TEST_FILE_RE.match(f):
+                out.append(os.path.relpath(os.path.join(dirpath, f), bank_dir).replace(
+                    os.sep, "/"))
+    return sorted(out)
+
+
+def _runner_waived(bank_dir):
+    """True when the project's waiver list lifts bespoke-runner for the bank (listed on it, or
+    a custom runner). An unreadable list lifts nothing."""
+    from .bank_check import project_waivers  # noqa: PLC0415
+    try:
+        return "bespoke-runner" in project_waivers(bank_dir)[1]
+    except _bank().BankError:
+        return False
 
 
 def _waiver_problem(entry, today):

@@ -958,15 +958,16 @@ the grader mutation. Each refusal names its rule, what it saw, and the exact fix
 | `label-by-judged-model` | rows with no label source, or labeled by the judged model or its family | `LABEL_SOURCE`, or relabel by a person or another family |
 | `no-holdout` | fewer holdout cases than max(5, a fifth of n) | `"split": "holdout"` on more rows, or a dated `WAIVE` |
 | `corpus-too-small` | fewer than 30 cases | more labeled cases, or a dated `WAIVE` |
-| `bespoke-runner` | its own main, argparse, a release writer, a guard other than `sys.exit(bank.main(__file__))`, no answer or grade | the shape above (`trimwrit bank migrate`), or a `custom_runners` entry in the waiver list |
-| `corpus-changed-since-release` | inputs edited after the release (the release reads as not released) | rerun `python3 run.py` |
-| `model-not-pinned` | an alias or latest pointer, a missing EFFORT, a model a deterministic bank calls | a full model id and its effort, or `MODEL = None` |
-| `cost-not-recorded` | a model bank whose answers report no call | call through a path that calls `bank.note_usage` |
+| `bespoke-runner` | its own main, argparse, a call of `write_release`, `release_doc` or `run_path` in any non-test .py of the bank, a guard other than `sys.exit(bank.main(__file__))`, no answer or grade, a RELEASE.json bank.main did not write (schema 1) | the shape above (`trimwrit bank migrate`), or a `custom_runners` entry in the waiver list |
+| `corpus-changed-since-release` | inputs edited after the release (the release reads as not released); `inputs_sha` covers every file of the bank but RELEASE.json, RUNS/ and its tests, so a living ledger appended to by hand does not belong in a bank directory | rerun `python3 run.py`; move a ledger out of the bank |
+| `model-not-pinned` | an alias or latest pointer, a missing EFFORT, a model a deterministic bank calls; a MODEL and EFFORT a schema 2 release cannot record is refused before any call, whatever the waiver list says | a full model id and its effort (`EFFORT = "model-default"` when the producer passes none), or `MODEL = None` |
+| `cost-not-recorded` | a model bank whose answers report no call (one canary case is answered alone first, so a silent bank stops after one call; a refused run's answers go to `RUNS/<stamp>.refused.jsonl`, never to the cache) | call through a path that calls `bank.note_usage` |
 | `no-repeat` | `--repeats 0` on a release, a deterministic bank answering differently on a repeat | the default repeats; a pure `answer()` |
 | `corpus-untyped` | no CORPUS.jsonl, a row lacking id, input, expected or why, a duplicate id, a bad split | the keys on every row, or `FIELDS` |
 
 `WAIVE = {"corpus-too-small": {"since": "2026-11-14", "why": "..."}}` in run.py lifts
-`corpus-too-small` or `no-holdout` only, for 90 days from `since`.
+`corpus-too-small` or `no-holdout` only, for 90 days from `since`. A renewal is a dated edit of
+`since` in git, reviewed like a bar change.
 
 ### Moving a project's banks: waivers, check --strict, migrate, parity
 

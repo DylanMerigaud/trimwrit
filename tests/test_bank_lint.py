@@ -396,3 +396,40 @@ def test_a_self_check_environment_forces_the_self_check_and_a_model_call_is_loud
             bank.note_usage({"model": "claude-sonnet-5-5"})
     with pytest.raises(bank.BankError, match="self check"):
         bank.note_usage({"model": "claude-sonnet-5-5"})
+
+
+# ------------------------------------------------------------------ final review fixes
+
+def test_a_release_not_written_by_bank_main_is_a_bespoke_runner(tmp_path):
+    d = make(tmp_path)
+    bank.write_release(str(d), passed=True, n=1, bar={"accuracy": 0.99}, model=None)
+    hits = [r for r in bank.lint(d, today=TODAY) if r.rule == "bespoke-runner"]
+    assert hits and "schema 1" in hits[0].what
+    assert hits[0].fix == "rerun python3 {}".format(os.path.join(str(d), "run.py"))
+    assert not bank.released(str(d)) or hits
+
+
+def test_a_schema_1_release_of_a_waived_or_custom_bank_is_not_refused_twice(tmp_path):
+    for key in ("banks", "custom_runners"):
+        root = tmp_path / key
+        root.mkdir()
+        (root / ".git").mkdir()
+        d = make(root)
+        bank.write_release(str(d), passed=True, n=1, bar={"accuracy": 0.9}, model=None)
+        (root / ".trimwrit").mkdir()
+        entry = {"b": ["bespoke-runner"]} if key == "banks" else {"b": "its own loop"}
+        (root / ".trimwrit" / "bank-waivers.json").write_text(json.dumps({key: entry}))
+        assert "bespoke-runner" not in rules(bank.lint(d, today=TODAY)), key
+
+
+def test_a_forbidden_call_in_any_python_file_of_the_bank_is_refused(tmp_path):
+    d = make(tmp_path)
+    (d / "build.py").write_text("from trimwrit import bank\nrows = bank.corpus('.')\n"
+                                "bank.write_release('.', passed=True, n=1, bar={}, model=None)\n")
+    (d / "test_publish.py").write_text("from trimwrit import bank\nbank.run_path('.', 's')\n")
+    (d / "RUNS").mkdir()
+    (d / "RUNS" / "old.py").write_text("bank.release_doc('.')\n")
+    hits = [r for r in bank.lint(d, today=TODAY) if r.rule == "bespoke-runner"]
+    assert [h.what for h in hits] == ["build.py calls write_release() at line 3"]
+    (d / "build.py").write_text("from trimwrit import bank\nrows = bank.corpus('.')\n")
+    assert bank.lint(d, today=TODAY) == []

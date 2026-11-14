@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.16.2, 2026-11-14
+
+- **A model and effort a schema 2 release cannot record are refused before any call.** A bank
+  waived on `model-not-pinned` with no EFFORT (or an alias MODEL) used to pay its whole run and
+  then crash at the release write. `bank.main` now checks the resolved MODEL and EFFORT first and
+  refuses with exit 65, waiver or not, naming the line to write (`EFFORT = "model-default"`).
+- `bank migrate` writes `EFFORT = "model-default"` on a model bank with no EFFORT when no python
+  file of the bank (tests left out) names an effort; otherwise EFFORT stays absent and its
+  refusal is listed.
+- `bespoke-runner` also covers a RELEASE.json bank.main did not write (schema 1), unless the
+  waiver list lifts bespoke-runner for the bank, and a `write_release`, `release_doc` or
+  `run_path` call in any non-test python file of the bank, not only run.py.
+- A model bank answers one canary case alone first: a bank that records no cost or calls
+  another model stops after one call. The answers of a refused run go to
+  `RUNS/<stamp>.refused.jsonl` and never to the cache, so a rerun cannot pass the cost check on
+  answers whose cost was never recorded.
+- A malformed `.trimwrit/bank-waivers.json` makes `bank.main` exit 2 with one line naming the
+  file and "fix .trimwrit/bank-waivers.json", not a traceback.
+- README: `inputs_sha` covers every non-test file of a bank (a living ledger does not belong in
+  one); a WAIVE renewal is a dated edit in git, reviewed like a bar change.
+
 ## 0.16.1, 2026-11-14
 
 - `trimwrit bank new --model none` writes a deterministic bank (`MODEL = None`, `EFFORT = None`),

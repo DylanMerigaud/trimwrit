@@ -375,3 +375,30 @@ def test_a_legacy_exit_at_import_and_a_silent_miss_say_why(tmp_path):
     p = bank.parity(str(d), str(quiet))
     assert p["parity"] is False
     assert any("wrote no release" in x and "the old door is shut" in x for x in p["diffs"])
+
+
+# ------------------------------------------------------------------ final review fixes
+
+MODEL_RUN = ("import argparse\nimport sys\nfrom trimwrit import bank\n\n"
+             "MODEL = 'claude-sonnet-5-5'\nBAR = {'accuracy': 0.9}\nLABEL_SOURCE = 'a person'\n"
+             "\n\ndef answer(case, model=MODEL):\n    return 'yes'\n\n\n"
+             "def grade(case, got):\n    return got == case['expected']\n\n\n"
+             "def main(argv=None):\n    return 0\n\n\n"
+             "if __name__ == \"__main__\":\n    sys.exit(main())\n")
+
+
+def test_a_model_bank_with_no_effort_gets_the_cli_default_when_nothing_names_one(tmp_path):
+    d = _plain(tmp_path / "m-evals", MODEL_RUN)
+    (d / "test_m.py").write_text("EFFORT_SEEN = 'effort' # tests never count\n")
+    res = bank.migrate(str(d))
+    assert "MODEL = 'claude-sonnet-5-5'\nEFFORT = \"model-default\"\n" in res["new_text"]
+    assert "model-not-pinned" not in rules(res["refusals_left"])
+
+
+def test_a_model_bank_whose_code_names_an_effort_keeps_effort_absent(tmp_path):
+    d = _plain(tmp_path / "m-evals", MODEL_RUN)
+    (d / "producer.py").write_text("def call(prompt, effort='high'):\n    return prompt\n")
+    res = bank.migrate(str(d))
+    assert "EFFORT" not in res["new_text"]
+    hits = [r for r in res["refusals_left"] if r["rule"] == "model-not-pinned"]
+    assert hits and "EFFORT absent" in hits[0]["what"]

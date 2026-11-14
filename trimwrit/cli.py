@@ -1358,7 +1358,9 @@ def cmd_bank(args):
         print("wrote", rel)
     print("next: fill CODEBOOK.md section 0 and CORPUS.jsonl with real cases (30 at least), "
           "write answer() and grade() in {0}/run.py, name LABEL_SOURCE, then `python3 "
-          "{0}/run.py --self-check` must pass before the first real run.".format(bank_rel))
+          "{0}/run.py --self-check` must pass before the first real run. The release's "
+          "inputs_sha covers every file of {0} but RELEASE.json, RUNS/ and its tests: keep a "
+          "living ledger outside the bank.".format(bank_rel))
     return 0
 
 
