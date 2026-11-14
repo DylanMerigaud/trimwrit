@@ -79,3 +79,19 @@ def eval_cases(name):
         for grader in case.graders:
             grader.update(samples.get(grader.get("name"), {}))
     return found
+
+
+def _focus_resend():
+    """gatekit's FOCUS_RESEND read from the source by ast, so no test imports one gatekit copy
+    over the copy a plugin under test loads."""
+    import ast
+    with open(os.path.join(ROOT, "gates", "gatekit", "trace.py"), encoding="utf-8") as fh:
+        tree = ast.parse(fh.read())
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "FOCUS_RESEND"
+                                                 for t in node.targets):
+            return ast.literal_eval(node.value)
+    raise AssertionError("gatekit trace.py has no FOCUS_RESEND")
+
+
+RESEND = _focus_resend()

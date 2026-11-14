@@ -14,7 +14,7 @@ import sys
 
 import pytest
 
-from gates._hook import ROOT, clean_env, eval_cases, plugin, rows, run_py, write_config
+from gates._hook import RESEND, ROOT, clean_env, eval_cases, plugin, rows, run_py, write_config
 
 NAME = "handback-gate"
 SCRIPT = "handback_gate.py"
@@ -289,7 +289,7 @@ def test_the_form_hand_back_blocks_until_the_chain_cap(tmp_path):
         body = json.loads(out)
         assert body["decision"] == "block"
         assert "throwaway phone number" in body["reason"]
-        assert body["reason"].endswith("(handback-gate)")
+        assert body["reason"].endswith("(handback-gate) " + RESEND)
     capped = json.loads(outs[3])
     assert "decision" not in capped and "did not clear it" in capped["systemMessage"]
     got = rows(os.path.join(str(tmp_path), "hook-health.jsonl"))
@@ -351,7 +351,7 @@ def test_reason_suffix_ends_the_block_reason(tmp_path):
     write_config(tmp_path, {NAME: {"reason_suffix": "See docs/asking.md."}})
     path = make_transcript(tmp_path, FORM)
     reason = blocked(run_py(NAME, SCRIPT, stop(path, "sfx"), tmp_path))
-    assert reason.endswith("(handback-gate) See docs/asking.md.")
+    assert reason.endswith("(handback-gate) See docs/asking.md. " + RESEND)
 
 
 def test_no_environment_variable_lifts_it(tmp_path):
@@ -650,7 +650,7 @@ def test_the_hook_lists_every_hand_back_in_its_block_reason(tmp_path):
     path = make_transcript(tmp_path, TWO)
     reason = blocked(run_py(NAME, SCRIPT, stop(path, "two"), tmp_path))
     assert reason.count("\n- (\"") == 3
-    assert reason.endswith("(handback-gate)")
+    assert reason.endswith("(handback-gate) " + RESEND)
 
 
 # ---- the prime: the rule reaches the producer before the next closing is drafted --------------

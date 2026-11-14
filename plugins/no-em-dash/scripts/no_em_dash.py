@@ -77,7 +77,7 @@ def body():
         print(trace.cap_message(HOOK, detail))
         return 0
     trace.witness("no-em-dash", "Stop", "forbidden_dash", payload)
-    sys.stderr.write(reason_text(found) + "\n")
+    sys.stderr.write(trace.stop_reason(reason_text(found), payload, message) + "\n")
     return 2
 
 

@@ -3,7 +3,7 @@
   "name": "oneshot-gate",
   "displayName": "oneshot-gate",
   "description": "Refuses, before its first request and at no cost, a claude -p session that disables every tool but still loads the whole harness (CLAUDE.md, memory, skills, hooks): a one-shot answer runs with --safe-mode or --bare.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": {
     "name": "Dylan Merigaud",
     "url": "https://github.com/DylanMerigaud"

@@ -269,7 +269,8 @@ def on_stop():
         return 0
     cfg = trace.plugin_settings(payload, root=PLUGIN_ROOT)
     compiled(cfg)  # a bad extra is a loud crash even on a message with no marker
-    marker = rule_without_door(transcript.final_text(payload), repo_root(payload), cfg)
+    final = transcript.final_text(payload)
+    marker = rule_without_door(final, repo_root(payload), cfg)
     if not marker:
         trace.chain_clear(HOOK, payload)
         return 0
@@ -277,8 +278,7 @@ def on_stop():
         print(trace.cap_message(HOOK, "rule marker: " + marker))
         return 0
     trace.witness("stop_rule_gate", "Stop", "rule_no_door", payload)
-    print(json.dumps({"decision": "block", "reason": reason_text(marker, cfg)},
-                     ensure_ascii=False))
+    print(trace.stop_block(reason_text(marker, cfg), payload, final))
     return 0
 
 

@@ -970,7 +970,8 @@ def on_stop():
         return 0
     cfg = trace.plugin_settings(payload, root=PLUGIN_ROOT)
     pattern(cfg)  # a bad name list or extra is a loud crash even on a clean message
-    found = handbacks_in(transcript.final_text(payload), cfg)
+    final = transcript.final_text(payload)
+    found = handbacks_in(final, cfg)
     if not found:
         trace.chain_clear(HOOK, payload)
         return 0
@@ -980,10 +981,8 @@ def on_stop():
         return 0
     trace.witness("handback_gate", "Stop", "handback_no_class", payload)
     record_refusal(payload, found)
-    drift = drift_text(found, transcript.final_text(payload),
-                       last_checked(payload.get("transcript_path") or ""))
-    print(json.dumps({"decision": "block", "reason": drift + reason_text(found, cfg)},
-                     ensure_ascii=False))
+    drift = drift_text(found, final, last_checked(payload.get("transcript_path") or ""))
+    print(trace.stop_block(drift + reason_text(found, cfg), payload, final))
     return 0
 
 

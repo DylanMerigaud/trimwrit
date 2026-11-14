@@ -13,7 +13,7 @@ import sys
 
 import pytest
 
-from gates._hook import ROOT, eval_cases, plugin, rows, run_py, write_config
+from gates._hook import RESEND, ROOT, eval_cases, plugin, rows, run_py, write_config
 
 NAME = "bare-id-gate"
 SCRIPT = "bare_id_gate.py"
@@ -175,7 +175,7 @@ def test_a_bare_key_blocks_until_the_chain_cap(tmp_path):
         assert body["decision"] == "block"
         assert "\"intake-068\", \"dig-0003\"" in body["reason"]
         assert "in parentheses" in body["reason"]
-        assert body["reason"].endswith("(bare-id-gate)")
+        assert body["reason"].endswith("(bare-id-gate) " + RESEND)
     capped = json.loads(outs[3])
     assert "decision" not in capped and "did not clear it" in capped["systemMessage"]
     got = rows(os.path.join(str(tmp_path), "hook-health.jsonl"))
@@ -230,7 +230,7 @@ def test_reason_suffix_ends_the_block_reason(tmp_path):
     write_config(tmp_path, {NAME: {"reason_suffix": "See docs/naming.md."}})
     path = make_transcript(tmp_path, TICKET)
     reason = blocked(run_py(NAME, SCRIPT, stop(path, "sfx"), tmp_path))
-    assert reason.endswith("(bare-id-gate) See docs/naming.md.")
+    assert reason.endswith("(bare-id-gate) See docs/naming.md. " + RESEND)
 
 
 def test_no_environment_variable_lifts_it(tmp_path):

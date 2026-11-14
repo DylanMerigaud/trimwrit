@@ -65,6 +65,16 @@ scheduler row, a pop), or a write to a file whose name says it watches (WATCH_FI
 answer alone, however well measured, leaves the next stall to the user again. The next prompt
 that is no stall clears the marker.
 
+What is no stall (0.5.0, 2026-11-14: a handoff prompt that QUOTED "the user noticed a stall"
+and named `scripts/autofix.py` armed the session it started). The stall is read with fenced
+code, backticked spans, double-quoted spans and blockquote lines removed, and `autofix` written
+as one word is the name of a script, not the user asking for an auto fix. A prompt that starts
+with NOT_A_PROMPT (a task notification, a system reminder, a local command) is no prompt the
+user typed: it neither arms nor clears anything.
+
+Every refusal ends on gatekit's FOCUS_RESEND (trace.stop_block): the user reads only the next
+message, so the re-answer is the whole answer again, not a patch.
+
 The bounds: the re-answer of a stop chain is checked like the first answer; the gate lets go after
 CHAIN_CAP blocks in a row (a `cap` row in the ledger and a systemMessage). A crash or a timeout
 lets the turn end and is reported loudly. No environment variable and no configuration key
@@ -162,7 +172,7 @@ STALL_SRC = r"""
   | \b(?:sont|est|soit|is|are|was|were|went|goes|it['’]?s|c['’]?est)\s+(?:encore\s+|still\s+)?down\b
   | \b(?:silent(?:ly)?|cilet(?:ly)?|silencieu\w*)\b              # "never fail ciletly"
   | \bsoit\s+sil[ae]nce\b                                        # "soit silance"
-  | \bauto\s*-?\s*fix                                             # "a working auto fix by default"
+  | \bauto(?:\s+|\s*-\s*)fix                                      # "a working auto fix by default", not "autofix"
   | \bworker\s+listening\b|\blisten\s+actif\b
   | \b(?:not|isn['’]?t|aren['’]?t|nothing(?:'s|\s+is)?)\s+(?:moving|progressing|advancing|happening)\b
   | \bstall(?:ed|s|ing)?\b
@@ -221,8 +231,26 @@ def _settings(cfg):
     return trace.plugin_settings({"cwd": os.getcwd()}, root=PLUGIN_ROOT)
 
 
+# What the user quotes is no stall he noticed: a pasted handoff that reads "the user noticed a
+# stall", a script named `scripts/autofix.py`, a blockquote of an older message (2026-11-14: a
+# handoff prompt quoting both armed the stall of the session it started).
+QUOTED = [re.compile(r"^[ \t]*```.*?(?:^[ \t]*```|\Z)", re.M | re.S),   # fenced code
+          re.compile(r"`[^`\n]*`"),                                     # backticked span
+          re.compile(r'"[^"\n]*"'),                                     # straight double quotes
+          re.compile("\u201c[^\u201d\n]*\u201d"),                    # curly double quotes
+          re.compile(r"^[ \t]*>.*$", re.M)]                             # blockquote line
+
+
+def unquoted(prompt):
+    text = prompt or ""
+    for rx in QUOTED:
+        text = rx.sub(" ", text)
+    return text
+
+
 def stall_in(prompt):
-    m = re.search(STALL_SRC, prompt or "", FLAGS)
+    """The stall the user noticed in `prompt`, read with its quoted parts removed, or None."""
+    m = re.search(STALL_SRC, unquoted(prompt), FLAGS)
     return m.group(0) if m else None
 
 
@@ -486,6 +514,8 @@ def on_prompt():
     payload = trace.read_payload()
     cfg = trace.plugin_settings(payload, root=PLUGIN_ROOT)
     prompt = payload.get("prompt") or ""
+    if prompt.lstrip().startswith(NOT_A_PROMPT):
+        return 0  # a task notification, a reminder, a local command: no prompt he typed
     sid = trace.session_key(payload)
     if target_in(prompt, cfg):
         set_armed(sid, " ".join(prompt.split()))
@@ -533,8 +563,7 @@ def on_stop():
             print(trace.cap_message(HOOK, "stall: " + stall))
             return 0
         trace.witness("stop_promise_gate", "Stop", "stall_unwatched", payload)
-        print(json.dumps({"decision": "block", "reason": stall_reason_text(stall, cfg)},
-                         ensure_ascii=False))
+        print(trace.stop_block(stall_reason_text(stall, cfg), payload, text))
         return 0
     detail = ("job: " if jobs else "promise: ") + promise
     if not trace.chain_should_block(HOOK, payload, detail):
@@ -543,7 +572,7 @@ def on_stop():
     trace.witness("stop_promise_gate", "Stop", "job_pending" if jobs else "promise_ending",
                   payload)
     reason = job_reason_text(promise, jobs, cfg) if jobs else reason_text(promise, excerpt, cfg)
-    print(json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False))
+    print(trace.stop_block(reason, payload, text))
     return 0
 
 

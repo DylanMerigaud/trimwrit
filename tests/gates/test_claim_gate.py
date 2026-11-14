@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-from gates._hook import ROOT, eval_cases, plugin, rows, run_py, write_config
+from gates._hook import RESEND, ROOT, eval_cases, plugin, rows, run_py, write_config
 
 NAME = "claim-gate"
 SCRIPT = "claim_gate.py"
@@ -206,7 +206,7 @@ def test_transcript_round_trip_errored_push_and_previous_turn(tmp_path, capsys):
 def test_push_claim_with_no_push_is_blocked_with_a_witness_row(tmp_path):
     r = go(tmp_path, "Done. I pushed the fix to main.", ["python3 -m pytest -q"], "a")
     reason = blocked(r)
-    assert "pushed" in reason and reason.endswith("(claim-gate)")
+    assert "pushed" in reason and reason.endswith("(claim-gate) " + RESEND)
     got = rows(os.path.join(str(tmp_path), "door-refusals.jsonl"))
     assert [(x["door"], x["event"], x["reason_class"]) for x in got] == \
         [("stop_claim_gate", "Stop", "claim_without_receipt")]
@@ -293,7 +293,7 @@ def test_a_broken_config_key_is_a_crash_not_a_block(tmp_path):
 def test_reason_suffix_ends_the_block_reason(tmp_path):
     write_config(tmp_path, {NAME: {"reason_suffix": "See docs/claims.md."}})
     reason = blocked(go(tmp_path, "I pushed it.", [], "sfx"))
-    assert reason.endswith("(claim-gate) See docs/claims.md.")
+    assert reason.endswith("(claim-gate) See docs/claims.md. " + RESEND)
 
 
 def test_check_prints_what_it_would_say(tmp_path):

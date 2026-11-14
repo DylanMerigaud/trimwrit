@@ -340,8 +340,7 @@ def on_stop():
         print(trace.cap_message(HOOK, key))
         return 0
     trace.witness("stop_claim_gate", "Stop", "claim_without_receipt", payload)
-    print(json.dumps({"decision": "block", "reason": reason_text(missing, cfg)},
-                     ensure_ascii=False))
+    print(trace.stop_block(reason_text(missing, cfg), payload, final))
     return 0
 
 

@@ -25,6 +25,12 @@ configure() is the first call of every gate, before stdin is read, so a copy tha
 the one installed hands over there (follow_install). The registry is read as data: a file it
 cannot read, or a target that is not there, leaves the running copy in charge.
 
+A REFUSAL ASKS FOR THE WHOLE ANSWER AGAIN. The user reads only the model's next message (focus
+mode), so a re-answer that patches the refused one leaves him a fragment. stop_block() (and
+stop_reason() for a gate that refuses by exit 2) ends every Stop refusal on FOCUS_RESEND and
+records the refused text's length in <session>.refused; refused_len() reads it back for a gate
+that refuses a re-answer much shorter than what was refused, clear_refused() drops it.
+
 WHERE THINGS GO is configuration, section "trace" of trimwrit-gates.json:
   ledger            the health JSONL (default: the plugin's data directory)
   witness_module    a Python file exposing log(door, event, reason_class, session_id) that
@@ -59,6 +65,15 @@ DETAIL_MAX = 600
 ENV_SESSION = "CLAUDE_SESSION_ID"
 ENV_DATA = "CLAUDE_PLUGIN_DATA"
 TRACE_DEFAULTS = {"ledger": "", "witness_module": "", "on_crash_command": []}
+# The user reads only the model's NEXT message (focus mode): a refusal answered by a patch of
+# the refused text leaves him a fragment. Every Stop refusal ends on this sentence (stop_block),
+# and the refused text's length goes to <session>.refused so a later gate can refuse a
+# re-answer much shorter than what was refused.
+FOCUS_RESEND = ("He sees only your next message (focus mode): write the WHOLE answer again, "
+                "corrected, every point he asked included, not a patch of the refused one.")
+REFUSED_SUFFIX = ".refused"
+REFUSED_CHAIN_S = 120
+REFUSED_TTL_S = 3600
 
 _HOME = None
 _PAYLOAD = {}
@@ -195,6 +210,99 @@ def session_file(session_id, suffix):
 
 def now_iso():
     return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _parse_iso(text):
+    try:
+        return datetime.fromisoformat(str(text))
+    except (TypeError, ValueError):
+        return None
+
+
+def _age_s(at):
+    """Seconds since the ISO time `at`, or None when it does not parse."""
+    when = _parse_iso(at)
+    if when is None:
+        return None
+    if when.tzinfo is None:
+        when = when.astimezone()
+    return (datetime.now().astimezone() - when).total_seconds()
+
+
+def refused_path(payload=None):
+    """The `.refused` record of this session, or None when no session key is known."""
+    key = session_key(payload)
+    return session_file(key, REFUSED_SUFFIX) if key else None
+
+
+def record_refused(payload, final_text):
+    """Write {"len": n, "at": iso} for the refused final text; within REFUSED_CHAIN_S of an
+    earlier record (the same stop chain) the larger length is kept. No session key, an empty
+    text or an unwritable state directory records nothing and never raises."""
+    if not isinstance(final_text, str) or not final_text:
+        return False
+    try:
+        path = refused_path(payload)
+        if not path:
+            return False
+        n = len(final_text)
+        try:
+            with open(path, encoding="utf-8") as fh:
+                old = json.load(fh)
+            age = _age_s(old.get("at"))
+            if age is not None and 0 <= age <= REFUSED_CHAIN_S:
+                n = max(n, int(old.get("len") or 0))
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"len": n, "at": now_iso()}, fh)
+        os.replace(tmp, path)
+        return True
+    except OSError:
+        return False
+
+
+def refused_len(payload=None):
+    """The length of the last refused final text of this session, or None when there is no
+    record, it does not parse, or it is older than REFUSED_TTL_S."""
+    try:
+        path = refused_path(payload)
+        if not path:
+            return None
+        with open(path, encoding="utf-8") as fh:
+            row = json.load(fh)
+        age = _age_s(row.get("at"))
+        if age is None or age > REFUSED_TTL_S:
+            return None
+        return int(row["len"])
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return None
+
+
+def clear_refused(payload=None):
+    try:
+        path = refused_path(payload)
+        if path:
+            os.remove(path)
+    except OSError:
+        pass
+
+
+def stop_reason(reason, payload=None, final_text=None):
+    """The reason of a Stop refusal ending with FOCUS_RESEND (once), the refused text's length
+    recorded (record_refused). For a gate that refuses by exit 2 with the reason on stderr."""
+    text = (reason or "").rstrip()
+    if not text.endswith(FOCUS_RESEND):
+        text = (text + " " + FOCUS_RESEND) if text else FOCUS_RESEND
+    record_refused(payload, final_text)
+    return text
+
+
+def stop_block(reason, payload=None, final_text=None):
+    """The JSON line of a Stop refusal: {"decision": "block", "reason": stop_reason(...)}."""
+    return json.dumps({"decision": "block",
+                       "reason": stop_reason(reason, payload, final_text)}, ensure_ascii=False)
 
 
 def _append(path, row):

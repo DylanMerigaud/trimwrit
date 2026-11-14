@@ -148,3 +148,15 @@ def test_stop_reads_the_transcript_when_the_payload_has_no_final_message(tmp_pat
                "transcript_path": str(path)}
     r = run_py(NAME, STOP, payload, tmp_path)
     assert r.returncode == 2 and "em-dash" in r.stderr
+
+
+def test_the_refusal_asks_for_the_whole_answer_and_records_its_length(tmp_path):
+    from gates._hook import RESEND
+    text = "No news " + EM + " pausing here."
+    r = run_py(NAME, STOP, stop(text, "rs"), tmp_path)
+    assert r.returncode == 2 and r.stderr.strip().endswith(RESEND)
+    refused = [f for f in os.listdir(os.path.join(str(tmp_path), "state"))
+               if f.endswith(".refused")]
+    assert len(refused) == 1
+    with open(os.path.join(str(tmp_path), "state", refused[0]), encoding="utf-8") as fh:
+        assert json.load(fh)["len"] == len(text)

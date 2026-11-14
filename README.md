@@ -143,6 +143,13 @@ cannot reach a file outside its own directory. The test suite fails on any drift
 fixes a plugin's root when a session starts, so a gate's first call hands a stale copy over to
 the version `installed_plugins.json` names: a fix reaches a session that has been open for days.
 
+Every Stop refusal ends on one sentence, `trace.FOCUS_RESEND`: the user reads only the model's
+next message (focus mode), so the re-answer is the whole answer again, corrected, not a patch of
+the refused one. `trace.stop_block(reason, payload, final_text)` builds the refusal line and
+records the refused text's length in the session's `.refused` file; `trace.refused_len(payload)`
+reads it back (for a gate that refuses a re-answer much shorter than what was refused) and
+`trace.clear_refused(payload)` drops it.
+
 Each Stop gate ships the case that measures it. Each prompt was first screened on the bare model
 (no plugin, no tools, three runs) until it made the model commit the fault the hook exists for,
 then measured with `claude plugin eval` (Claude Code 2.1.289, model `claude-opus-5-5`), three

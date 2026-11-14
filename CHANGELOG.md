@@ -1,5 +1,26 @@
 # Changelog
 
+## promise-gate 0.5.0 and every plugin's patch, 2026-11-14
+
+- **Every Stop refusal asks for the whole answer again.** The user reads only the model's next
+  message (focus mode), and a re-answer that patched the refused text left him a fragment.
+  gatekit's `trace.FOCUS_RESEND` ("He sees only your next message (focus mode): write the WHOLE
+  answer again, corrected, every point he asked included, not a patch of the refused one.") now
+  ends every refusal of claim-gate, promise-gate, rule-gate, handback-gate, bare-id-gate and
+  no-em-dash, through `trace.stop_block(reason, payload, final_text)` (the JSON line) or
+  `trace.stop_reason(...)` (the reason, for no-em-dash's exit 2). Each refusal records the
+  refused text's length in `<session>.refused` (`{"len", "at"}`, the longest of one stop chain
+  kept); `trace.refused_len(payload)` reads it (None when absent or older than an hour) and
+  `trace.clear_refused(payload)` drops it. An unwritable state directory records nothing and
+  refuses as before. Every plugin ships gatekit, so every plugin takes a patch bump.
+- **promise-gate reads no task notification and no quoted mention as a stall.** A handoff prompt
+  that quoted "the user noticed a stall" and named `scripts/autofix.py` armed the stall of the
+  session it started, and a `<task-notification>` reset the markers as if the user had typed
+  it. Now a prompt starting with a task notification, a system reminder or a local command
+  neither arms nor clears anything; the stall is read with fenced code, backticked spans, double
+  quoted spans (straight and curly) and blockquote lines removed; `auto fix` needs a space or a
+  hyphen, so `autofix`, a script's name, is no stall. Every verbatim of the lesson still arms.
+
 ## 0.15.0, 2026-11-10
 
 - **Reuse or build: `trimwrit bank route`.** A project held seven banks checking one bet's first

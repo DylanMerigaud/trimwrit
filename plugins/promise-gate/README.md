@@ -70,6 +70,12 @@ or reads a watcher (a systemd timer, a crontab, a health witness, an autofix ent
 row, a pop); or a write to a file named for watching (`*health*`, `*watch*`, `*.timer`). A gesture
 spends the marker; the next ordinary prompt clears it; the chain cap applies.
 
+What is no stall (0.5.0): the prompt is read with fenced code, backticked spans, double-quoted
+spans and blockquote lines removed, so a handoff that quotes "the user noticed a stall" or names
+`scripts/autofix.py` arms nothing, and `autofix` written as one word (a script's name) is not the
+user asking for an auto fix. A task notification, a system reminder or a local command is no
+prompt the user typed: it neither arms nor clears a marker.
+
 Replayed on the real transcript of correction 0633: the answer to "ca avance pas notre stuff" is
 blocked, and the turn seven minutes later that ended on "le résultat arrive dans ce fil" while
 its own plan run was in the background (a deferral no pattern read before 0.4.0) is blocked too.

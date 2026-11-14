@@ -361,3 +361,14 @@ def test_official_validator_bites(tmp_path):
     manifest.write_text(json.dumps(data), encoding="utf-8")
     out = validate(str(broken))
     assert out.returncode != 0, out.stdout + out.stderr
+
+
+@pytest.mark.parametrize("name", sorted(STOP_GATES))
+def test_every_stop_gate_refuses_through_stop_block(name):
+    """A Stop refusal ends on gatekit's FOCUS_RESEND and records its length: no gate prints its
+    own {"decision": "block"} line."""
+    scripts = os.path.join(PLUGINS, name, "scripts")
+    src = "".join(open(os.path.join(scripts, f), encoding="utf-8").read()
+                  for f in os.listdir(scripts) if f.endswith(".py"))
+    assert "trace.stop_block(" in src or "trace.stop_reason(" in src
+    assert not re.search(r'json\.dumps\(\{\s*"decision":\s*"block"', src)

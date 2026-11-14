@@ -54,7 +54,6 @@ Outputs:
 Utilities:
     python3 bare_id_gate.py --print       what it would say on the last message, blocking nothing
 """
-import json
 import os
 import re
 import sys
@@ -231,7 +230,8 @@ def on_stop():
         return 0
     cfg = trace.plugin_settings(payload, root=PLUGIN_ROOT)
     families(cfg)  # a bad extra is a loud crash even on a clean message
-    found = bare_ids(transcript.final_text(payload), cfg)
+    final = transcript.final_text(payload)
+    found = bare_ids(final, cfg)
     if not found:
         trace.chain_clear(HOOK, payload)
         return 0
@@ -240,8 +240,7 @@ def on_stop():
         print(trace.cap_message(HOOK, detail))
         return 0
     trace.witness("bare_id_gate", "Stop", "internal_id_bare", payload)
-    print(json.dumps({"decision": "block", "reason": reason_text(found, cfg)},
-                     ensure_ascii=False))
+    print(trace.stop_block(reason_text(found, cfg), payload, final))
     return 0
 
 

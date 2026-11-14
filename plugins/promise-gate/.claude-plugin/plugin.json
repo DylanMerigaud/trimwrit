@@ -3,7 +3,7 @@
   "name": "promise-gate",
   "displayName": "promise-gate",
   "description": "Once the user sets a target (never stop, until results, do the whole pool), refuses to end a turn on a promise to continue instead of doing the next batch; in every session, refuses to end a turn that defers its result to its own background job still running, or a turn opened by a stall the user noticed first (not advancing, down, failed silently) that leaves no watcher behind.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "author": {
     "name": "Dylan Merigaud",
     "url": "https://github.com/DylanMerigaud"

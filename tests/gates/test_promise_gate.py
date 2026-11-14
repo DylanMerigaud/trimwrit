@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-from gates._hook import ROOT, eval_cases, plugin, rows, run_py, write_config
+from gates._hook import RESEND, ROOT, eval_cases, plugin, rows, run_py, write_config
 
 NAME = "promise-gate"
 SCRIPT = "promise_gate.py"
@@ -159,7 +159,7 @@ def test_prompt_with_a_target_arms_and_a_promise_blocks_until_the_chain_cap(tmp_
         body = json.loads(out)
         assert body["decision"] == "block"
         assert "Je continue" in body["reason"] and "ne t'arrete pas" in body["reason"]
-        assert body["reason"].endswith("(promise-gate)")
+        assert body["reason"].endswith("(promise-gate) " + RESEND)
     capped = json.loads(outs[3])
     assert "decision" not in capped and "did not clear it" in capped["systemMessage"]
     got = rows(os.path.join(str(tmp_path), "hook-health.jsonl"))
@@ -265,7 +265,7 @@ def test_reason_suffix_ends_the_block_reason(tmp_path):
     prompt(tmp_path, "sfx", "never stop")
     path = make_transcript(tmp_path, PROMISE)
     reason = blocked(run_py(NAME, SCRIPT, stop(path, "sfx"), tmp_path))
-    assert reason.endswith("(promise-gate) See docs/batches.md.")
+    assert reason.endswith("(promise-gate) See docs/batches.md. " + RESEND)
 
 
 # ---- the eval case: the grader must separate the plugin arm from the baseline arm -------------
@@ -460,7 +460,7 @@ def test_relapse_of_2026_10_15_is_blocked_in_an_unarmed_session(tmp_path):
     reason = blocked(stop_on(tmp_path, relapse_rows()))
     assert "sont en cours" in reason
     assert TESTS_WHAT in reason and TESTS_JOB in reason
-    assert "foreground" in reason and reason.endswith("(promise-gate)")
+    assert "foreground" in reason and reason.endswith("(promise-gate) " + RESEND)
     refusals = rows(os.path.join(str(tmp_path), "door-refusals.jsonl"))
     assert [(x["door"], x["reason_class"]) for x in refusals] == \
         [("stop_promise_gate", "job_pending")]
@@ -657,7 +657,7 @@ def test_replay_each_verbatim_a_turn_with_no_watcher_is_blocked(tmp_path, text):
     assert "watcher" in ctx
     rows_ = [user(text)] + read("u1", "tail -5 cron.log") + [said(STALL_FINAL)]
     reason = blocked(stop_on(tmp_path, rows_, session="stall", final=STALL_FINAL))
-    assert "noticed a stall" in reason and reason.endswith("(promise-gate)")
+    assert "noticed a stall" in reason and reason.endswith("(promise-gate) " + RESEND)
 
 
 def test_replay_of_0633_is_blocked_and_counted(tmp_path):
@@ -726,3 +726,68 @@ def test_the_0633_deferral_is_read_now(tmp_path):
              + [said(DEFER_0633)])
     reason = blocked(stop_on(tmp_path, rows_, session="d633", final=DEFER_0633))
     assert "bbazjejla" in reason
+
+
+# ---- 0.5.0: what the user did not type, or only quoted, is no stall (2026-11-14) ---------------
+TASK_NOTIFICATION = ("<task-notification>\n<task-id>bq1</task-id>\n<status>completed</status>\n"
+                     "<summary>Background agent finished: the stall is still down</summary>\n"
+                     "</task-notification>")
+# The handoff prompt that armed the session it started.
+HANDOFF = ('read a <task-notification> system event (a background agent finishing) as "the user '
+           'noticed a stall" four times\nAutofix pops per week since 09-21: 64, 81\n'
+           '`scripts/autofix.py`')
+
+
+def gate_stall(tmp_path, session):
+    """True when a Stop of `session` with no watcher in its transcript is held for a stall."""
+    r = run_py(NAME, SCRIPT, {"hook_event_name": "Stop", "stop_hook_active": False,
+                              "session_id": session, "last_assistant_message": "ok",
+                              "transcript_path": str(tmp_path / "none.jsonl")}, tmp_path)
+    return r.stdout.strip() != ""
+
+
+@pytest.mark.parametrize("text", [TASK_NOTIFICATION, "  " + TASK_NOTIFICATION,
+                                  "<system-reminder>the stall is down</system-reminder>",
+                                  "<local-command-stdout>auto fix</local-command-stdout>"])
+def test_a_task_notification_arms_nothing(tmp_path, text):
+    r = prompt(tmp_path, "tn", text)
+    assert (r.returncode, r.stdout.strip()) == (0, ""), r.stderr
+    assert not gate_stall(tmp_path, "tn")
+
+
+def test_a_task_notification_does_not_clear_an_armed_stall(tmp_path):
+    prompt(tmp_path, "tn2", STALLS[0])
+    prompt(tmp_path, "tn2", TASK_NOTIFICATION)
+    assert gate_stall(tmp_path, "tn2")
+
+
+def test_a_task_notification_does_not_clear_an_armed_target(tmp_path):
+    prompt(tmp_path, "tn3", "never stop")
+    prompt(tmp_path, "tn3", TASK_NOTIFICATION)
+    path = make_transcript(tmp_path, PROMISE)
+    blocked(run_py(NAME, SCRIPT, stop(path, "tn3"), tmp_path))
+
+
+def test_the_handoff_that_quoted_a_stall_arms_nothing(tmp_path):
+    assert gate.stall_in(HANDOFF) is None
+    r = prompt(tmp_path, "ho", HANDOFF)
+    assert (r.returncode, r.stdout.strip()) == (0, "")
+    assert not gate_stall(tmp_path, "ho")
+
+
+@pytest.mark.parametrize("text", [
+    "Autofix pops per week since 09-21: 64, 81",
+    "run python3 scripts/autofix.py status",
+    "the autofix: row is green",
+    "> the user said: ca avance pas",
+    "```\nstalled\n```\nwhat does this log say?",
+    "he wrote “it is still down” last week, read the doc",
+])
+def test_a_quoted_or_named_stall_word_is_no_stall(text):
+    assert gate.stall_in(text) is None
+
+
+@pytest.mark.parametrize("text", ["we need an auto fix here", "an auto-fix by default",
+                                  "auto - fix it", "pourquoi ca avance pas? `x.py` tourne"])
+def test_the_unquoted_ask_still_arms(text):
+    assert gate.stall_in(text)

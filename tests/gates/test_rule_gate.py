@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-from gates._hook import ROOT, eval_cases, plugin, rows, run_py, write_config
+from gates._hook import RESEND, ROOT, eval_cases, plugin, rows, run_py, write_config
 
 NAME = "rule-gate"
 SCRIPT = "rule_gate.py"
@@ -309,7 +309,7 @@ def test_vendor_names_extra_adds_a_third_party(tmp_path):
 
 def test_reason_suffix_ends_the_block_reason(tmp_path):
     write_config(tmp_path, {NAME: {"reason_suffix": "See docs/rules.md."}})
-    assert blocked(go(tmp_path, BAD, "sfx")).endswith("(rule-gate) See docs/rules.md.")
+    assert blocked(go(tmp_path, BAD, "sfx")).endswith("(rule-gate) See docs/rules.md. " + RESEND)
 
 
 @pytest.mark.parametrize("section", [

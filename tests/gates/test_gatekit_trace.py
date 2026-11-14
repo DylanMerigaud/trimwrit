@@ -341,3 +341,70 @@ def test_a_copy_outside_a_plugin_cache_never_looks_at_a_registry(tmp_path):
     (root / "scripts" / "gate.py").write_text(STAMPED.replace("{version}", "repo"),
                                               encoding="utf-8")
     assert run_version(root).stdout.strip() == "repo  the payload"
+
+
+# ---- the resend sentence and the refused length (stop_block) ----------------------------------
+@pytest.fixture
+def at_home(tmp_path, monkeypatch):
+    monkeypatch.setattr(trace, "_HOME", str(tmp_path))
+    monkeypatch.setattr(trace, "_PAYLOAD", {})
+    monkeypatch.delenv("CLAUDE_SESSION_ID", raising=False)
+    return tmp_path
+
+
+def test_stop_block_appends_the_resend_sentence_once(at_home):
+    body = json.loads(trace.stop_block("Fix it. (x-gate)", {"session_id": "r1"}))
+    assert body == {"decision": "block", "reason": "Fix it. (x-gate) " + trace.FOCUS_RESEND}
+    again = json.loads(trace.stop_block(body["reason"], {"session_id": "r1"}))
+    assert again["reason"] == body["reason"]
+    assert again["reason"].count(trace.FOCUS_RESEND) == 1
+
+
+def test_stop_block_records_reads_and_clears_the_refused_length(at_home):
+    p = {"session_id": "r2"}
+    assert trace.refused_len(p) is None
+    trace.stop_block("no", p, "x" * 900)
+    with open(trace.session_file("r2", ".refused"), encoding="utf-8") as fh:
+        row = json.load(fh)
+    assert row["len"] == 900 and row["at"]
+    assert trace.refused_len(p) == 900
+    # a shorter re-answer refused in the same stop chain keeps the longest
+    trace.stop_block("no", p, "x" * 300)
+    assert trace.refused_len(p) == 900
+    trace.clear_refused(p)
+    assert trace.refused_len(p) is None
+    trace.clear_refused(p)  # clearing twice is no error
+
+
+def test_an_old_record_is_neither_read_nor_kept(at_home):
+    p = {"session_id": "r3"}
+    with open(trace.session_file("r3", ".refused"), "w", encoding="utf-8") as fh:
+        json.dump({"len": 5000, "at": "2026-01-01T00:00:00+00:00"}, fh)
+    assert trace.refused_len(p) is None
+    trace.stop_block("no", p, "y" * 40)
+    assert trace.refused_len(p) == 40
+
+
+def test_stop_block_works_with_no_session_and_no_text(at_home):
+    body = json.loads(trace.stop_block("Plain.", None, "some refused text"))
+    assert body["reason"] == "Plain. " + trace.FOCUS_RESEND
+    assert trace.refused_len(None) is None
+    assert not [f for f in os.listdir(trace.state_dir()) if f.endswith(".refused")]
+    json.loads(trace.stop_block("Plain.", {"session_id": "r4"}, ""))
+    assert trace.refused_len({"session_id": "r4"}) is None
+
+
+def test_an_unwritable_state_dir_records_nothing_and_never_raises(at_home, monkeypatch):
+    def boom(*_a, **_k):
+        raise OSError("read-only")
+    monkeypatch.setattr(trace, "state_dir", boom)
+    body = json.loads(trace.stop_block("Still refused.", {"session_id": "r5"}, "zzz"))
+    assert body["reason"].endswith(trace.FOCUS_RESEND)
+    assert trace.refused_len({"session_id": "r5"}) is None
+    trace.clear_refused({"session_id": "r5"})
+
+
+def test_stop_reason_is_the_same_reason_for_an_exit_2_gate(at_home):
+    assert trace.stop_reason("Rewrite.", {"session_id": "r6"}, "abc") == \
+        "Rewrite. " + trace.FOCUS_RESEND
+    assert trace.refused_len({"session_id": "r6"}) == 3
