@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.3, 2026-11-14
+
+- `bank migrate` no longer lists the bank's old schema 1 RELEASE.json as a `bespoke-runner`
+  left: the migrated run is what writes the schema 2 release. Since 0.16.2 every scaffold bank
+  with an old release read as unmigratable to a caller of `migrate(write=False)`.
+
 ## 0.16.2, 2026-11-14
 
 - **A model and effort a schema 2 release cannot record are refused before any call.** A bank

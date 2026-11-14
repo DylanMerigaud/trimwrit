@@ -191,6 +191,20 @@ def test_migrate_reads_the_old_scaffold_into_the_standard_shape(tmp_path):
     assert "# the effort the producer runs at" in new
 
 
+def test_migrate_does_not_count_the_old_release_as_a_runner_left(tmp_path):
+    """The bank's schema 1 RELEASE.json is the old runner's: the migrated run writes the schema 2
+    one, so it is no refusal left of the codemod (0.16.2 listed it and a caller saw every scaffold
+    bank as unmigratable)."""
+    import json as _json
+    d = old_bank(tmp_path)
+    (d / "RELEASE.json").write_text(_json.dumps({"schema": 1, "passed": True, "n": 40,
+                                                  "at": "2026-11-01T00:00:00+00:00"}))
+    assert any("did not write it" in r.what for r in bank.lint(str(d)))
+    for write in (False, True):
+        res = bank.migrate(str(d), label_source=LABEL, write=write)
+        assert not [r for r in res["refusals_left"] if "did not write it" in r["what"]], write
+
+
 def test_a_migrated_bank_runs_on_bank_main_and_replays_the_old_runner_to_parity(tmp_path):
     d = old_bank(tmp_path)
     legacy = tmp_path / "legacy_run.py"

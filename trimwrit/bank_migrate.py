@@ -259,6 +259,8 @@ def _lint_text(bank_dir, new):
             fh.write(new)
         out = []
         for r in b.lint(copy):
+            if getattr(r, "stale_release", False):
+                continue  # the old runner's release: the migrated run writes the schema 2 one
             out.append({k: _swap(v, copy, bank_dir) for k, v in r.as_dict().items()})
         return out
 
@@ -285,7 +287,7 @@ def migrate(bank_dir, label_source=None, write=False):
     if write:
         with open(path, "w", encoding="utf-8", newline="") as fh:
             fh.write(new)
-        left = [r.as_dict() for r in b.lint(bank_dir)]
+        left = [r.as_dict() for r in b.lint(bank_dir) if not getattr(r, "stale_release", False)]
     else:
         left = _lint_text(bank_dir, new)
     for line in _main_references(new):
