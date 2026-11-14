@@ -888,7 +888,9 @@ corpus carries `id`, `input`, `expected`, `why`, and optionally `split` (dev or 
 
 ### The run.py shape
 
-A standard run.py declares constants and two hooks, and hands the run to the library:
+A standard run.py declares constants and two hooks, and hands the run to the library. It
+imports `trimwrit`, so the python that runs it must find the package (`pip install trimwrit`,
+or the checkout on `PYTHONPATH`); the separate venv of `--engine inspect` needs the same.
 
 ```python
 import sys
