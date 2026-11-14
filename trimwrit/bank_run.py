@@ -15,6 +15,12 @@ THE ENGINE SEAM. An engine is `run(cases, call, jobs) -> [(case, got, error)]`, 
 `cases`. `call(case)` is self contained: it opens its own usage scope around the cache lookup and
 the answer and records that case's usage under a lock, so an engine may run it on any thread.
 
+THE PROJECT'S WAIVER LIST. A bank the project migrates rule by rule keeps running: the nearest
+`.trimwrit/bank-waivers.json` above the bank (trimwrit/bank_check.py) names, per bank, the rules
+it does not meet yet. A refusal of such a rule is printed on stderr as {"waived": rule, ...} and
+the release names it under `waived`; every other refusal stops the run (exit 65) as before.
+`--self-check` reports every refusal, waived or not.
+
 Standard library only, Python 3.9 syntax.
 """
 import argparse
@@ -458,6 +464,24 @@ def main(run_file, argv=None, module=None, engine_impls=None):
     # a release whose inputs changed is refused to its readers (lint, bank.released), never to
     # the run: the rerun is that refusal's fix
     refusals = [r for r in refusals if r.rule != "corpus-changed-since-release"]
+    # the project's waiver list (.trimwrit/bank-waivers.json): a bank migrating rule by rule
+    # still runs, each waived refusal printed and named in the release
+    from .bank_check import project_waivers  # noqa: PLC0415
+    rel, waivable = project_waivers(bank_dir)
+    waived = set()
+
+    def unwaived(found):
+        kept = []
+        for r in found:
+            if r.rule in waivable:
+                print(json.dumps({"waived": r.rule, "bank": r.bank, "what": r.what,
+                                  "waiver": rel}, sort_keys=True), file=sys.stderr)
+                waived.add(r.rule)
+            else:
+                kept.append(r)
+        return kept
+
+    refusals = unwaived(refusals)
     partial = bool(args.ids or args.split)
     if not partial and args.repeats < 1:
         refusals.append(_bank.Refusal(
@@ -507,14 +531,15 @@ def main(run_file, argv=None, module=None, engine_impls=None):
                     book = fh.read()
             except OSError:
                 pass
-            if not _dated_bar_line(book, prev.get("at")):
-                return _refuse([_bank.Refusal(
+            lock = [] if _dated_bar_line(book, prev.get("at")) else unwaived([_bank.Refusal(
                     "bar-moved", bank_dir,
                     "BAR {!r} differs from the released bar {!r} and CODEBOOK.md has no dated "
                     "bar line since {}".format(bar, prev.get("bar"), str(prev.get("at"))[:10]),
                     "add a line '- {}: bar changed from {!r} to {!r}, because ...' under "
                     "CODEBOOK.md section 3, then rerun python3 {}".format(
                         today, prev.get("bar"), bar, run_file))])
+            if lock:
+                return _refuse(lock)
         if since:
             bar_since = since
 
@@ -533,7 +558,7 @@ def main(run_file, argv=None, module=None, engine_impls=None):
         cases = [c for c in cases if str(c.get("id")) in want]
     if args.split:
         cases = [c for c in cases if c.get("split") == args.split]
-    reserved = set(_bank.ENVELOPE_2) | {"gates", "downshift"}
+    reserved = set(_bank.ENVELOPE_2) | {"gates", "downshift", "waived"}
     stamp_fn = getattr(module, "stamp", None)
     stamped = dict(stamp_fn() or {}) if callable(stamp_fn) else {}
     clash = sorted(set(stamped) & reserved)
@@ -601,6 +626,7 @@ def main(run_file, argv=None, module=None, engine_impls=None):
                     len(stray), model, first["id"],
                     ", ".join(first["usage"]["models"]) or "an unnamed model"),
                 "make answer() call the model it is given (model=MODEL) in {}".format(run_file)))
+    refusals = unwaived(refusals)
     if refusals:
         return _refuse(refusals)
 
@@ -650,12 +676,14 @@ def main(run_file, argv=None, module=None, engine_impls=None):
     print("repeats: k {} on {} cases, flips {}".format(args.repeats, len(sample), flips),
           file=sys.stderr)
     if model is None and flips:
-        return _refuse([_bank.Refusal(
+        flipped = unwaived([_bank.Refusal(
             "no-repeat", bank_dir,
             "a deterministic bank answered differently on a repeat ({} flips of {})".format(
                 flips, checks),
             "make answer() in {} a pure function of the case (no state, no clock, no "
             "randomness), or declare the MODEL it calls".format(run_file))])
+        if flipped:
+            return _refuse(flipped)
 
     # 7. the probes, as the old scaffold
     downshift = None
@@ -716,6 +744,8 @@ def main(run_file, argv=None, module=None, engine_impls=None):
     doc.update(stamped)
     if downshift is not None:
         doc["downshift"] = downshift
+    if waived:
+        doc["waived"] = sorted(waived)
     doc["wall_s"] = round(time.monotonic() - t0, 1)
     problems = _bank.envelope_problems(doc)
     if problems:

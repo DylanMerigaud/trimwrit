@@ -555,3 +555,71 @@ def test_an_import_failure_is_refused_from_the_caught_exception(tmp_path):
     assert code == 65
     hits = [r for r in refusals if r["rule"] == "bespoke-runner"]
     assert hits and "RuntimeError: import time work" in hits[0]["what"]
+
+
+# ------------------------------------------------------------------ the project's waiver list
+
+def _waived_tree(tmp_path, waivers):
+    """A project root (it holds .git) with career/judge-evals, a model bank whose rows are
+    labeled by the judged model's family, and `waivers` as .trimwrit/bank-waivers.json."""
+    root = tmp_path / "proj"
+    (root / ".git").mkdir(parents=True)
+    (root / "career").mkdir()
+    d = make_bank(root / "career", model="claude-sonnet-5-5", effort="medium",
+                  body=NOTE + "\n" + PARITY, name="judge-evals")
+    text = (d / "run.py").read_text().replace("\"the door's own record\"",
+                                              "\"a sonnet pass, unread\"")
+    (d / "run.py").write_text(text)
+    if waivers is not None:
+        (root / ".trimwrit").mkdir()
+        (root / ".trimwrit" / "bank-waivers.json").write_text(json.dumps(waivers))
+    return d
+
+
+def test_a_rule_the_project_waives_runs_to_a_release_that_names_it(tmp_path):
+    d = _waived_tree(tmp_path, {"since": "2026-11-14", "why": "migration",
+                                "banks": {"career/judge-evals": ["label-by-judged-model"]}})
+    code, _, err, refusals = run(d, "--no-probe")
+    assert code == 0 and refusals == [], err
+    lines = [json.loads(x) for x in err.splitlines() if x.startswith("{")]
+    waived = [x for x in lines if "waived" in x]
+    assert waived and waived[0]["waived"] == "label-by-judged-model"
+    assert waived[0]["bank"] == str(d) and "sonnet" in waived[0]["what"]
+    doc = release(d)
+    assert doc["waived"] == ["label-by-judged-model"] and bank.envelope_problems(doc) == []
+    code, out, _, _ = run(d, "--self-check")
+    assert code == 65, "the self check keeps reporting every refusal"
+
+
+def test_a_rule_the_project_does_not_waive_is_refused(tmp_path):
+    for waivers in (None, {"since": "2026-11-14", "why": "migration",
+                           "banks": {"career/judge-evals": ["no-holdout"]}},
+                    {"since": "2026-11-14", "why": "migration",
+                     "banks": {"career/other-evals": ["label-by-judged-model"]}}):
+        d = _waived_tree(tmp_path, waivers)
+        code, _, _, refusals = run(d, "--no-probe")
+        assert code == 65 and [r["rule"] for r in refusals] == ["label-by-judged-model"]
+        assert not (d / "RELEASE.json").exists()
+        import shutil
+        shutil.rmtree(str(tmp_path / "proj"))
+
+
+def test_a_custom_runner_has_bespoke_runner_waived(tmp_path):
+    d = _waived_tree(tmp_path, {"since": "2026-11-14", "why": "migration",
+                                "banks": {"career/judge-evals": ["label-by-judged-model"]},
+                                "custom_runners": {"career/judge-evals": "its own loop"}})
+    (d / "run.py").write_text((d / "run.py").read_text().replace(
+        "if __name__", "def main():\n    pass\nif __name__"))
+    code, _, err, refusals = run(d, "--no-probe")
+    assert code == 0 and refusals == [], err
+    assert release(d)["waived"] == ["bespoke-runner", "label-by-judged-model"]
+
+
+def test_a_release_waived_key_is_a_list_of_rule_ids(tmp_path):
+    d = make_bank(tmp_path)
+    assert run(d)[0] == 0
+    doc = release(d)
+    assert "waived" not in doc
+    for bad in ("label-by-judged-model", ["not-a-rule"]):
+        assert any("waived" in p for p in bank.envelope_problems(dict(doc, waived=bad))), bad
+    assert bank.envelope_problems(dict(doc, waived=["no-holdout"])) == []

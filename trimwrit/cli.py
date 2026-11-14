@@ -1339,12 +1339,13 @@ def cmd_bank(args):
         return _bank_facets(root, args)
     bank_rel = (args.dir or os.path.join("banks", args.slug)).rstrip("/")
     files = bank_mod.plan(args.slug, args.judges, args.bar, bank_rel, model=args.model,
-                          producer=args.producer, effort=args.effort)
+                          producer=args.producer, effort=args.effort,
+                          label_source=args.label_source)
     for rel in bank_mod.lay_out(root, files):
         print("wrote", rel)
-    print("next: fill CODEBOOK.md section 0 and CORPUS.jsonl with real cases, write answer() "
-          "and grade() in {0}/run.py, then `python3 {0}/run.py --offline` must pass before the "
-          "first real run.".format(bank_rel))
+    print("next: fill CODEBOOK.md section 0 and CORPUS.jsonl with real cases (30 at least), "
+          "write answer() and grade() in {0}/run.py, name LABEL_SOURCE, then `python3 "
+          "{0}/run.py --self-check` must pass before the first real run.".format(bank_rel))
     return 0
 
 
@@ -1665,6 +1666,8 @@ def main(argv=None):
     bn.add_argument("--effort", default="medium", choices=bank_mod.EFFORTS,
                     help="the effort the producer runs at (default %(default)s); above medium, "
                          "a live run also probes one effort lower")
+    bn.add_argument("--label-source", default=None,
+                    help="who labels the rows (LABEL_SOURCE; never the model the bank judges)")
     bn.add_argument("--dir", default=None, help="the bank directory (default: banks/<slug>)")
     bn.set_defaults(func=cmd_bank)
     bc = bsub.add_parser("check", help="every RELEASE.json under --dir against the envelope")

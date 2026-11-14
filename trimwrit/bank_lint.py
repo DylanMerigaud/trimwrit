@@ -34,6 +34,7 @@ GUARD = ("'import sys' and 'from trimwrit import bank' (or the project's own imp
          "`bank`) at the top, and at the end 'if __name__ == \"__main__\": "
          "sys.exit(bank.main(__file__))'")
 UPPER_SUFFIX = "_max"
+MODULE_PREFIX = "_trimwrit_bank_"  # the unique name load_module gives a run.py
 
 
 def bar_op(metric):
@@ -644,7 +645,7 @@ def load_module(run_file):
     if not sys.path or sys.path[0] != here:
         sys.path.insert(0, here)
     b = _bank()
-    name = "_trimwrit_bank_{}_{}".format(b.sha(run_file), next(_counter))
+    name = "{}{}_{}".format(MODULE_PREFIX, b.sha(run_file), next(_counter))
     spec = importlib.util.spec_from_file_location(name, run_file)
     if spec is None or spec.loader is None:
         raise ImportError("cannot import {}".format(run_file))
@@ -668,19 +669,40 @@ def _right(result):
     return bool(result)
 
 
+def _under(path, dirs):
+    try:
+        real = os.path.realpath(path)
+    except (TypeError, ValueError):
+        return False
+    for d in dirs:
+        try:
+            if os.path.commonpath([real, d]) == d:
+                return True
+        except ValueError:  # another drive, or a mix of absolute and relative
+            continue
+    return False
+
+
 @contextlib.contextmanager
-def isolated_imports():
-    """Run the body with sys.path and sys.modules restored afterwards: the entries the body adds
-    to sys.path are dropped and the modules it imports are forgotten, so a bank's run.py and the
-    siblings it imports by bare name (grading.py) never serve the next bank of the process."""
+def isolated_imports(*dirs):
+    """Run the body with sys.path restored afterwards and the bank's own modules forgotten: a
+    module the body imports is dropped from sys.modules when its file lies under one of `dirs`
+    (a bank's directory: its run.py and the siblings it imports by bare name, grading.py), or
+    when it is a run.py loaded by load_module (its unique name). Every other module the body
+    imports stays (a stdlib or C extension module popped and re-imported later, numpy, can
+    misbehave), so the next bank of the process gets its own siblings and the shared ones."""
     path = list(sys.path)
     names = set(sys.modules)
+    real = [os.path.realpath(str(d)) for d in dirs]
     try:
         yield
     finally:
         sys.path[:] = path
-        for name in [n for n in sys.modules if n not in names]:
-            sys.modules.pop(name, None)
+        for name in [n for n in list(sys.modules) if n not in names]:
+            mod = sys.modules.get(name)
+            f = getattr(mod, "__file__", None)
+            if name.startswith(MODULE_PREFIX) or (isinstance(f, str) and _under(f, real)):
+                sys.modules.pop(name, None)
 
 
 def import_refusal(bank_dir, exc):
@@ -704,7 +726,7 @@ def self_check(bank_dir, today=None, module=None):
         return _self_check(bank_dir, today, module)
     if not os.path.isfile(run_file):
         return lint(bank_dir, today)
-    with isolated_imports():
+    with isolated_imports(bank_dir):
         try:
             module = load_module(run_file)
         except Exception as exc:  # noqa: BLE001  (an import that raises is a refusal, not a crash)

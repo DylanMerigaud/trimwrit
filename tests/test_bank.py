@@ -116,7 +116,12 @@ def test_a_release_without_the_envelope_is_never_released(tmp_path):
 
 NEW = ["bank", "new", "ticket-route", "--judges", "Does the router send a ticket to the right "
        "queue", "--bar", "accuracy >= 0.9", "--model", "claude-sonnet-5-5",
-       "--producer", "router.py:route"]
+       "--producer", "router.py:route", "--label-source", "the support lead, by hand"]
+NOTE = ('    bank.note_usage({"model": model, "input_tokens": 1, "output_tokens": 1, '
+        '"cost_usd": 0.0})\n')
+RAISE = '    raise NotImplementedError("call the producer on case[\'input\']")'
+WAIVE = ('\nWAIVE = {{"corpus-too-small": {{"since": "{0}", "why": "two cases"}}, '
+         '"no-holdout": {{"since": "{0}", "why": "two cases"}}}}\n')
 
 
 def _py(args, cwd):
@@ -126,8 +131,20 @@ def _py(args, cwd):
 
 
 def _fill(b):
+    """Two cases, and a dated WAIVE of the two size rules so the run of a 2 case bank holds."""
     cases = [{"id": "t1", "input": "refund please", "expected": "billing", "why": "row 12"},
              {"id": "t2", "input": "app crashes", "expected": "bugs", "why": "row 40"}]
+    (b / "CORPUS.jsonl").write_text("".join(json.dumps(c) + "\n" for c in cases))
+    run_py = (b / "run.py").read_text()
+    head, tail = run_py.split("\n\ndef answer", 1)
+    today = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+    (b / "run.py").write_text(head + WAIVE.format(today) + "\n\ndef answer" + tail)
+
+
+def _fill_40(b):
+    cases = [{"id": "t%02d" % i, "input": "ticket %d" % i,
+              "expected": "billing" if i % 3 else "bugs", "why": "row %d" % i}
+             for i in range(40)]
     (b / "CORPUS.jsonl").write_text("".join(json.dumps(c) + "\n" for c in cases))
 
 
@@ -146,8 +163,9 @@ def test_an_empty_bank_fails_its_own_test_until_cases_are_written(tmp_path):
     assert main(["--root", str(tmp_path)] + NEW) == 0
     b = tmp_path / "banks" / "ticket-route"
     res = _py(["-m", "pytest", "-q", "-p", "no:cacheprovider", str(b)], tmp_path)
-    assert res.returncode != 0 and "CORPUS.jsonl is empty" in res.stdout
-    _fill(b)
+    assert res.returncode != 0 and "corpus-too-small" in res.stdout
+    assert "0 cases, the standard needs 30" in res.stdout and "fix:" in res.stdout
+    _fill_40(b)
     res = _py(["-m", "pytest", "-q", "-p", "no:cacheprovider", str(b)], tmp_path)
     assert res.returncode == 0, res.stdout + res.stderr
 
@@ -157,16 +175,15 @@ def test_the_run_writes_its_run_file_and_an_enveloped_release(tmp_path):
     b = tmp_path / "banks" / "ticket-route"
     _fill(b)
     off = _py([str(b / "run.py"), "--offline"], tmp_path)
-    assert off.returncode == 0 and json.loads(off.stdout)["passed"] is True
+    assert off.returncode == 0 and json.loads(off.stdout) == {"self_check": "ok"}, off.stderr
     assert not (b / "RELEASE.json").exists()
     run_py = (b / "run.py").read_text().replace(
-        '    raise NotImplementedError("call the producer on case[\'input\']")',
-        '    return {"refund please": "billing"}.get(case["input"], "general")')
+        RAISE, NOTE + '    return {"refund please": "billing"}.get(case["input"], "general")')
     (b / "run.py").write_text(run_py)
     res = _py([str(b / "run.py")], tmp_path)
-    assert res.returncode == 1                    # 1 of 2 right is under the 0.9 bar
+    assert res.returncode == 1, res.stderr          # 1 of 2 right is under the 0.9 bar
     rel = bank.read_release(str(b))
-    assert bank.envelope_problems(rel) == []
+    assert bank.envelope_problems(rel) == [] and rel["schema"] == 2
     assert rel["passed"] is False and rel["n"] == 2 and rel["accuracy"] == 0.5
     assert rel["model"] == "claude-sonnet-5-5" and rel["bar"] == {"accuracy": 0.9}
     assert os.path.isfile(b / "RUNS" / (rel["run"] + ".jsonl"))
@@ -298,7 +315,7 @@ def test_the_run_template_carries_the_probe():
     src = files["banks/x/run.py"]
     compile(src, "run.py", "exec")
     assert "def answer(case, model=MODEL, effort=EFFORT):" in src and "smaller model" in src
-    assert "--no-probe" in src and "--probe-sample" in src and '"downshift"' in src
+    assert "--no-probe" in src and "--probe-sample" in src and "downshift" in src
 
 
 def test_latest_run_is_never_the_probe_file(tmp_path):
@@ -318,7 +335,7 @@ def _opus_bank(tmp_path):
     b = tmp_path / "banks" / "ticket-route"
     _fill(b)
     run_py = (b / "run.py").read_text().replace(
-        '    raise NotImplementedError("call the producer on case[\'input\']")',
+        RAISE, NOTE +
         '    if model != MODEL and case["id"] == "t2":\n'
         '        raise RuntimeError("small model down")\n'
         '    return {"refund please": "billing", "app crashes": "bugs"}[case["input"]]')
@@ -328,7 +345,7 @@ def _opus_bank(tmp_path):
 
 def test_an_opus_bank_probes_sonnet_and_the_probe_never_changes_passed(tmp_path):
     b = _opus_bank(tmp_path)
-    res = _py([str(b / "run.py")], tmp_path)
+    res = _py([str(b / "run.py"), "--json"], tmp_path)
     assert res.returncode == 0, res.stdout + res.stderr
     assert ("probe claude-sonnet-5-5 on 2 cases: 1/2 vs claude-opus-5-5 2/2, 1 diffs (ids t2)"
             in res.stderr)
@@ -349,7 +366,7 @@ def test_no_probe_and_offline_ask_no_smaller_model(tmp_path):
     assert "downshift" not in bank.read_release(str(b))
     assert not list((b / "RUNS").glob("*.probe.jsonl"))
     off = _py([str(b / "run.py"), "--offline"], tmp_path)
-    assert off.returncode == 0 and "probe" not in off.stderr
+    assert off.returncode == 0 and "probe" not in off.stderr, off.stdout + off.stderr
 
 
 # ------------------------------------------------------------------ the effort probe
@@ -417,7 +434,7 @@ def test_a_raising_cheaper_effort_counts_wrong_and_never_aborts():
 def test_the_scaffold_carries_an_effort_and_refuses_an_unknown_one():
     src = bank.plan("x", "Judge x", "accuracy >= 0.5", "banks/x", model="m")["banks/x/run.py"]
     assert "EFFORT = 'medium'" in src and "def answer(case, model=MODEL, effort=EFFORT):" in src
-    assert "probe_effort" in src and "downshift.effort" in src
+    assert "effort probe" in src and "downshift.effort" in src
     src = bank.plan("x", "Judge x", "accuracy >= 0.5", "banks/x", model="m",
                     effort="xhigh")["banks/x/run.py"]
     compile(src, "run.py", "exec")
@@ -443,7 +460,7 @@ def _effort_bank(tmp_path, model, effort):
     b = tmp_path / "banks" / "ticket-route"
     _fill(b)
     run_py = (b / "run.py").read_text().replace(
-        '    raise NotImplementedError("call the producer on case[\'input\']")',
+        RAISE, NOTE +
         '    if effort != EFFORT and case["id"] == "t1":\n'
         '        return "general"\n'
         '    if model != MODEL and case["id"] == "t2":\n'
@@ -498,3 +515,66 @@ def test_no_probe_skips_both_probes(tmp_path):
     assert res.returncode == 0 and "probe" not in res.stderr
     assert "downshift" not in bank.read_release(str(b))
     assert not list((b / "RUNS").glob("*probe.jsonl"))
+
+
+# ------------------------------------------------------------------ the standard shape
+
+def _lay(tmp_path, **kw):
+    files = bank.plan("x", "Judge x", "accuracy >= 0.9", "banks/x", **kw)
+    bank.lay_out(str(tmp_path), files)
+    b = tmp_path / "banks" / "x"
+    _fill_40(b)
+    return files, b
+
+
+def test_the_scaffold_lays_out_the_standard_shape_only(tmp_path):
+    files, b = _lay(tmp_path, model="claude-sonnet-5-5", label_source="the support lead")
+    src = files["banks/x/run.py"]
+    compile(src, "run.py", "exec")
+    for gone in ("def main", "argparse", "def score", "write_release", "run_path"):
+        assert gone not in src, gone
+    assert src.rstrip().endswith('if __name__ == "__main__":\n    sys.exit(bank.main(__file__))')
+    assert "MODEL = 'claude-sonnet-5-5'" in src and "EFFORT = 'medium'" in src
+    assert "LABEL_SOURCE = 'the support lead'" in src and "BAR = {\"accuracy\": 0.9}" in src
+    assert "def answer(case, model=MODEL, effort=EFFORT):" in src and "note_usage" in src
+    assert "def grade(case, got):" in src and "--self-check" in src and "--repeats" in src
+    assert bank.lint(str(b)) == []
+    assert bank.self_check(str(b)) == []
+
+
+def test_a_deterministic_scaffold_declares_no_model_and_no_effort(tmp_path):
+    files, b = _lay(tmp_path, label_source="the ledger")
+    src = files["banks/x/run.py"]
+    assert "MODEL = None" in src and "EFFORT = None" in src and "def answer(case):" in src
+    assert bank.self_check(str(b)) == []
+
+
+def test_a_scaffold_with_no_label_source_is_refused_until_one_is_named(tmp_path):
+    files, b = _lay(tmp_path)
+    assert "LABEL_SOURCE = None" in files["banks/x/run.py"]
+    assert [r.rule for r in bank.lint(str(b))] == ["label-by-judged-model"]
+
+
+def test_the_codebook_names_the_row_keys_the_bar_and_the_dated_changes(tmp_path):
+    files = bank.plan("x", "Judge x", "accuracy >= 0.9", "banks/x")
+    book = files["banks/x/CODEBOOK.md"]
+    for key in ("`id`", "`input`", "`expected`", "`why`", "`split`", "`label_source`"):
+        assert key in book, key
+    assert "never written by the model the bank judges" in book
+    assert "accuracy >= 0.9" in book.split("## 2.")[1].split("## 3.")[0]
+    assert "a bar change needs a dated line here" in book.split("## 3.")[1]
+
+
+def test_the_bank_test_is_the_self_check_and_names_each_fix(tmp_path):
+    files, b = _lay(tmp_path)
+    test = files["banks/x/test_x_bank.py"]
+    assert "def test_the_bank_is_on_the_standard" in test and "bank.self_check(HERE)" in test
+    res = _py(["-m", "pytest", "-q", "-p", "no:cacheprovider", str(b)], tmp_path)
+    assert res.returncode != 0
+    assert "label-by-judged-model" in res.stdout and "add 'LABEL_SOURCE" in res.stdout
+
+
+def test_new_takes_a_label_source(tmp_path):
+    assert main(["--root", str(tmp_path)] + NEW) == 0
+    src = (tmp_path / "banks" / "ticket-route" / "run.py").read_text()
+    assert "LABEL_SOURCE = 'the support lead, by hand'" in src

@@ -286,11 +286,35 @@ def test_self_check_isolates_each_bank_s_imports(tmp_path):
 def test_isolated_imports_restores_sys_path_and_sys_modules(tmp_path):
     (tmp_path / "iso_probe_mod.py").write_text("X = 1\n")
     before = list(sys.path)
-    with bank_lint.isolated_imports():
+    with bank_lint.isolated_imports(str(tmp_path)):
         sys.path.insert(0, str(tmp_path))
         import iso_probe_mod  # noqa: F401
         assert "iso_probe_mod" in sys.modules
     assert "iso_probe_mod" not in sys.modules and sys.path == before
+
+
+def test_isolated_imports_forgets_only_the_bank_s_own_modules(tmp_path):
+    """A stdlib or C extension module first imported by a bank stays: re-importing one (numpy)
+    after popping it can misbehave. Only modules whose file lies under the bank are forgotten."""
+    inside = tmp_path / "the-bank"
+    outside = tmp_path / "elsewhere"
+    for d in (inside, outside):
+        d.mkdir()
+    (inside / "iso_inside_mod.py").write_text("X = 1\n")
+    (outside / "iso_outside_mod.py").write_text("Y = 2\n")
+    try:
+        with bank_lint.isolated_imports(str(inside)):
+            sys.path[:0] = [str(inside), str(outside)]
+            import iso_inside_mod  # noqa: F401
+            import iso_outside_mod  # noqa: F401
+            sys.modules["iso_nofile_mod"] = type(sys)("iso_nofile_mod")
+            run = bank_lint.load_module(str(make(tmp_path) / "run.py"))
+        assert "iso_inside_mod" not in sys.modules
+        assert run.__name__ not in sys.modules, "the unique run.py module is forgotten"
+        assert "iso_outside_mod" in sys.modules and "iso_nofile_mod" in sys.modules
+    finally:
+        for name in ("iso_inside_mod", "iso_outside_mod", "iso_nofile_mod"):
+            sys.modules.pop(name, None)
 
 
 def test_a_waiver_dated_after_today_is_refused(tmp_path):

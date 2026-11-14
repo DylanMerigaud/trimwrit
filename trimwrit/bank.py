@@ -507,6 +507,9 @@ def _schema2_problems(doc):
     if "gates" in doc and not (isinstance(doc["gates"], dict)
                                and all(isinstance(v, bool) for v in doc["gates"].values())):
         out.append("`gates` is not {name: true or false}")
+    if "waived" in doc and not (isinstance(doc["waived"], list)
+                                and all(r in RULES for r in doc["waived"])):
+        out.append("`waived` is not a list of rule ids (bank.RULES)")
     return out
 
 
@@ -789,10 +792,13 @@ Fill before the first case.)
 
 ## 1. The cases
 
-One JSON object per line of CORPUS.jsonl: `id` (unique), `input` (what the producer reads, as it
-read it), `expected` (the right answer), `why` (one line: the evidence for that answer). Real
-inputs from what the producer already saw; enough of them that the bar reads the failures that
-matter, the hard ones included.
+One JSON object per line of CORPUS.jsonl, six keys: `id` (unique), `input` (what the producer
+reads, as it read it), `expected` (the right answer), `why` (one line: the evidence for that
+answer), `split` (optional: dev or holdout; without it bank.splits holds out a quarter) and
+`label_source` (optional: who wrote `expected` on this row; LABEL_SOURCE in run.py names it for
+the rows without one). `expected` is never written by the model the bank judges: a person, a
+record, or another model family. Real inputs from what the producer already saw, at least 30,
+enough of them that the bar reads the failures that matter, the hard ones included.
 
 ## 2. The bar, declared {today} BEFORE the first run
 
@@ -801,29 +807,24 @@ writes `passed: false` in RELEASE.json; the producer's door reads `bank.released
 
 ## 3. Changes (dated, with their reason)
 
+One dated line per change; a bar change needs a dated line here: a run refuses a BAR that
+differs from the released one until '- <date>: bar changed from ... to ..., because ...' is
+written.
 - {today}: laid out.
 """
 
 RUN = '''#!/usr/bin/env python3
-"""run.py: grade {judges_lc} on {bank_rel}/CORPUS.jsonl against the bar of CODEBOOK.md section 2;
-writes RUNS/<stamp>.jsonl and RELEASE.json (the RELEASE envelope of trimwrit/bank.py).
+"""run.py: grade {judges_lc} on {bank_rel}/CORPUS.jsonl against the bar of CODEBOOK.md section 2.
 
-    python3 {bank_rel}/run.py [--offline] [--no-probe] [--probe-sample N]
-
---offline grades each case's `expected` as if the producer had answered it: it checks the grader
-and the corpus, never the producer.
-
-When MODEL is a top-tier model (bank.SMALLER), a live run then asks ONE smaller model the same
-question on a deterministic sample of the cases (--probe-sample, default 20): its rows go to
-RUNS/<stamp>.probe.jsonl, its summary under `downshift` in RELEASE.json, one line to stderr.
-
-When EFFORT is above medium (bank.EFFORT_LADDER), a live run also asks the SAME model one effort
-lower on the same sampled cases: its rows go to RUNS/<stamp>.effort-probe.jsonl, its summary under
-`downshift.effort` in RELEASE.json, one line to stderr. No probe ever changes `passed`.
---no-probe skips both.
+The whole runner is bank.main(__file__) (trimwrit/bank_run.py). `python3 {bank_rel}/run.py` runs
+a release: the self check, every case answered and graded, a repeat sample, the downshift probes
+(a smaller model, the effort probe one effort lower; summaries under `downshift` and
+`downshift.effort`), RUNS/<stamp>.jsonl and a schema 2 RELEASE.json. Its flags: --self-check
+(alias --offline) lints the bank and checks the grader can fail, no model call, nothing written;
+--ids a,b and --split dev|holdout grade a part and write no release; --repeats K and
+--repeat-sample S size the repeats; --no-probe skips the probes, --probe-sample N sizes them;
+--jobs N threads; --engine trimwrit|inspect; --json prints the release.
 """
-import argparse
-import json
 import os
 import sys
 
@@ -832,21 +833,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 {import_block}
 
 MODEL = {model_literal}
-# the effort the producer runs at (low, medium, high, xhigh): above medium, the effort probe asks
-# MODEL one rung lower too
 EFFORT = {effort_literal}
 BAR = {{"{bar_metric}": {bar_value}}}
+LABEL_SOURCE = {label_literal}
 
 
-def answer(case, model=MODEL, effort=EFFORT):
-    """The producer's answer on one case, from `model` at `effort`. Call the producer's own
-    function here, the same code path production runs, with `model` in place of its model id and
-    `effort` in place of its effort: the downshift probe passes a smaller model
-    (bank.smaller(MODEL)), the effort probe a cheaper effort (bank.cheaper_effort(EFFORT)), to see
-    whether either would hold the bar. A
-    model call runs lean (claude -p --bare or --safe-mode): a one-shot that loads the whole
-    harness costs ten times the tokens for the same answer."""
-    raise NotImplementedError("call the producer on case['input']")
+{answer_def}
 
 
 def grade(case, got):
@@ -854,65 +846,25 @@ def grade(case, got):
     return got == case["expected"]
 
 
-def score(rows):
-    n = len(rows)
-    right = sum(1 for r in rows if r["right"])
-    return {{"{bar_metric}": round(right / n, 4) if n else None, "right": right}}
-
-
-def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.split("\\n")[0])
-    ap.add_argument("--offline", action="store_true")
-    ap.add_argument("--no-probe", action="store_true",
-                    help="skip the downshift probes (smaller model, cheaper effort)")
-    ap.add_argument("--probe-sample", type=int, default=bank.PROBE_SAMPLE,
-                    help="cases the downshift probe asks (default %(default)s)")
-    args = ap.parse_args(argv)
-    cases = bank.corpus(HERE)
-    stamp = bank.run_stamp()
-    rows = []
-    for case in cases:
-        got = case["expected"] if args.offline else answer(case)
-        rows.append({{"id": case["id"], "got": got, "right": bool(grade(case, got))}})
-    s = score(rows)
-    passed = bool(cases) and all(s[k] is not None and s[k] >= v for k, v in BAR.items())
-    if args.offline:
-        print(json.dumps(dict(s, n=len(rows), passed=passed), sort_keys=True))
-        return 0 if passed else 1
-    with open(bank.run_path(HERE, stamp), "w", encoding="utf-8") as fh:
-        for r in rows:
-            fh.write(json.dumps(r, sort_keys=True, ensure_ascii=False) + "\\n")
-    extra = dict(s)
-    if not args.no_probe and bank.smaller(MODEL) is not None:
-        probe_rows = []
-        extra["downshift"] = bank.probe(cases, rows, answer, grade, MODEL,
-                                        sample=args.probe_sample, out=probe_rows)
-        with open(bank.run_path(HERE, stamp, bank.PROBE_EXT), "w", encoding="utf-8") as fh:
-            for r in probe_rows:
-                fh.write(json.dumps(r, sort_keys=True, ensure_ascii=False) + "\\n")
-        print(bank.probe_line(extra["downshift"]), file=sys.stderr)
-    if not args.no_probe and bank.cheaper_effort(EFFORT) is not None:
-        effort_rows = []
-        eff = bank.probe_effort(cases, rows, answer, grade, MODEL, EFFORT,
-                                sample=args.probe_sample, out=effort_rows)
-        if eff is not None:
-            extra.setdefault("downshift", {{}})["effort"] = eff
-            with open(bank.run_path(HERE, stamp, bank.PROBE_EFFORT_EXT), "w",
-                      encoding="utf-8") as fh:
-                for r in effort_rows:
-                    fh.write(json.dumps(r, sort_keys=True, ensure_ascii=False) + "\\n")
-            print(bank.probe_effort_line(eff), file=sys.stderr)
-    doc = bank.write_release(HERE, passed=passed, n=len(rows), bar=BAR, model=MODEL, run=stamp,
-                             extra=extra)
-    print(json.dumps(doc, sort_keys=True))
-    return 0 if passed else 1
-
-
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(bank.main(__file__))
 '''
 
-TEST = '''"""{bank_rel}: the corpus and the grader, offline (no producer, no model call).
+ANSWER_MODEL = '''def answer(case, model=MODEL, effort=EFFORT):
+    """The producer's answer on one case, from `model` at `effort`. Call the producer's own
+    function here, the same code path production runs, with `model` in place of its model id and
+    `effort` in place of its effort (the probes pass a smaller model and a cheaper effort). The
+    call reports its cost with bank.note_usage(envelope) (a claude --output-format json
+    envelope), on this thread; a run that records none is refused. A model call runs lean
+    (claude -p --bare or --safe-mode)."""
+    raise NotImplementedError("call the producer on case['input']")'''
+
+ANSWER_DETERMINISTIC = '''def answer(case):
+    """The producer's answer on one case: call the producer's own function, the same code path
+    production runs. A deterministic bank (MODEL = None) calls no model."""
+    raise NotImplementedError("call the producer on case['input']")'''
+
+TEST = '''"""{bank_rel}: the bank on the standard, offline (no producer, no model call).
 
     python3 -m pytest -q {bank_rel}/test_{module}_bank.py
 """
@@ -920,38 +872,25 @@ import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
 {path_block}
 {import_block}
-import run  # noqa: E402
 
 
-def test_the_corpus_has_cases_each_with_its_answer():
-    cases = bank.corpus(HERE)
-    assert cases, "CORPUS.jsonl is empty: a bank holds real cases with their right answer"
-    ids = [c.get("id") for c in cases]
-    assert len(set(ids)) == len(ids) and all(ids), "every case has a unique id"
-    for c in cases:
-        assert "input" in c and "expected" in c and c.get("why"), c.get("id")
-
-
-def test_the_grader_accepts_every_expected_answer():
-    for c in bank.corpus(HERE):
-        assert run.grade(c, c["expected"]), c["id"]
-
-
-def test_the_bar_is_the_codebook_bar():
-    with open(os.path.join(HERE, "CODEBOOK.md"), encoding="utf-8") as fh:
-        book = fh.read()
-    for metric, value in run.BAR.items():
-        assert "{{}} >= {{}}".format(metric, value) in book
+def test_the_bank_is_on_the_standard():
+    refusals = bank.self_check(HERE)
+    assert refusals == [], "\\n".join(
+        "{{}}: {{}} (fix: {{}})".format(r.rule, r.what, r.fix) for r in refusals)
 '''
 
 
 def plan(slug, judges, bar, bank_rel, model=None, producer=None, today=None,
-         import_block=DEFAULT_IMPORT, path_block="", effort="medium"):
-    """{path relative to the repository: text} of a new bank at `bank_rel`. Raises BankError on
-    a bad slug, bar, model or effort."""
+         import_block=DEFAULT_IMPORT, path_block="", effort="medium", label_source=None):
+    """{path relative to the repository: text} of a new bank at `bank_rel`, on the standard
+    shape (bank_lint): run.py declares MODEL, EFFORT, BAR, LABEL_SOURCE, answer() and grade(),
+    and hands the run to bank.main. `label_source` (who labels the rows) is written as
+    LABEL_SOURCE; without one it is None, which lint refuses until it is named. A deterministic
+    bank (no model) gets MODEL = None, EFFORT = None and answer(case). Raises BankError on a bad
+    slug, bar, model or effort."""
     if not SLUG_RE.match(slug or ""):
         raise BankError("slug {!r}: lowercase words joined by '-'".format(slug))
     m = BAR_RE.match(bar or "")
@@ -970,7 +909,10 @@ def plan(slug, judges, bar, bank_rel, model=None, producer=None, today=None,
     module = slug.replace("-", "_")
     fill = dict(judges=judges, judges_lc=judges[:1].lower() + judges[1:], bank_rel=bank_rel,
                 today=today or datetime.date.today().isoformat(), bar_metric=m.group(1),
-                bar_value=float(m.group(2)), module=module, model_literal=repr(model), effort_literal=repr(effort),
+                bar_value=float(m.group(2)), module=module, model_literal=repr(model),
+                effort_literal=repr(effort if model is not None else None),
+                label_literal=repr(label_source if (label_source or "").strip() else None),
+                answer_def=ANSWER_MODEL if model is not None else ANSWER_DETERMINISTIC,
                 producer=producer or "(name the file and the function that makes the call)",
                 import_block=import_block, path_block=path_block)
     return {bank_rel + "/CODEBOOK.md": CODEBOOK.format(**fill),
