@@ -897,6 +897,8 @@ def plan(slug, judges, bar, bank_rel, model=None, producer=None, today=None,
     if not m:
         raise BankError("bar {!r}: '<metric> >= <value between 0 and 1>', e.g. "
                         "'accuracy >= 0.9'".format(bar))
+    if isinstance(model, str) and model.strip().lower() in ("", "none", "null"):
+        model = None  # `--model none`: a deterministic bank, never the string 'none'
     if model is not None and not MODEL_RE.match(model):
         raise BankError("model {!r}: the model id the producer calls, or none".format(model))
     if effort not in EFFORTS:

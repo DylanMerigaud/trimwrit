@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.1, 2026-11-14
+
+- `trimwrit bank new --model none` writes a deterministic bank (`MODEL = None`, `EFFORT = None`),
+  never the string `'none'` with the default effort. A fresh agent building its first bank on the
+  standard met it and had to fix both lines by hand.
+
 ## bare-id-gate 0.2.0, 2026-11-14
 
 - **A long final message carries one plain-words line.** Four closing blocks in five days drew

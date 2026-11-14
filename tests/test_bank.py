@@ -549,6 +549,18 @@ def test_a_deterministic_scaffold_declares_no_model_and_no_effort(tmp_path):
     assert bank.self_check(str(b)) == []
 
 
+def test_bank_new_with_model_none_writes_a_deterministic_bank(tmp_path):
+    """`--model none` (the help text's own word) is a deterministic bank: MODEL = None and
+    EFFORT = None, never the string 'none' with the default effort (a fresh agent, 2026-11-14)."""
+    args = ["-m", "trimwrit", "bank", "new", "weekday", "--judges", "Is the date a weekday",
+            "--bar", "accuracy >= 0.9", "--model", "none", "--label-source", "by hand"]
+    r = _py(args, str(tmp_path))
+    assert r.returncode == 0, r.stderr
+    src = open(os.path.join(str(tmp_path), "banks", "weekday", "run.py")).read()
+    assert "MODEL = None" in src and "EFFORT = None" in src, src
+    assert "'none'" not in src and '"none"' not in src
+
+
 def test_a_scaffold_with_no_label_source_is_refused_until_one_is_named(tmp_path):
     files, b = _lay(tmp_path)
     assert "LABEL_SOURCE = None" in files["banks/x/run.py"]
