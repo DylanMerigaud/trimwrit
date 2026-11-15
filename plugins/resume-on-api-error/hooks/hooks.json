@@ -1,6 +1,7 @@
 {
-  "description": "resume-on-api-error: a turn that died on an API error resumes itself",
+  "description": "resume-on-api-error: a turn that died on an API error, or a usage-limit wait that ended without continuing, resumes itself",
   "hooks": {
-    "StopFailure": [{"hooks": [{"type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/resume_on_api_error.sh\"", "timeout": 10, "async": true}]}]
+    "StopFailure": [{"hooks": [{"type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/resume_on_api_error.sh\"", "timeout": 10, "async": true}]}],
+    "Notification": [{"matcher": "quota_auto_resume_disabled|quota_auto_resume_stale", "hooks": [{"type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/resume_on_api_error.sh\"", "timeout": 10, "async": true}]}]
   }
 }

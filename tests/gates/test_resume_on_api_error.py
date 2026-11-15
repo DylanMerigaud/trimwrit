@@ -318,3 +318,67 @@ def test_real_runs_stack_at_most_one_sleeper_and_it_cleans_up(tmp_path):
     sent = keys.read_text()
     assert sent.count("Enter") == 1 and sent.count("continue: the previous turn") == 1
     assert "resumed tmux %3 after 2s" in (d / "trimwrit-gates" / "api-failures.log").read_text()
+
+
+# ---- 0.3.0: the end of a usage-limit wait that did not continue (Notification hook) ---------
+
+def notify(tmp_path, ntype, env=None, config=None, payload=None):
+    body = {"hook_event_name": "Notification", "notification_type": ntype,
+            "message": "usage limit", "title": "Claude Code"}
+    body.update(payload or {})
+    return run(tmp_path, None, env, config=config, payload=dict(body, error=None, error_details=None))
+
+
+def test_the_hook_is_registered_on_both_quota_notification_types():
+    import os
+    from gates._hook import plugin
+    with open(os.path.join(plugin(NAME), "hooks", "hooks.json"), encoding="utf-8") as fh:
+        hooks = json.load(fh)["hooks"]
+    (entry,) = hooks["Notification"]
+    assert set(entry["matcher"].split("|")) == {"quota_auto_resume_disabled",
+                                                "quota_auto_resume_stale"}
+    assert entry["hooks"][0]["command"] == hooks["StopFailure"][0]["hooks"][0]["command"]
+
+
+def test_a_disabled_wait_gets_the_continue_text_after_the_rate_limit_delay(tmp_path):
+    out, log = notify(tmp_path, "quota_auto_resume_disabled", TMUX)
+    assert out.returncode == 0
+    assert out.stdout.startswith(MARK + "sleep 120; ")
+    assert "-l -- 'continue: the previous turn" in out.stdout
+    assert "(quota_auto_resume_disabled)'" in out.stdout
+    assert "notification type=quota_auto_resume_disabled session=s1" in log
+    assert "stop-failure" not in log
+
+
+def test_a_stale_wait_gets_a_bare_enter_and_never_escape(tmp_path):
+    # Escape cancels the wait: the stale prompt asks for Enter only, vim mode or not.
+    out, _ = notify(tmp_path, "quota_auto_resume_stale", SCREEN, config={"vim_mode": True})
+    assert out.stdout.startswith(MARK + "sleep 60; screen -S '123.pop' -X stuff \"$(printf '\\r')\" && ")
+    assert "\\033" not in out.stdout and "continue" not in out.stdout
+    out, _ = notify(tmp_path, "quota_auto_resume_stale", TMUX, config={"vim_mode": True})
+    assert out.stdout.startswith(MARK + "sleep 60; tmux send-keys -t '%3' Enter && ")
+    assert "Escape" not in out.stdout and "-l --" not in out.stdout
+
+
+@pytest.mark.parametrize("ntype", ["quota_auto_resume_fired", "idle_prompt", ""])
+def test_another_notification_type_is_logged_and_left(tmp_path, ntype):
+    out, log = notify(tmp_path, ntype, SCREEN)
+    assert out.returncode == 0 and out.stdout == ""
+    assert "needs no keystroke" in log
+
+
+def test_a_disabled_wait_that_keeps_hitting_the_limit_backs_off_but_never_stops(tmp_path):
+    def nth(n):
+        t = transcript(tmp_path, ok(), *[fail("You've hit your limit", "rate_limit")] * n,
+                       name="q{}.jsonl".format(n))
+        out, _ = notify(tmp_path, "quota_auto_resume_disabled", SCREEN,
+                        payload={"transcript_path": t})
+        return out.stdout
+    assert nth(1).startswith(MARK + "sleep 120; ")
+    assert nth(7).startswith(MARK + "sleep 480; ")
+    assert nth(40).startswith(MARK + "sleep 3600; ")
+
+
+def test_a_quota_notification_without_a_multiplexer_is_logged_only(tmp_path):
+    out, log = notify(tmp_path, "quota_auto_resume_disabled")
+    assert out.stdout == "" and "no screen or tmux session" in log

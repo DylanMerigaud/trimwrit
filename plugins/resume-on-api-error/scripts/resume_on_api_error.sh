@@ -23,6 +23,18 @@
 # Settings (section resume-on-api-error of trimwrit-gates.json): log, vim_mode, delay_s,
 # rate_limit_delay_s, text. A config error is loud (stderr and the log) and the defaults apply.
 #
+# THE USAGE-LIMIT WAIT (Notification hook, matchers quota_auto_resume_disabled and
+# quota_auto_resume_stale, Claude Code 2.1.3xx). Since Claude Code waits a claude.ai usage limit
+# out by itself and continues at the reset, a StopFailure rate_limit is usually followed by that
+# wait (2026-11-08: tmux %7 resumed at the reset with no keystroke of ours past the first). Two
+# ends of that wait leave the session idle: `quota_auto_resume_disabled` (the reset moved more
+# than 24 hours away, the continued task kept hitting the limit, or the continuation was blocked)
+# and `quota_auto_resume_stale` (the reset passed while the computer slept: Claude Code waits for
+# Enter). The first gets the continue text after rate_limit_delay_s, through the same policy as a
+# transient failure (without end, backed off past five in a row, one pending sleeper per pane);
+# the second gets a bare Enter after delay_s, never Escape (Escape cancels the wait). Any other
+# notification type is logged and left.
+#
 # `--dry-run` prints the detached command instead of running it and creates no pidfile (tests;
 # no hooks.json passes it). Compatible with /bin/bash 3.2.
 
@@ -43,11 +55,15 @@ def one(v,n):
 print(one(d.get("error",""),40))
 print(one(d.get("session_id",""),36))
 print(one(d.get("error_details",""),160))
-print(one(d.get("cwd",""),1000))' 2>/dev/null)"
+print(one(d.get("cwd",""),1000))
+print(one(d.get("hook_event_name",""),40))
+print(one(d.get("notification_type",""),60))' 2>/dev/null)"
 category="$(printf '%s\n' "${parsed}" | sed -n '1p')"
 session="$(printf '%s\n' "${parsed}" | sed -n '2p')"
 details="$(printf '%s\n' "${parsed}" | sed -n '3p')"
 pcwd="$(printf '%s\n' "${parsed}" | sed -n '4p')"
+event="$(printf '%s\n' "${parsed}" | sed -n '5p')"
+ntype="$(printf '%s\n' "${parsed}" | sed -n '6p')"
 
 # Every setting in one python call, printed as shell assignments. A config error is reported on
 # CFG_ERROR and the defaults of defaults.json apply: the hook never exits 2 over a bad file.
@@ -93,7 +109,20 @@ if [ -n "${CFG_ERROR}" ]; then
   echo "$(now)   config error, defaults applied: ${CFG_ERROR}" >> "${LOG}"
 fi
 
-echo "$(now) stop-failure category=${category:-unknown} session=${session:-?} sty=${STY:-none} tmux_pane=${TMUX_PANE:-none} cwd=${PWD} details=${details}" >> "${LOG}"
+# KEYS: what the sleeper types. `text` is the continue message plus Enter; `enter` is a bare
+# Enter (the stale usage-limit prompt).
+KEYS="text"
+if [ "${event}" = "Notification" ]; then
+  category="${ntype:-unknown}"
+  echo "$(now) notification type=${category} session=${session:-?} sty=${STY:-none} tmux_pane=${TMUX_PANE:-none} cwd=${PWD}" >> "${LOG}"
+  case "${category}" in
+    quota_auto_resume_disabled) ;;
+    quota_auto_resume_stale) KEYS="enter" ;;
+    *) echo "$(now)   not resumed: notification ${category} needs no keystroke" >> "${LOG}"; exit 0 ;;
+  esac
+else
+  echo "$(now) stop-failure category=${category:-unknown} session=${session:-?} sty=${STY:-none} tmux_pane=${TMUX_PANE:-none} cwd=${PWD} details=${details}" >> "${LOG}"
+fi
 
 STATE="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/trimwrit-gates}/resume-on-api-error"
 mkdir -p "${STATE}" 2>/dev/null
@@ -117,7 +146,7 @@ else
 fi
 
 case "${category}" in
-  rate_limit|overloaded) delay="${CFG_RATE_DELAY}" ;;
+  rate_limit|overloaded|quota_auto_resume_disabled) delay="${CFG_RATE_DELAY}" ;;
   *) delay="${CFG_DELAY}" ;;
 esac
 # The policy's back-off: past five transient failures in a row the delay doubles, capped at one
@@ -135,7 +164,7 @@ sq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 text="${CFG_TEXT} (${category:-unknown})"
 # VIM MODE: with the TUI in vim editorMode a bare stuff lands as NORMAL-mode commands. Escape,
 # a short pause, then `i` (prefixed to the text) enters INSERT before the text and return.
-[ "${CFG_VIM}" = "1" ] && text="i${text}"
+[ "${CFG_VIM}" = "1" ] && [ "${KEYS}" = "text" ] && text="i${text}"
 
 if [ "${target}" = "screen" ]; then
   where="${STY}"; key="screen-${STY}"
@@ -157,7 +186,13 @@ pending() {
 claim() { ( set -C; printf '%s\n' "$$" > "${PIDF}" ) 2>/dev/null; }
 
 cmd=": resume-on-api-error sleeper; sleep ${delay}; "
-if [ "${target}" = "screen" ]; then
+if [ "${KEYS}" = "enter" ]; then
+  if [ "${target}" = "screen" ]; then
+    cmd="${cmd}screen -S $(sq "${STY}") -X stuff \"\$(printf '\\r')\""
+  else
+    cmd="${cmd}tmux send-keys -t $(sq "${TMUX_PANE}") Enter"
+  fi
+elif [ "${target}" = "screen" ]; then
   [ "${CFG_VIM}" = "1" ] && cmd="${cmd}screen -S $(sq "${STY}") -X stuff \"\$(printf '\\033')\"; sleep 0.4; "
   cmd="${cmd}screen -S $(sq "${STY}") -X stuff $(sq "${text}")\"\$(printf '\\r')\""
 else

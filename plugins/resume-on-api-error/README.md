@@ -8,6 +8,15 @@ hosting the session, after a delay; never on an authentication, billing or safeg
   tmux pane (`$TMUX` and `$TMUX_PANE`) hosting the session. A network still down fails again,
   fires the hook again and gets the next keystroke. `rate_limit` and `overloaded` wait
   `rate_limit_delay_s`, everything else `delay_s`.
+- **Notification hook**, matchers `quota_auto_resume_disabled` and `quota_auto_resume_stale`
+  (same script, async). Claude Code waits a claude.ai usage limit out by itself and continues at
+  the reset; these two types are the ends of that wait that leave the session idle. `disabled`
+  (the reset moved more than 24 hours away, the continued task kept hitting the limit, or the
+  continuation was blocked) gets the `text` plus ` (quota_auto_resume_disabled)` after
+  `rate_limit_delay_s`, as a transient failure: without end, backed off past five in a row.
+  `stale` (the reset passed while the computer slept, Claude Code waits for Enter) gets a bare
+  Enter after `delay_s`, never Escape, which would cancel the wait. `quota_auto_resume_fired`
+  needs nothing: Claude Code already continued.
 - **What is resumed** is decided by `scripts/resume_policy.py`, which reads the error text from
   the session's transcript (the payload's `transcript_path`, else
   `~/.claude/projects/<cwd slug>/<session>.jsonl`): the payload's `error_details` comes in empty.
@@ -56,5 +65,5 @@ Section `resume-on-api-error` of `~/.claude/trimwrit-gates.json` (user) and
 
 `tests/gates/test_resume_on_api_error.py` runs the script with `--dry-run`, which prints the
 detached command instead of running it, plus one real run with a fake `tmux` on `PATH` for the
-pidfile. 2026-11-04: a safeguards flag got 991 resumes in one session and four sleepers stacked on
+pidfile, and the Notification payloads of both quota types. 2026-11-04: a safeguards flag got 991 resumes in one session and four sleepers stacked on
 one pane; both are replayed there. No model-run eval: the hook is deterministic.

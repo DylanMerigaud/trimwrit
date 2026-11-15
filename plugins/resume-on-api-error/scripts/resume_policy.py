@@ -14,13 +14,16 @@ Verdicts, in order:
   Dylan's standing order of 2026-09-19 (memory retry-forever-everywhere), but past
   TRANSIENT_FAST consecutive failures the delay doubles per failure, up to MAX_DELAY_S, so a
   failure that loops costs one keystroke an hour instead of one a minute.
+- a usage-limit wait that ended without continuing (the Notification types
+  quota_auto_resume_disabled and quota_auto_resume_stale, read as the category when the payload
+  has no error): transient, the same limit is waited out again, never given up.
 - any other category: resumed while fewer than BREAK_AFTER consecutive failures, then left.
 
 "Consecutive" means failures of this session with no successful assistant row between them,
 counted from the transcript tail. When no transcript can be read, a per-session counter in the
 state directory stands in (reset after RESET_S without a failure).
 
-Usage: resume_policy.py <state_dir>, the StopFailure payload on stdin. Prints shell assignments
+Usage: resume_policy.py <state_dir>, the StopFailure or Notification payload on stdin. Prints shell assignments
 VERDICT (resume|skip), REASON, COUNT and FACTOR (the delay multiplier). Never raises.
 """
 import json
@@ -39,7 +42,8 @@ TAIL_BYTES = 4 * 1024 * 1024
 
 CREDENTIAL = re.compile(r"^(authentication_failed|billing|insufficient|invalid_api_key"
                         r"|account_on_hold|oauth_org_not_allowed|cloud_credential_error)")
-TRANSIENT = re.compile(r"^(rate_limit|overloaded|server_error|unknown|api_error|timeout)$"
+TRANSIENT = re.compile(r"^(rate_limit|overloaded|server_error|unknown|api_error|timeout"
+                       r"|quota_auto_resume_disabled|quota_auto_resume_stale)$"
                        r"|connection|network|timeout", re.I)
 SAFEGUARDS = re.compile(r"safeguards flagged|anthropic\.com/legal/aup|usage policy", re.I)
 TOO_LARGE = re.compile(r"prompt is too long|request too large|exceeds? the (model'?s )?context"
@@ -126,7 +130,7 @@ def state_count(state_dir, session):
 
 def decide(payload, state_dir):
     """(verdict, reason, consecutive count, delay factor)."""
-    category = str(payload.get("error") or "").strip()
+    category = str(payload.get("error") or payload.get("notification_type") or "").strip()
     details = str(payload.get("error_details") or "")
     session = str(payload.get("session_id") or "")
     fallback = state_count(state_dir, session)
