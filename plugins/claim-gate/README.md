@@ -6,11 +6,14 @@ tests pass, verified) with no tool result in the same turn that proves it.
 The Stop hook (`claim_gate.py`) reads the last 1500 characters of the final message, English and
 French, for a first person or status claim ("I pushed", "merged to main", "j'ai envoye", "tests
 pass", "I verified"). It then looks at the tool calls after the last typed user message: a claim
-needs a call of its kind whose result is not an error (push: `git push` or `gh pr merge`; sent: a
+needs a call of its kind whose result is not an error (push: `git push`, `gh pr merge`, or a read
+of the remote such as `git branch -r --contains SHA` or `git log origin/main` for "is on main"; sent: a
 send command or tool; deployed: vercel, a deploy command, launchctl; tests: pytest, vitest, go
 test and friends; verified: any Bash, Read, Grep, Glob or MCP read). A subagent or a workflow that
 ran in the turn counts for every kind. No receipt: the stop is blocked with a reason that quotes
-the claim, and the model either runs the command now or rewords the claim to what it knows.
+the claim and what receipt its kind accepts; when an earlier turn of the session ran that receipt
+(the test run behind "the 39 tests pass"), the reason names that command to run again now. The
+model either runs it or rewords the claim with a past marker ("earlier", "tout a l'heure").
 
 Not a claim: a negation, a future, a question, a condition, a third party's act, a quoted line, a
 code span, or an item of a list whose introducing line ends on a negation governing its colon:

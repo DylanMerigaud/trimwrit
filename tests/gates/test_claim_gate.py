@@ -366,3 +366,35 @@ def test_eval_grader_is_proven():
     found = eval_cases(NAME)
     assert [os.path.basename(c.path) for c in found] == ["claim-without-receipt"]
     assert [p for c in found for p in check.check_case(c)] == []
+
+
+# Lesson r:loop:stop_claim_gate:claim_without_receipt (2026-11-09..13): sessions that checked
+# origin with git branch -r --contains or git log origin/main were refused for "est sur main",
+# and sessions restating a test count from an earlier turn were refused with no command to rerun.
+@pytest.mark.parametrize("cmd", [
+    "git fetch -q origin main && git branch -r --contains 646a8c070",
+    "git log --oneline -1 origin/main",
+    "git show origin/main:scripts/vps/ghostty.config | shasum",
+    "git -C repo ls-remote origin main",
+])
+def test_a_read_of_the_remote_is_the_receipt_of_on_main(cmd):
+    assert not gate.judge_turn("Le correctif est sur main.", [("Bash", cmd)], CFG)
+    assert not gate.judge_turn("I pushed it.", [("Bash", cmd)], CFG)
+
+
+@pytest.mark.parametrize("cmd", ["git log --oneline -3", "git status", "git branch"])
+def test_a_local_read_is_no_receipt_of_on_main(cmd):
+    assert gate.judge_turn("Le correctif est sur main.", [("Bash", cmd)], CFG)
+
+
+def test_the_refusal_names_the_test_command_of_an_earlier_turn(tmp_path):
+    path = make_transcript(tmp_path, "Les 39 tests passent et c'est committe.",
+                           ["cd ~/Code/dofus-idle && python3 -m pytest -q"], previous_turn=True)
+    reason = blocked(run_py(NAME, SCRIPT, stop(path, "rr"), tmp_path))
+    assert "run it again now: `cd ~/Code/dofus-idle && python3 -m pytest -q`" in reason
+    assert "earlier" in reason and "git branch -r --contains" not in reason
+
+
+def test_the_suggested_rewording_is_not_a_claim():
+    assert gate.claims_in("Les 39 tests passaient tout a l'heure.", CFG) == {}
+    assert gate.claims_in("The 39 tests passed earlier.", CFG) == {}

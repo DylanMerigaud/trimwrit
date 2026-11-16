@@ -14,11 +14,13 @@ person or status claim of a gesture done, English and French:
     tests     "tests pass", "all green", "N passed", "les tests passent", "tests verts"
     verified  "I verified", "j'ai verifie", "confirmed", "verifie"
 against the tool calls of the SAME TURN (everything after the last typed user message): a claim
-needs a tool call of its kind whose result is not an error (push: git push or gh pr merge; sent:
+needs a tool call of its kind whose result is not an error (push: git push, gh pr merge, or a read
+of the remote such as git branch -r --contains or git log origin/main; sent:
 a send command or a send tool; deployed: vercel, deploy, launchctl; tests: pytest, vitest, go
 test; verified: any Bash, Read, Grep, Glob or MCP read). A subagent or a workflow that ran in the
 turn counts for every kind: its report is the receipt. No receipt: the stop is blocked and the
-reason names the claim.
+reason names the claim, the receipt its kind accepts, and the receipt command an earlier turn ran
+(to run again now), so the next attempt passes instead of looping into the chain cap.
 
 Not a claim: a negation ("not pushed", "n'est pas envoye"), a future ("I'll push", "to push"), a
 question, a condition ("once merged"), a third party's act ("they sent"), and the word inside a
@@ -131,9 +133,14 @@ def _void_negated_lists(text):
 
 # Reading the output file of a background run is the receipt of what that run did.
 BG_OUTPUT = r"/tasks/\S+\.output|\bTaskOutput\b"
+# A read of the remote branch is the receipt of a state claim ("est sur main", "is on main"): the
+# refusal asks to run the command that "does or checks it", so a check of origin counts.
+REMOTE_CHECK = (r"\bgit\s+(?:-C\s+\S+\s+)?ls-remote\b"
+                r"|\bgit\s+(?:-C\s+\S+\s+)?(?:log|show|branch|merge-base|rev-parse|diff|cat-file)\b"
+                r"[^\n|;&]*(?:\borigin/|\s-r\b|\s--remotes?\b)")
 RECEIPT_SRC = {
-    "merged": r"\bgit\s+(?:-C\s+\S+\s+)?(?:push|pull|merge|rebase|commit)\b|\bgh\s+pr\s+merge\b|" + BG_OUTPUT,
-    "pushed": r"\bgit\s+(?:-C\s+\S+\s+)?push\b|\bgh\s+pr\s+merge\b|\bgit\s+merge\b|" + BG_OUTPUT,
+    "merged": r"\bgit\s+(?:-C\s+\S+\s+)?(?:push|pull|merge|rebase|commit)\b|\bgh\s+pr\s+merge\b|" + REMOTE_CHECK + "|" + BG_OUTPUT,
+    "pushed": r"\bgit\s+(?:-C\s+\S+\s+)?push\b|\bgh\s+pr\s+merge\b|\bgit\s+merge\b|" + REMOTE_CHECK + "|" + BG_OUTPUT,
     "sent": r"\bsend\b|\bsend_|_send\b|\bgmail\b|\bsmtp\b|\bgh\s+(?:pr|issue)\s+(?:create|comment)\b|\bpush_?notif|mcp__.*(?:send|post|create|click|press_key|type_text|fill)|SendMessage|PushNotification|SendUserFile|\bcurl\b.*\b(?:POST|-X|-d)\b|\bgit\s+push\b|" + BG_OUTPUT,
     "deployed": r"\bvercel\b|\bdeploy\b|\blaunchctl\b|\bgit\s+push\b|\bnpm\s+publish\b|" + BG_OUTPUT,
     "tests": r"\bpytest\b|\bunittest\b|\bvitest\b|\bjest\b|--self-test\b|\bself[_-]test\b|\bgo\s+test\b|\bcargo\s+test\b|\bpnpm\s+(?:test|typecheck|lint)\b|\bnpm\s+(?:run\s+)?test\b|\btsc\b|\bpython3?\s+\S*test\S*\.py\b|\bmake\s+test\b|" + BG_OUTPUT,
@@ -309,12 +316,76 @@ def judge_turn(final_text, calls, cfg=None):
     return unproven(claims_in(final_text, cfg), calls, cfg)
 
 
-def reason_text(missing, cfg):
-    parts = ["\"{}\" ({})".format(s, k) for k, s in missing.items()]
+# What each kind accepts as a receipt, said in the refusal so the next attempt passes.
+RECEIPT_WORDS = {
+    "pushed": "a git push, gh pr merge, or a read of the remote (git fetch then git branch -r "
+              "--contains SHA, git log origin/main, git ls-remote)",
+    "merged": "a git push, merge, commit, gh pr merge, or a read of the remote (git branch -r "
+              "--contains SHA, git log origin/main)",
+    "sent": "the send command or send tool itself",
+    "deployed": "the deploy command (vercel, deploy, launchctl, npm publish)",
+    "tests": "the test command itself (pytest, vitest, go test, npm test, tsc...); a count from an "
+             "earlier turn is no receipt",
+    "verified": "a Bash, Read, Grep or MCP read of the thing",
+}
+REWORD = ("or reword with a past marker that says where it comes from (\"earlier\", \"already\", "
+          "\"tout a l'heure\", \"deja\") or with what you know (\"not run\", \"not checked\")")
+
+
+def earlier_receipts(rows, kinds, cfg=None):
+    """{kind: command} the newest call of an EARLIER turn of this session that would have been
+    the receipt: the exact command to run again now."""
+    _claims, receipts, _void = patterns(_settings(cfg))
+    start = 0
+    for i, r in enumerate(rows):
+        if _is_typed_user(r):
+            start = i
+    out = {}
+    for r in rows[:start]:
+        if r.get("isSidechain"):
+            continue
+        content = (r.get("message") or {}).get("content")
+        if not isinstance(content, list):
+            continue
+        for x in content:
+            if not isinstance(x, dict) or x.get("type") != "tool_use" or x.get("name") != "Bash":
+                continue
+            cmd = (x.get("input") or {}).get("command")
+            if not isinstance(cmd, str):
+                continue
+            cmd = HEREDOC_RE.sub(" ", cmd)  # a heredoc body is data (a message, a script), not a call
+            for kind in kinds:
+                if kind in receipts and receipts[kind].search("Bash " + cmd):
+                    out[kind] = _receipt_segment(cmd, receipts[kind])
+    return out
+
+
+SEGMENT_SPLIT = re.compile(r"\s*(?:&&|\s\|\|?\s|;|\n)\s*")
+HEREDOC_RE = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?[^\n]*\n.*?^\s*\1\s*$", re.S | re.M)
+
+
+def _receipt_segment(cmd, rx):
+    """The piece of a compound command that is the receipt, after its `cd` when there is one:
+    "cd ~/Code/x && sed -i ... && python3 -m pytest -q | tail" gives "cd ~/Code/x && python3 -m
+    pytest -q"."""
+    segments = [x for x in SEGMENT_SPLIT.split(cmd) if x.strip()]
+    hit = next((x for x in segments if rx.search("Bash " + x)), cmd)
+    cd = next((x for x in segments if x.startswith("cd ")), None)
+    text = " ".join(((cd + " && ") if cd and cd != hit else "").split() + hit.split())
+    return text[:200]
+
+
+def reason_text(missing, cfg, earlier=None):
+    earlier = earlier or {}
+    parts = []
+    for k, s in missing.items():
+        part = "\"{}\" ({}: needs {}".format(s, k, RECEIPT_WORDS.get(k, "its command"))
+        if k in earlier:
+            part += "; your last one ran in an earlier turn, run it again now: `{}`".format(earlier[k])
+        parts.append(part + ")")
     text = ("The final message claims a gesture done with no tool result in this turn that proves "
             "it: " + "; ".join(parts) + ". Run the command that does or checks it now, in this "
-            "turn, and report what the output says; or reword the claim to what you actually "
-            "know (\"not run\", \"not checked\"). (claim-gate)")
+            "turn, and report what the output says; " + REWORD + ". (claim-gate)")
     suffix = cfg.get("reason_suffix")
     return text + " " + suffix if suffix else text
 
@@ -331,7 +402,8 @@ def on_stop():
     if not claims:
         trace.chain_clear(HOOK, payload)
         return 0
-    missing = unproven(claims, turn_calls(read_rows(path)), cfg)
+    rows = read_rows(path)
+    missing = unproven(claims, turn_calls(rows), cfg)
     if not missing:
         trace.chain_clear(HOOK, payload)
         return 0
@@ -340,7 +412,8 @@ def on_stop():
         print(trace.cap_message(HOOK, key))
         return 0
     trace.witness("stop_claim_gate", "Stop", "claim_without_receipt", payload)
-    print(trace.stop_block(reason_text(missing, cfg), payload, final))
+    print(trace.stop_block(reason_text(missing, cfg, earlier_receipts(rows, missing, cfg)),
+                           payload, final))
     return 0
 
 
