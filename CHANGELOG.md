@@ -1,5 +1,14 @@
 # Changelog
 
+## preamble-gate 0.2.0, 2026-11-17
+
+- **The shell door.** A shell command that writes an always-loaded file with a budget
+  (redirection, `tee`, `sed -i`, `perl -i`, the destination of `cp` or `mv`) is refused and
+  routed to the Edit tool, which measures; after every Bash command, a file whose stat changed
+  and now stands over its budget is reported to the model. Measured cause: growth-cockpit's
+  memory index went over 4000 tokens through `cat >> $M/MEMORY.md` on 2026-11-15 and 2026-11-17,
+  invisible to the Edit check.
+
 ## 0.16.4, 2026-11-14
 
 - **The usage sink rides contextvars, not the thread.** A producer that fans one case out to

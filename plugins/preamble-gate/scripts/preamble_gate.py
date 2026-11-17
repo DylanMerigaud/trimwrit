@@ -34,14 +34,36 @@ Tokens are trimwrit's estimate (trimwrit.preamble.tokens): HTML comments strippe
 divided by BYTES_PER_TOKEN, rounded. A plugin ships alone and cannot import trimwrit, so the
 function is duplicated here and a test holds the two to the same numbers.
 
+THE SHELL DOOR (0.2.0). The checks above only see the Edit tool, and most memory lines never
+went through it: on 2026-11-15 and again on 2026-11-17 growth-cockpit's memory index went over
+its 4000 token budget through `cat >> $M/MEMORY.md <<'EOF'`, a write no hook measured. So:
+  PreToolUse Bash   a command that writes an always-loaded file with a budget (a redirection
+                    `>` `>>` `&>`, `tee`, an in-place `sed -i` or `perl -i`, the destination of
+                    `cp` or `mv`) is refused and routed to the Edit tool, which measures. A path
+                    the hook cannot resolve (a variable it cannot see) is matched by its name:
+                    MEMORY.md, CLAUDE.md, a .md under .claude/rules. Plain `NAME=value`
+                    assignments, $HOME and `cd` earlier in the same command are followed. Before an
+                    allowed command it records the stat of every always-loaded file.
+  PostToolUse Bash  every always-loaded file whose stat changed during the command (a program
+                    that wrote it without naming it on the command line) and now stands over its
+                    budget is reported to the model (decision block on PostToolUse: the command
+                    already ran, the reason goes back to the model). No snapshot (the Pre hook did
+                    not run): a file over budget modified in the last FRESH_S seconds is reported,
+                    and the message says there was no snapshot.
+What stays open: a program that writes the file without naming it is reported after the write,
+never refused before it.
+
 Every deny is counted, every error is loud: a crash or a timeout lets the edit through and is
 reported. No environment variable and no configuration key turns this gate off.
 """
 import glob
+import hashlib
 import json
 import os
 import re
+import shlex
 import sys
+import time
 
 PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PLUGIN_ROOT)
@@ -54,6 +76,9 @@ ENV_PROJECT = "CLAUDE_PROJECT_DIR"
 BYTES_PER_TOKEN = 2.35
 BUDGET_FILE = os.path.join(".trimwrit", "budget.json")
 MAX_UP = 40
+FRESH_S = 120
+SNAP_SUFFIX = ".preamble-snap"
+SNAP_TTL_S = 86400
 
 PROJECT = "CLAUDE.md"
 USER = "~/.claude/CLAUDE.md"
@@ -207,9 +232,259 @@ def user_budgets(settings):
     return out
 
 
+# --- the shell door ----------------------------------------------------------------------------
+
+_HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][\w]*)\1")
+_SEPARATORS = {";", "&&", "||", "|", "&", "(", ")", "|&", ";;"}
+_REDIRECTS = {">", ">>", ">|", "&>", "&>>", ">&"}
+_ASSIGN = re.compile(r"^([A-Za-z_]\w*)=(.*)$", re.S)
+_WRAPPERS = {"sudo", "env", "command", "nohup", "time", "exec"}
+
+
+def _strip_heredocs(command):
+    """The command without its here-document bodies, each logical line ended by ' ; '."""
+    out, waiting = [], []
+    for line in command.split("\n"):
+        if waiting:
+            if line.strip() == waiting[0]:
+                waiting.pop(0)
+            continue
+        waiting = [m.group(2) for m in _HEREDOC.finditer(line)]
+        out.append(line[:-1] + " " if line.endswith("\\") else line + " ; ")
+    return "".join(out)
+
+
+def _tokens(command):
+    text = _strip_heredocs(command)
+    try:
+        lex = shlex.shlex(text, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        return list(lex)
+    except ValueError:
+        return text.split()
+
+
+def _segments(tokens):
+    """[(words, [(redirect operator, target)])] per simple command."""
+    segs, words, redirs, i = [], [], [], 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok in _SEPARATORS:
+            segs.append((words, redirs))
+            words, redirs = [], []
+        elif tok in _REDIRECTS or tok in ("<", "<<", "<<<", "<>"):
+            nxt = tokens[i + 1] if i + 1 < len(tokens) else ""
+            if tok in _REDIRECTS and not (tok == ">&" and nxt.isdigit()) and nxt != "-":
+                redirs.append((tok, nxt))
+            i += 1
+        else:
+            words.append(tok)
+        i += 1
+    segs.append((words, redirs))
+    return segs
+
+
+def _short_flag(words, letter):
+    return any(w.startswith("-") and not w.startswith("--") and letter in w[1:].split("=")[0]
+               for w in words)
+
+
+def write_targets(command, cwd):
+    """[(how, raw target, cwd at that point, variables at that point)] of every file `command`
+    writes by redirection, tee, an in-place edit, or as the destination of cp or mv."""
+    found, env, here = [], {}, cwd
+    for words, redirs in _segments(_tokens(command)):
+        while words and _ASSIGN.match(words[0]):
+            name, value = _ASSIGN.match(words[0]).groups()
+            env[name] = _expand_vars(value, env)
+            words = words[1:]
+        while words and os.path.basename(words[0]) in _WRAPPERS:
+            words = words[1:]
+        for op, target in redirs:
+            found.append(("redirection " + op, target, here, dict(env)))
+        if not words:
+            continue
+        cmd, args = os.path.basename(words[0]), words[1:]
+        plain = [a for a in args if not a.startswith("-")]
+        if cmd == "cd":
+            dest = _resolve(plain[0], here, env) if plain else os.path.expanduser("~")
+            if dest:
+                here = dest
+        elif cmd == "tee":
+            found += [("tee", a, here, dict(env)) for a in plain]
+        elif cmd == "sed" and (_short_flag(args, "i") or "--in-place" in args):
+            found += [("sed -i", a, here, dict(env)) for a in plain]
+        elif cmd == "perl" and _short_flag(args, "i"):
+            found += [("perl -i", a, here, dict(env)) for a in plain]
+        elif cmd in ("cp", "mv", "install") and len(plain) >= 2:
+            found.append((cmd, plain[-1], here, dict(env)))
+    return found
+
+
+def _expand_vars(text, env):
+    def sub(m):
+        name = m.group(1) or m.group(2)
+        if name in env:
+            return env[name]
+        # A gate reads only its declared environment: $HOME is the one outside name it expands.
+        return os.path.expanduser("~") if name == "HOME" else m.group(0)
+    return re.sub(r"\$\{(\w+)\}|\$(\w+)", sub, text)
+
+
+def _resolve(raw, cwd, env):
+    """The absolute path `raw` names, or None when a variable or a substitution stays opaque."""
+    if not raw:
+        return None
+    text = _expand_vars(raw, env)
+    if text.startswith("~"):
+        text = os.path.expanduser(text)
+    if "$" in text or "`" in text:
+        return None
+    if not os.path.isabs(text):
+        text = os.path.join(cwd or os.getcwd(), text)
+    return os.path.realpath(text)
+
+
+def _named_like(raw):
+    """A target the hook cannot resolve, matched by its name."""
+    base = os.path.basename(raw.rstrip("\"'"))
+    return base in (MEMORY, PROJECT) or bool(re.search(r"\.claude/rules/[^/]*\.md$", raw))
+
+
+def shell_refusal(payload, udir, budgets):
+    """The deny reason for a Bash command that writes an always-loaded file, or None."""
+    command = (payload.get("tool_input") or {}).get("command")
+    if not isinstance(command, str):
+        return None
+    cwd = payload.get("cwd") or os.getcwd()
+    for how, raw, here, env in write_targets(command, cwd):
+        path = _resolve(raw, here, env)
+        if path is None:
+            if not _named_like(raw):
+                continue
+            what = "{} (a path the hook cannot resolve, matched by its name)".format(raw)
+        else:
+            found = piece(path, udir)
+            limit = found and budget(path, found[0], found[1], payload, udir, budgets)
+            if not limit:
+                continue
+            current = _read(path) or ""
+            before = measure(path, found[1], current, current, udir)[0]
+            what = "{} ({} tokens now, budget {})".format(path, before, limit[1])
+        return ("preamble-gate: this command writes {} through the shell ({}), and that file "
+                "loads every turn. A shell write is measured by no one before it lands. Make "
+                "the change with the Edit or Write tool, which measures it against the budget; "
+                "a shrinking edit always passes. {}".format(what, how, ROUTE))
+    return None
+
+
+def candidates(payload, udir):
+    """Every always-loaded file this session can reach: the user CLAUDE.md, the rules, each
+    project's memory index, and every CLAUDE.md from the cwd and the project dir up."""
+    out = {os.path.join(udir, PROJECT)}
+    out.update(glob.glob(os.path.join(udir, "rules", "*.md")))
+    out.update(glob.glob(os.path.join(udir, "projects", "*", "memory", MEMORY)))
+    for start in (payload.get("cwd"), os.environ.get(ENV_PROJECT)):
+        here = os.path.realpath(start) if start else None
+        for _ in range(MAX_UP if here else 0):
+            out.add(os.path.join(here, PROJECT))
+            parent = os.path.dirname(here)
+            if parent == here:
+                break
+            here = parent
+    return sorted(os.path.realpath(p) for p in out)
+
+
+def snapshot(paths):
+    snap = {}
+    for p in paths:
+        try:
+            st = os.stat(p)
+        except OSError:
+            continue
+        snap[p] = [st.st_mtime_ns, st.st_size]
+    return snap
+
+
+def snap_path(payload):
+    key = payload.get("tool_use_id") or hashlib.sha256(
+        json.dumps(payload.get("tool_input"), sort_keys=True).encode("utf-8")).hexdigest()
+    sid = trace.session_key(payload) + ":" + str(key)
+    return trace.session_file(sid, SNAP_SUFFIX)
+
+
+def _prune_snapshots():
+    cutoff = time.time() - SNAP_TTL_S
+    for old in glob.glob(os.path.join(trace.state_dir(), "*" + SNAP_SUFFIX)):
+        try:
+            if os.path.getmtime(old) < cutoff:
+                os.remove(old)
+        except OSError:
+            continue    # another hook removed it first: nothing left to prune
+
+
+def shell_pre(payload, udir, budgets):
+    reason = shell_refusal(payload, udir, budgets)
+    if reason:
+        trace.witness(DOOR, "PreToolUse", "shell_write", payload)
+        json.dump({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                          "permissionDecision": "deny",
+                                          "permissionDecisionReason": reason}}, sys.stdout)
+        return 0
+    _prune_snapshots()
+    with open(snap_path(payload), "w", encoding="utf-8") as fh:
+        json.dump(snapshot(candidates(payload, udir)), fh)
+    return 0
+
+
+def shell_post(payload, udir, budgets):
+    path = snap_path(payload)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            before = json.load(fh)
+        os.remove(path)
+    except FileNotFoundError:
+        before = None
+    now = snapshot(candidates(payload, udir))
+    if before is None:
+        fresh = time.time() - FRESH_S
+        changed = [p for p, (mtime_ns, _) in now.items() if mtime_ns / 1e9 >= fresh]
+    else:
+        changed = [p for p, st in now.items() if before.get(p) != st]
+    over = []
+    for p in changed:
+        found = piece(p, udir)
+        limit = found and budget(p, found[0], found[1], payload, udir, budgets)
+        if not limit:
+            continue
+        text = _read(p) or ""
+        size = measure(p, found[1], text, text, udir)[1]
+        if size > limit[1]:
+            over.append("{} is {} tokens, budget {} (key {} in {})".format(
+                p, size, limit[1], limit[0], limit[2]))
+    if not over:
+        return 0
+    how = ("this command changed" if before is not None else
+           "no snapshot was taken before this command, so these were modified in the last {} s "
+           "and".format(FRESH_S))
+    reason = ("preamble-gate: {} an always-loaded file that now stands over its budget: {}. "
+              "It loads every turn. Bring it back under with the Edit tool (a shrinking edit "
+              "always passes). {}".format(how, "; ".join(over), ROUTE))
+    trace.witness(DOOR, "PostToolUse", "over_after_shell", payload)
+    json.dump({"decision": "block", "reason": reason,
+               "hookSpecificOutput": {"hookEventName": "PostToolUse",
+                                      "additionalContext": reason}}, sys.stdout)
+    return 0
+
+
 def body():
     payload = trace.read_payload()
     budgets = user_budgets(trace.plugin_settings(payload, root=PLUGIN_ROOT))
+    if payload.get("tool_name") == "Bash":
+        udir = user_dir()
+        if payload.get("hook_event_name") == "PostToolUse":
+            return shell_post(payload, udir, budgets)
+        return shell_pre(payload, udir, budgets)
     tool_input = payload.get("tool_input")
     if not isinstance(tool_input, dict) or not isinstance(tool_input.get("file_path"), str):
         return 0
@@ -249,7 +524,7 @@ def body():
 
 def main():
     trace.configure(sys.argv)
-    return trace.run(HOOK, "PreToolUse", body, TIMEOUT_S)
+    return trace.run(HOOK, "PreToolUse|PostToolUse", body, TIMEOUT_S)
 
 
 if __name__ == "__main__":

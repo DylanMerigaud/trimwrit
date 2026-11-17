@@ -173,3 +173,95 @@ def test_the_token_estimate_agrees_with_trimwrit():
                "a<!-- multi\nline -->b" * 7, "中文" * 50, "x\n" * 1000]
     for text in samples:
         assert gate.tokens(text) == preamble.tokens(text), text[:20]
+
+
+# --- Bash: the shell door (0.2.0) ---------------------------------------------------------------
+# A memory line appended by `cat >> $M/MEMORY.md` never reached the Edit check above: the index
+# of growth-cockpit went over its 4000 token budget twice in a week that way (2026-11-15, 11-17).
+
+
+def bash(command, cwd, event="PreToolUse", tool_use_id="t1"):
+    return {"hook_event_name": event, "session_id": "p", "tool_name": "Bash",
+            "tool_use_id": tool_use_id, "tool_input": {"command": command}, "cwd": str(cwd)}
+
+
+def memory_index(tmp_path, text="- a\n"):
+    mem = home(tmp_path) / "projects" / "-repo" / "memory"
+    mem.mkdir(parents=True, exist_ok=True)
+    (mem / "MEMORY.md").write_text(text, encoding="utf-8")
+    return mem / "MEMORY.md"
+
+
+def test_a_shell_write_to_an_always_loaded_file_is_refused(tmp_path):
+    write_config(home(tmp_path), {NAME: {"preamble_budgets": {"MEMORY.md": 4000,
+                                                              "~/.claude/rules": 1700}}})
+    root = repo(tmp_path, {"CLAUDE.md": 9000}, claude="x\n")
+    idx = memory_index(tmp_path)
+    mem = idx.parent
+    rules = home(tmp_path) / "rules"
+    rules.mkdir()
+    for cmd in ("echo '- b' >> {}".format(idx),
+                "M={}\ncat >> $M/MEMORY.md <<'EOF'\n- it's a line\nEOF".format(mem),
+                "printf x > \"{}\"".format(idx),
+                "echo x | tee -a {} >/dev/null".format(idx),
+                "sed -i 's/a/b/' {}".format(idx),
+                "perl -pi -e 's/a/b/' {}".format(idx),
+                "cd {} && echo hi >> CLAUDE.md".format(root),
+                "echo r >> {}".format(rules / "new.md"),
+                "cp /tmp/x {}".format(idx),
+                "echo x >> \"$SOMEWHERE/MEMORY.md\""):
+        reason = denied(run(tmp_path, bash(cmd, root)))
+        assert "Edit" in reason and "shell" in reason, (cmd, reason)
+    got = rows(os.path.join(str(home(tmp_path)), "door-refusals.jsonl"))
+    assert {x["reason_class"] for x in got} == {"shell_write"}
+
+
+def test_a_shell_read_or_an_unrelated_write_passes(tmp_path):
+    write_config(home(tmp_path), {NAME: {"preamble_budgets": {"MEMORY.md": 4000}}})
+    root = repo(tmp_path)
+    idx = memory_index(tmp_path)
+    for cmd in ("cat {}".format(idx), "grep -c x {} > /tmp/out".format(idx),
+                "sed -n 1,5p {}".format(idx), "cp {} /tmp/backup".format(idx),
+                "echo x 2>&1 >> {}/notes.md".format(idx.parent),
+                "python3 -c 'print(1)' >/dev/null 2>&1", "echo \"it's\" | tee /tmp/a"):
+        allowed(run(tmp_path, bash(cmd, root)))
+
+
+def post(tmp_path, cmd, root, tool_use_id="t1"):
+    return run(tmp_path, bash(cmd, root, event="PostToolUse", tool_use_id=tool_use_id))
+
+
+def test_a_script_that_leaves_a_file_over_budget_is_reported_after(tmp_path):
+    write_config(home(tmp_path), {NAME: {"preamble_budgets": {"MEMORY.md": 10}}})
+    root = repo(tmp_path)
+    idx = memory_index(tmp_path, "- a\n")
+    cmd = "python3 grow.py"
+    allowed(run(tmp_path, bash(cmd, root)))
+    idx.write_text("m" * 100, encoding="utf-8")
+    r = post(tmp_path, cmd, root)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["decision"] == "block"
+    assert str(idx) in out["reason"] and "43 tokens" in out["reason"] and "budget 10" in out["reason"]
+    got = rows(os.path.join(str(home(tmp_path)), "door-refusals.jsonl"))
+    assert [(x["event"], x["reason_class"]) for x in got] == [("PostToolUse", "over_after_shell")]
+
+
+def test_after_a_command_an_untouched_or_in_budget_file_says_nothing(tmp_path):
+    write_config(home(tmp_path), {NAME: {"preamble_budgets": {"MEMORY.md": 10}}})
+    root = repo(tmp_path)
+    idx = memory_index(tmp_path, "m" * 100)       # already over, not touched by this command
+    allowed(run(tmp_path, bash("ls", root, tool_use_id="t2")))
+    allowed(post(tmp_path, "ls", root, tool_use_id="t2"))
+    allowed(run(tmp_path, bash("python3 trim.py", root, tool_use_id="t3")))
+    idx.write_text("short", encoding="utf-8")       # touched, under budget
+    allowed(post(tmp_path, "python3 trim.py", root, tool_use_id="t3"))
+
+
+def test_after_a_command_with_no_snapshot_a_fresh_overrun_is_still_reported(tmp_path):
+    write_config(home(tmp_path), {NAME: {"preamble_budgets": {"MEMORY.md": 10}}})
+    root = repo(tmp_path)
+    memory_index(tmp_path, "m" * 100)
+    r = post(tmp_path, "python3 grow.py", root, tool_use_id="never-seen")
+    out = json.loads(r.stdout)
+    assert out["decision"] == "block" and "no snapshot" in out["reason"]

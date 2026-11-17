@@ -9,7 +9,7 @@ reach a CLAUDE.md by hand. One user's global CLAUDE.md grew to 14.7k tokens, rer
 of every session, and no write was ever refused. This gate holds the hand edit to the same
 budget.
 
-One `PreToolUse` hook (`preamble_gate.py`, matcher `Write|Edit|MultiEdit`). It acts on:
+`preamble_gate.py` runs on `PreToolUse` (`Write|Edit|MultiEdit|Bash`) and `PostToolUse` (`Bash`). It acts on:
 
 - any file named `CLAUDE.md` (the project one, a nested one, `~/.claude/CLAUDE.md`);
 - `~/.claude/rules/*.md`, one piece: every file of the directory counts together;
@@ -23,6 +23,27 @@ the file does not hold lets the call through: the tool itself will fail. The ref
 file, both sizes, the budget and its source, and the route: a situational rule goes to the
 SKILL.md of its situation, its story to the repository's history doc, one line naming the door
 stays; `trimwrit relocate <rule> --to <file>` moves a rule with its marker.
+
+## The shell door (0.2.0)
+
+Most memory lines never went through the Edit tool: a `cat >> $M/MEMORY.md <<'EOF'` took one
+user's memory index over its 4000 token budget twice in one week, and no hook measured it.
+
+- **PreToolUse Bash**: a command that writes an always-loaded file with a budget is refused and
+  routed to the Edit tool, which measures. Writes recognised: a redirection (`>`, `>>`, `&>`,
+  `>|`), `tee`, an in-place `sed -i` or `perl -i`, the destination of `cp`, `mv` or `install`.
+  Here-document bodies are skipped, `NAME=value` assignments and `cd` earlier in the same
+  command are followed, and a path behind a variable the hook cannot see is matched by name
+  (`MEMORY.md`, `CLAUDE.md`, a `.md` under `.claude/rules/`). Reads always pass.
+- **PostToolUse Bash**: the Pre hook records the stat of every always-loaded file (the user
+  CLAUDE.md, the rules, every project's memory index, each CLAUDE.md from the cwd up); after
+  the command, a file whose stat changed and now stands over its budget is reported to the model
+  (`decision: block`, the command already ran). With no snapshot, a file over budget modified in
+  the last 120 s is reported, and the message says so.
+
+Left open: a program that writes the file without naming it on the command line is reported
+after the write, never refused before it. Refusals count as `shell_write`, reports as
+`over_after_shell`.
 
 A crash or a timeout lets the edit through and says so in a systemMessage. There is no switch:
 enable or disable the plugin with `claude plugin enable|disable`.
