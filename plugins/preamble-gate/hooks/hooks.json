@@ -1,7 +1,8 @@
 {
-  "description": "preamble-gate: no edit and no shell write grows an always-loaded file past its budget unseen",
+  "description": "preamble-gate: no edit and no shell write grows an always-loaded file past its budget unseen, and a session starts told of its own files over budget",
   "hooks": {
     "PreToolUse": [{"matcher": "Write|Edit|MultiEdit|Bash", "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/preamble_gate.py\"", "timeout": 10}]}],
-    "PostToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/preamble_gate.py\"", "timeout": 10}]}]
+    "PostToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/preamble_gate.py\"", "timeout": 10}]}],
+    "SessionStart": [{"matcher": "startup|clear|compact", "hooks": [{"type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/preamble_gate.py\"", "timeout": 10}]}]
   }
 }

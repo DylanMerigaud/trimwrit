@@ -139,8 +139,8 @@
     {
       "name": "preamble-gate",
       "source": "./plugins/preamble-gate",
-      "description": "Refuses a Write or Edit that grows an always-loaded file (any CLAUDE.md, ~/.claude/rules, the memory index) past its token budget, refuses a shell command that writes one, and reports a command that left one over budget; a shrinking edit always passes.",
-      "version": "0.2.0",
+      "description": "Refuses a Write or Edit that grows an always-loaded file (any CLAUDE.md, ~/.claude/rules, the memory index) past its token budget, refuses a shell command that writes one, and reports a command that left one over budget, and tells a session at its start of its own files over budget; a shrinking edit always passes.",
+      "version": "0.3.0",
       "author": { "name": "Dylan Merigaud" },
       "license": "MIT",
       "category": "productivity",

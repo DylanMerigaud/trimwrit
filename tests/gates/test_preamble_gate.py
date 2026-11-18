@@ -185,8 +185,14 @@ def bash(command, cwd, event="PreToolUse", tool_use_id="t1"):
             "tool_use_id": tool_use_id, "tool_input": {"command": command}, "cwd": str(cwd)}
 
 
-def memory_index(tmp_path, text="- a\n"):
-    mem = home(tmp_path) / "projects" / "-repo" / "memory"
+def key(path):
+    """Claude Code's project directory name for a session started at `path`."""
+    return "".join(c if c.isalnum() and c.isascii() else "-" for c in os.path.realpath(str(path)))
+
+
+def memory_index(tmp_path, text="- a\n", project=None):
+    project = project or (tmp_path / "repo")
+    mem = home(tmp_path) / "projects" / key(project) / "memory"
     mem.mkdir(parents=True, exist_ok=True)
     (mem / "MEMORY.md").write_text(text, encoding="utf-8")
     return mem / "MEMORY.md"
@@ -265,3 +271,70 @@ def test_after_a_command_with_no_snapshot_a_fresh_overrun_is_still_reported(tmp_
     r = post(tmp_path, "python3 grow.py", root, tool_use_id="never-seen")
     out = json.loads(r.stdout)
     assert out["decision"] == "block" and "no snapshot" in out["reason"]
+
+
+# 0.3.0. The gate refuses growth only: one project's memory index went over through an `echo >>`
+# (before the shell door), a shrinking edit left it at 4051 of 4000 on 2026-11-18, and the only
+# one told was a growth-cockpit session that merely waited. A file over budget is now told at the
+# start of the session that loads it, and only that session's files are reported after a command.
+
+
+def start(cwd, source="startup"):
+    return {"hook_event_name": "SessionStart", "session_id": "p", "source": source,
+            "cwd": str(cwd)}
+
+
+def test_a_session_starts_told_of_its_own_memory_index_over_budget(tmp_path):
+    write_config(home(tmp_path), {NAME: {"preamble_budgets": {"MEMORY.md": 10}}})
+    root = repo(tmp_path)
+    idx = memory_index(tmp_path, "m" * 100)
+    r = run(tmp_path, start(root))
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)["hookSpecificOutput"]
+    assert out["hookEventName"] == "SessionStart"
+    ctx = out["additionalContext"]
+    assert str(idx) in ctx and "43 tokens, budget 10" in ctx
+    assert "never drops a memory file" in ctx and "in this session" in ctx
+    got = rows(os.path.join(str(home(tmp_path)), "door-refusals.jsonl"))
+    assert [(x["event"], x["reason_class"]) for x in got] == [("SessionStart", "over_at_start")]
+    idx.write_text("short", encoding="utf-8")
+    allowed(run(tmp_path, start(root, "compact")))
+
+
+def test_another_projects_memory_index_is_told_to_neither_start_nor_command(tmp_path):
+    write_config(home(tmp_path), {NAME: {"preamble_budgets": {"MEMORY.md": 10}}})
+    root = repo(tmp_path)
+    memory_index(tmp_path, "- a\n")
+    other = memory_index(tmp_path, "- b\n", project=tmp_path / "elsewhere")
+    allowed(run(tmp_path, start(root)))
+    allowed(run(tmp_path, bash("sleep 1", root, tool_use_id="w")))
+    other.write_text("m" * 100, encoding="utf-8")       # another session grew it meanwhile
+    allowed(post(tmp_path, "sleep 1", root, tool_use_id="w"))
+    r = run(tmp_path, start(tmp_path / "elsewhere"))
+    assert str(other) in json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+
+
+def test_a_linked_worktree_answers_for_its_main_checkouts_memory_index(tmp_path):
+    write_config(home(tmp_path), {NAME: {"preamble_budgets": {"MEMORY.md": 10}}})
+    main = repo(tmp_path)
+    (main / ".git" / "worktrees" / "wt").mkdir(parents=True)
+    wt = main / ".claude" / "worktrees" / "wt"
+    (wt / "sub").mkdir(parents=True)
+    (wt / ".git").write_text("gitdir: {}\n".format(main / ".git" / "worktrees" / "wt"),
+                             encoding="utf-8")
+    idx = memory_index(tmp_path, "m" * 100, project=main)
+    r = run(tmp_path, start(wt / "sub"))
+    assert str(idx) in json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+
+
+def test_a_user_file_over_budget_is_told_at_start_and_the_rules_once(tmp_path):
+    h = home(tmp_path)
+    write_config(h, {NAME: {"preamble_budgets": {"~/.claude/CLAUDE.md": 10,
+                                                 "~/.claude/rules": 10}}})
+    (h / "CLAUDE.md").write_text("u" * 100, encoding="utf-8")
+    (h / "rules").mkdir()
+    for name in ("a.md", "b.md"):
+        (h / "rules" / name).write_text("r" * 20, encoding="utf-8")
+    ctx = json.loads(run(tmp_path, start(repo(tmp_path))).stdout)["hookSpecificOutput"][
+        "additionalContext"]
+    assert "43 tokens, budget 10" in ctx and ctx.count("rules is 18 tokens, budget 10") == 1

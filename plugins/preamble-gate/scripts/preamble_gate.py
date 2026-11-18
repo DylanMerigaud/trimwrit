@@ -53,6 +53,18 @@ its 4000 token budget through `cat >> $M/MEMORY.md <<'EOF'`, a write no hook mea
 What stays open: a program that writes the file without naming it is reported after the write,
 never refused before it.
 
+THE SESSION START (0.3.0). The gate refuses growth only, and a shrinking edit passes even when it
+stops over: another project's memory index went to 4079 tokens through an `echo >>` on 2026-11-16
+(before the shell door), an edit took it to 4051 on 11-18 and it stayed over, noticed only by an
+unrelated session's PostToolUse. So:
+  SessionStart      every always-loaded file of this session (user CLAUDE.md, rules, the
+                    CLAUDE.md chain, its OWN project's memory index: the cwd's key, its git top
+                    level's, the main checkout's for a linked worktree) that stands over its
+                    budget is told to the session as context: bring it back under, in this
+                    session. Counted `over_at_start`.
+The PostToolUse report covers the same files only: another project's memory index is told at
+the start of its own project's session, where it loads and where its context is.
+
 Every deny is counted, every error is loud: a crash or a timeout lets the edit through and is
 reported. No environment variable and no configuration key turns this gate off.
 """
@@ -378,21 +390,113 @@ def shell_refusal(payload, udir, budgets):
     return None
 
 
+_UNSAFE = re.compile(r"[^A-Za-z0-9]")
+
+
+def project_key(path):
+    """The directory name Claude Code gives a project under ~/.claude/projects."""
+    return _UNSAFE.sub("-", path)
+
+
+def project_roots(start):
+    """The directories whose memory index a session started at `start` loads: the start itself,
+    the git top level above it, and the main checkout when that top level is a linked worktree
+    (a `.git` file pointing into <main>/.git/worktrees/<name>). Both the path as given and its
+    real path, since a key is made from whichever the session was launched with."""
+    roots = []
+    for here in dict.fromkeys((os.path.abspath(start), os.path.realpath(start))):
+        roots.append(here)
+        for _ in range(MAX_UP):
+            dot = os.path.join(here, ".git")
+            if os.path.isdir(dot):
+                roots.append(here)
+                break
+            if os.path.isfile(dot):
+                roots.append(here)
+                line = (_read(dot) or "").strip()
+                gitdir = line[len("gitdir:"):].strip() if line.startswith("gitdir:") else ""
+                marker = os.sep + ".git" + os.sep + "worktrees" + os.sep
+                if marker in gitdir:
+                    roots.append(gitdir.split(marker)[0])
+                break
+            parent = os.path.dirname(here)
+            if parent == here:
+                break
+            here = parent
+    return list(dict.fromkeys(roots))
+
+
 def candidates(payload, udir):
-    """Every always-loaded file this session can reach: the user CLAUDE.md, the rules, each
-    project's memory index, and every CLAUDE.md from the cwd and the project dir up."""
+    """Every always-loaded file of THIS session: the user CLAUDE.md, the rules, its own
+    project's memory index, and every CLAUDE.md from the cwd and the project dir up.
+
+    Another project's memory index is not one of them (0.3.0): on 2026-11-18 a growth-cockpit
+    session that only waited was told that another project's index stood over budget, could not fix
+    it in that project's context, and handed it to an autofix whose reproduce command measured
+    nothing. That index is now reported where it loads: at the start of its own project's next
+    session (session_start)."""
     out = {os.path.join(udir, PROJECT)}
     out.update(glob.glob(os.path.join(udir, "rules", "*.md")))
-    out.update(glob.glob(os.path.join(udir, "projects", "*", "memory", MEMORY)))
     for start in (payload.get("cwd"), os.environ.get(ENV_PROJECT)):
-        here = os.path.realpath(start) if start else None
-        for _ in range(MAX_UP if here else 0):
+        if not start:
+            continue
+        for root in project_roots(start):
+            out.add(os.path.join(udir, "projects", project_key(root), "memory", MEMORY))
+        here = os.path.realpath(start)
+        for _ in range(MAX_UP):
             out.add(os.path.join(here, PROJECT))
             parent = os.path.dirname(here)
             if parent == here:
                 break
             here = parent
-    return sorted(os.path.realpath(p) for p in out)
+    return sorted(set(os.path.realpath(p) for p in out))
+
+
+def over_budget(paths, payload, udir, budgets):
+    """'<path> is N tokens, budget B (key K in W)' for each existing file of `paths` over its
+    budget; the rules directory is reported once, as one piece."""
+    over, seen = [], set()
+    for p in paths:
+        found = piece(p, udir)
+        if not found or not os.path.isfile(p):
+            continue
+        if found[1] == "rules":
+            if RULES in seen:
+                continue
+            seen.add(RULES)
+        limit = budget(p, found[0], found[1], payload, udir, budgets)
+        if not limit:
+            continue
+        text = _read(p) or ""
+        size = measure(p, found[1], text, text, udir)[1]
+        if size > limit[1]:
+            where = os.path.join(udir, "rules") if found[1] == "rules" else p
+            over.append("{} is {} tokens, budget {} (key {} in {})".format(
+                where, size, limit[1], limit[0], limit[2]))
+    return over
+
+
+SHRINK = ("Bring it back under with the Edit or Write tool (a shrinking edit always passes): a "
+          "memory index merges its lines into one line per topic and never drops a memory file; "
+          "a CLAUDE.md or a rule moves out what is situational. ")
+
+
+def session_start(payload, udir, budgets):
+    """SessionStart: an always-loaded file of this session that already stands over its budget
+    (it went over before a door existed, through a program, or a shrinking edit stopped short)
+    is told to the session that pays for it, every start, until it is back under. The gate only
+    refuses growth, so without this a file over budget stays over until someone happens to
+    notice it."""
+    over = over_budget(candidates(payload, udir), payload, udir, budgets)
+    if not over:
+        return 0
+    reason = ("preamble-gate: an always-loaded file of this session stands over its budget, and "
+              "every turn pays for it: {}. {}Do it in this session, before its task ends. "
+              "{}".format("; ".join(over), SHRINK, ROUTE))
+    trace.witness(DOOR, "SessionStart", "over_at_start", payload)
+    json.dump({"hookSpecificOutput": {"hookEventName": "SessionStart",
+                                      "additionalContext": reason}}, sys.stdout)
+    return 0
 
 
 def snapshot(paths):
@@ -451,17 +555,7 @@ def shell_post(payload, udir, budgets):
         changed = [p for p, (mtime_ns, _) in now.items() if mtime_ns / 1e9 >= fresh]
     else:
         changed = [p for p, st in now.items() if before.get(p) != st]
-    over = []
-    for p in changed:
-        found = piece(p, udir)
-        limit = found and budget(p, found[0], found[1], payload, udir, budgets)
-        if not limit:
-            continue
-        text = _read(p) or ""
-        size = measure(p, found[1], text, text, udir)[1]
-        if size > limit[1]:
-            over.append("{} is {} tokens, budget {} (key {} in {})".format(
-                p, size, limit[1], limit[0], limit[2]))
+    over = over_budget(changed, payload, udir, budgets)
     if not over:
         return 0
     how = ("this command changed" if before is not None else
@@ -480,6 +574,8 @@ def shell_post(payload, udir, budgets):
 def body():
     payload = trace.read_payload()
     budgets = user_budgets(trace.plugin_settings(payload, root=PLUGIN_ROOT))
+    if payload.get("hook_event_name") == "SessionStart":
+        return session_start(payload, user_dir(), budgets)
     if payload.get("tool_name") == "Bash":
         udir = user_dir()
         if payload.get("hook_event_name") == "PostToolUse":
@@ -524,7 +620,7 @@ def body():
 
 def main():
     trace.configure(sys.argv)
-    return trace.run(HOOK, "PreToolUse|PostToolUse", body, TIMEOUT_S)
+    return trace.run(HOOK, "PreToolUse|PostToolUse|SessionStart", body, TIMEOUT_S)
 
 
 if __name__ == "__main__":

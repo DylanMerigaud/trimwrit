@@ -9,7 +9,7 @@ reach a CLAUDE.md by hand. One user's global CLAUDE.md grew to 14.7k tokens, rer
 of every session, and no write was ever refused. This gate holds the hand edit to the same
 budget.
 
-`preamble_gate.py` runs on `PreToolUse` (`Write|Edit|MultiEdit|Bash`) and `PostToolUse` (`Bash`). It acts on:
+`preamble_gate.py` runs on `PreToolUse` (`Write|Edit|MultiEdit|Bash`), `PostToolUse` (`Bash`) and `SessionStart`. It acts on:
 
 - any file named `CLAUDE.md` (the project one, a nested one, `~/.claude/CLAUDE.md`);
 - `~/.claude/rules/*.md`, one piece: every file of the directory counts together;
@@ -44,6 +44,20 @@ user's memory index over its 4000 token budget twice in one week, and no hook me
 Left open: a program that writes the file without naming it on the command line is reported
 after the write, never refused before it. Refusals count as `shell_write`, reports as
 `over_after_shell`.
+
+## The session start (0.3.0)
+
+The gate refuses growth only, and a shrinking edit passes even when it stops over the budget. A
+memory index that went over before the shell door existed was trimmed by 28 tokens and stayed
+over, and the only session told was an unrelated one that merely waited during the write.
+
+- **SessionStart** (`startup`, `clear`, `compact`): every always-loaded file of this session that
+  stands over its budget is given to the session as context, with the instruction to bring it
+  back under in this session. The files: the user CLAUDE.md, the rules, every CLAUDE.md from the
+  cwd up, and the session's OWN memory index (the key of its cwd, of the git top level above it,
+  and of the main checkout when that top level is a linked worktree). Counted as `over_at_start`.
+- The PostToolUse report covers the same files only. Another project's memory index is told at
+  the start of that project's next session, where it loads and where its context is.
 
 A crash or a timeout lets the edit through and says so in a systemMessage. There is no switch:
 enable or disable the plugin with `claude plugin enable|disable`.

@@ -114,7 +114,7 @@ claude plugin install claim-gate@trimwrit --scope project   # this repository on
 | `handback-gate` | refuses to end a turn that hands the user a gesture or an input the agent could do itself (fill in the form, paste the token, run this command) without naming why only the user can | Stop |
 | `bare-id-gate` | refuses to end a turn whose final message shows an internal id standing alone (a commit sha, a ticket key, a queue code) instead of naming the thing first, the id after it in parentheses | Stop |
 | `oneshot-gate` | refuses a `claude -p` session that can use no tool and still loads the whole harness (no `--bare`, no `--safe-mode`), before its first request | UserPromptSubmit |
-| `preamble-gate` | refuses a hand edit that grows an always-loaded file (any CLAUDE.md, `~/.claude/rules`, the memory index) past its token budget; a shrinking edit always passes | PreToolUse Write, Edit, MultiEdit |
+| `preamble-gate` | refuses a hand edit that grows an always-loaded file (any CLAUDE.md, `~/.claude/rules`, the memory index) past its token budget, refuses a shell write to one, and tells a session at its start of its own files over budget; a shrinking edit always passes | PreToolUse Write, Edit, MultiEdit, Bash; PostToolUse Bash; SessionStart |
 | `no-third-party-pr` | refuses opening a pull request on a GitHub repository you do not own, through gh, gh api, curl, a script or an alias; the target comes from `-R`, a `GH_REPO` set in the command, or the git remotes | PreToolUse Bash |
 
 Each plugin's README, under `plugins/<name>/`, says exactly what it refuses and lists its keys.
