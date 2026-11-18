@@ -325,10 +325,10 @@ def test_user_names_come_from_the_config(tmp_path):
 
 
 def test_handback_patterns_extra_adds_an_alternative(tmp_path):
-    path = make_transcript(tmp_path, "Last step: the dashboard toggle waits for your thumb.")
+    path = make_transcript(tmp_path, "Last step: the dashboard toggle sits under your thumb.")
     assert run_py(NAME, SCRIPT, stop(path, "x"), tmp_path).stdout.strip() == ""
-    write_config(tmp_path, {NAME: {"handback_patterns_extra": ["\\bwaits\\s+for\\s+your\\b"]}})
-    assert "waits for your" in blocked(run_py(NAME, SCRIPT, stop(path, "x2"), tmp_path))
+    write_config(tmp_path, {NAME: {"handback_patterns_extra": ["\\bunder\\s+your\\b"]}})
+    assert "under your" in blocked(run_py(NAME, SCRIPT, stop(path, "x2"), tmp_path))
 
 
 @pytest.mark.parametrize("section", [
@@ -1309,3 +1309,69 @@ def test_every_word_the_check_names_is_in_the_prime_and_the_refusal():
     for text in (gate.reason_text(found, CFG), gate.prime_short({"count": 1}),
                  gate.prime_text({"count": 1})):
         assert "word for word" in text, text
+
+
+# 2026-11-16, the decision handed back. A pending list put 14 items to the user, each one waiting
+# on his word or put as a yes or no, none with a class, several the machine owns (relaunch a dead
+# repair terminal, publish the shared kit). Answer, verbatim: "10. what's your take? la je te sert
+# a rien si tu me demande que ca... bonus 11: bcp de questions me concerne pas. il faut que trouvre
+# tout seul les solutions. pour les trucs qui vraiment me necesite jai pas assez de context."
+PENDING_LIST = (
+    "14 items wait on you (20:00 bilan of today), ranked by what they unblock.\n\n"
+    "**People waiting on a reply (your go on the send)**\n"
+    "1. **A prospect on the acme bet**: he said yes to the cold. Two cards carry it (c42).\n"
+    "3. **A recruiter on LinkedIn**: remote mission, 3 months, she wants a call. The reply is "
+    "held for your go (c5).\n"
+    "4. **Another contact on LinkedIn**: received today 14:54, waiting on your answer (c30).\n"
+    "6. **An awards program**: you were approved as a judge. Take it or not (c24).\n\n"
+    "**Machine held until you answer**\n"
+    "7. **Usage breaker on the career topic**: 66% of an account-week in 24 h. No new Claude "
+    "work starts on that topic until you say resume (c37).\n"
+    "8. **Reoon account farm stopped**: the captchas need your hands (c16).\n"
+    "9. **Shared kit**: 4 fixes never published. Publish the new version or not (c70).\n\n"
+    "**Dead repair terminals, relaunch yes or no**\n"
+    "10. Four died with no written reason (c1, c11, c27, c28).\n\n"
+    "En clair: six humans wait on a reply from you, three machine decisions are frozen on your "
+    "word, and four repair terminals died.")
+
+
+def test_a_pending_list_of_decisions_is_refused_item_by_item():
+    found = gate.handbacks_in(PENDING_LIST, CFG)
+    decided = [f for f in found if f.kind == "decision"]
+    phrases = " | ".join(f[0].lower() for f in decided)
+    for shape in ("wait on you", "held for your go", "waiting on your answer",
+                  "or not", "until you answer", "until you say", "yes or no",
+                  "wait on a reply from you", "frozen on your word"):
+        assert shape in phrases, (shape, phrases)
+    # the captcha item names a human-only check: it is the one item lifted
+    assert not any("need your hands" in f[0].lower() for f in decided)
+    code, report = gate.check_report(PENDING_LIST, CFG)
+    assert code == 1 and gate.DECISION_TEXT in report
+    assert gate.DECISION_TEXT in gate.reason_text(found, CFG)
+
+
+def test_a_decision_is_lifted_by_its_own_item_only():
+    header = ("**Waiting on your go (external sends)**\n"
+              "- The prospect's reply is held for your go.\n"
+              "- The kit: publish the new version or not (c70).\n"
+              "- The dead terminals: relaunch yes or no?")
+    phrases = [f[0] for f in gate.decisions_in(header)]
+    assert phrases == ["held for your go", "or not", "yes or no"], phrases
+    own = ("- The prospect's reply is held for your go: an external send.\n"
+           "- The kit: I published 0.4.2 at 20:10, npm view confirms it.\n"
+           "- The dead terminals: I relaunched all four.")
+    assert gate.decisions_in(own) == []
+
+
+def test_one_or_two_go_asks_are_the_contract_not_a_list():
+    two = ("- Posting v6 is public, it waits on your go.\n"
+           "- The VPS order: the purchase waits on your go.")
+    assert gate.decisions_in(two) == []
+
+
+def test_a_decision_taken_or_told_is_no_ask():
+    for text in ("I relaunched the four dead repair terminals; two are running again.",
+                 "Whether or not the box answers, the drainer retries at 20:00.",
+                 "Nothing waits on you: the kit is published and the terminals relaunched.",
+                 "La reco: on relance les quatre, c'est fait."):
+        assert gate.decisions_in(text) == [], text

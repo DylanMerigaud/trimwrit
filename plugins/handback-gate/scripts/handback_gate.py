@@ -149,6 +149,28 @@ session only at a resume. The 2 refusals under 0.8.0, back to back in one turn:
      and a refusal of a closing that differs from the turn's last checked text (read from the
      transcript's --check heredoc, last_checked) opens on the sentences the check never saw.
 
+THE DECISION HANDED BACK (2026-11-16). A pending list (2,270 characters) put 14 items to the
+user: "14 items wait on you", "The reply is held for your go", "waiting on your answer", "Take it
+or not", "No new Claude work starts on that topic until you say resume", "Publish the new version
+or not", "Dead repair terminals, relaunch yes or no", "three machine decisions are frozen on your
+word". Several were the machine's own (publishing the shared kit is a row's job, a dead repair
+terminal is relaunched by its reaper), none named a class, none carried a take. Answer: "10.
+what's your take? la je te sert a rien si tu me demande que ca... bonus 11: bcp de questions me
+concerne pas. il faut que trouvre tout seul les solutions." The gate passed it: every shape it read
+has the user as the one who ACTS, and these put the user as the one who DECIDES, with the item
+as the subject. DECISION_RE reads that on the whole message, list item by list item (items_of: a
+class word in a header or a sibling item lifts nothing), and refuses a closing with DECISION_MIN
+or more such sentences: one or two go asks are the contract's own ask, a list of them is the
+failure. A **PLAN** block (PLAN_ASK) is the plan-first ask and is not read. "captchas" is read as
+a check, the plural of the word the refusal names. Measured on gc-hub, 32,305 turn-final messages
+of every project over 30 days: 854 refused before, 861 after, none lost; the 7 new ones are the
+incident (2 drafts), 4 closings that park replies, drafts and builds on the user's tap with no
+class, one of them asking "should a resume ask always wait for you ... or should the drafter
+reply to it?", and 1 that describes a send policy as waiting on the user's word (2 closings that
+only parked **PLAN** blocks were refused before PLAN_ASK). An earlier read
+with no floor and the go shapes ("ton go sur", "needs your go") refused 380 more, most of them a
+single legitimate go ask: dropped.
+
 The bounds: the re-answer of a stop chain is checked like the first answer; the gate lets go after
 CHAIN_CAP blocks in a row (a `cap` row in the ledger and a systemMessage). A crash or a timeout
 lets the turn end and is reported loudly. No environment variable and no configuration key turns
@@ -337,7 +359,7 @@ CLASS_RE = re.compile(r"\b(?:knowledge|connaissance|irr[ée]versibles?|external|
 # 2026-10-28 the refusal named it and this did not read it, so a re-answer that wrote "c'est ton
 # second facteur" was refused again.
 HUMAN_ONLY_RE = re.compile(
-    r"\b(?:h?captcha|recaptcha|2fa|two[\s-]factor|second[\s-]fact(?:or|eur)s?"
+    r"\b(?:h?captchas?|recaptchas?|2fa|two[\s-]factor|second[\s-]fact(?:or|eur)s?"
     r"|deuxi[eè]me\s+facteur|double\s+authentification|otp|one[\s-]time\s+(?:code|password)"
     r"|verification\s+code|code\s+de\s+v[ée]rification|code\s+(?:par\s+)?sms|sms\s+code"
     r"|face\s*id|touch\s*id|passkey|biometric|biom[ée]tri\w*|security\s+key"
@@ -431,6 +453,39 @@ NARROW_ABSENT = re.compile(
     r"|sources)\b", re.I)
 NARROW_ABSENT_WORDS = ("absent de tous mes fichiers", "absente de mes fichiers",
                        "absent from my files", "absent from our notes")
+
+# 2026-11-16, the decision put to the user (see the docstring, THE DECISION HANDED BACK). An item
+# that waits on the user's word ("waiting on your answer", "held for your go", "frozen on your
+# word", "until you say resume", "attend ton go") or puts a yes or no to the user ("Take it or
+# not", "relaunch yes or no", "on publie ou pas"), read on the whole message, ITEM by item: a list
+# item is its own unit, so a class word in a header or a sibling item lifts nothing.
+DECISION_RE = re.compile(
+    r"(?<!what\s)(?<!qui\s)(?<!that\s)\b(?:wait(?:s|ing)?|held|holds?|frozen|stuck|blocked|parked)"
+    r"\s+(?:on|for)\s+(?:(?:an?|the)\s+\w+\s+from\s+you\b|you\b|your\s+(?!own\b)\w+)"
+    r"|\buntil\s+you\s+(?:say|answer|decide|reply|tap|give|pick|choose|confirm|approve)\b"
+    r"|\b(?:needs?|requires?)\s+your\s+(?:hands|answer|word|call|decision|input|nod|ok)\b"
+    r"|\bon\s+your\s+(?:word|nod|say[\s-]so)\b"
+    r"|\b(?:yes\s+or\s+no|or\s+not|oui\s+ou\s+non|ou\s+pas|ou\s+non)"
+    r"(?=\s*(?:\?|\(c\d+\)|\*\*\s*$|$))"
+    r"|(?<!ce\s)(?<!qui\s)\b(?:attend(?:ent)?|bloqu[ée]e?s?|gel[ée]e?s?|suspendue?s?"
+    r"|en\s+attente)\s+(?:de\s+|sur\s+)?(?:ton|ta|tes|toi)\b(?!\s+go\b)"
+    r"|\bjusqu['’][àa]\s+(?:ce\s+que\s+tu|ton|ta)\b"
+    r"|\btant\s+que\s+tu\s+n['’]as\s+pas\b", re.I | re.M)
+# A go asked on one gesture is the contract's own ask: one or two decisions put to the user pass
+# this read (the gesture shapes still read them); a closing that puts DECISION_MIN or more items
+# to the user with no class is the list the user answered "bcp de questions me concerne pas".
+DECISION_MIN = 3
+# The compared plan large work shows before it starts (a **PLAN** block, then the user's typed
+# go) is the asking contract's own ask, not a decision the machine owns.
+PLAN_ASK = re.compile(r"\*\*PLAN\*\*")
+ITEM_HEAD = re.compile(r"^[ \t]*(?:[-*•]|\d+[.)])\s+", re.M)
+DECISION_TEXT = ("An item that waits on the user's word (\"waiting on your answer\", \"held for "
+                 "your go\", \"until you say resume\") or puts a yes or no to the user (\"take it "
+                 "or not\", \"relaunch yes or no\") hands back a decision. Decide what the machine "
+                 "owns (relaunch, publish, repair, a price, a retry, a pick between options you "
+                 "ranked) and report it done; for what stays the user's, write your take and, in "
+                 "THAT item, the class: a list item is read alone, a class word in its header or "
+                 "a sibling item does not lift it.")
 
 # What the refusal tells the model, kept in lists a test reads against the regexes above: every
 # word the refusal says lifts a hand-back must be one CLASS_RE or HUMAN_ONLY_RE reads, and every
@@ -635,6 +690,33 @@ def confirms_in(text):
     return found
 
 
+def items_of(para):
+    """The units a decision is read in: each list item of `para` (its marker line and the lines
+    under it), and the lines before the first item as one more. Pure."""
+    heads = [m.start() for m in ITEM_HEAD.finditer(para)]
+    if not heads:
+        return [para]
+    cuts = ([0] if heads[0] > 0 else []) + heads + [len(para)]
+    return [para[a:b] for a, b in zip(cuts, cuts[1:]) if para[a:b].strip()]
+
+
+def decisions_in(text):
+    """Every decision `text` puts to the user (DECISION_RE), its item naming no class and no
+    human-only check: a list of Held of kind "decision", empty when fewer than DECISION_MIN
+    sentences hold one. Read on the whole message, item by item (items_of). Pure."""
+    found = []
+    for para in re.split(r"\n\s*\n", prose(text or "")):
+        for item in items_of(para):
+            if has_class(item) or HUMAN_ONLY_RE.search(item) or PLAN_ASK.search(item):
+                continue
+            for m in DECISION_RE.finditer(item):
+                if NEGATED.search(item[max(0, m.start() - 40):m.start()]):
+                    continue
+                found.append(_held("decision", " ".join(m.group(0).split()), para.strip(),
+                                   sentence_of(item, m.start(), m.end())))
+    return found if len({f[2] for f in found}) >= DECISION_MIN else []
+
+
 def handbacks_in(text, cfg=None):
     """Every hand-back of `text` whose paragraph does not name why only the user can, in
     reading order: a list of Held, each (the phrase, its paragraph, its sentence). The gesture
@@ -669,7 +751,7 @@ def handbacks_in(text, cfg=None):
             lead = len(m.group(0)) - len(m.group(0).lstrip(".:;!?* \t\n"))
             found.append(_held("gesture", " ".join(m.group(0).split()), para.strip(),
                                sentence_of(para, m.start() + lead, m.end())))
-    return found + lookups_in(text) + confirms_in(text)
+    return found + lookups_in(text) + confirms_in(text) + decisions_in(text)
 
 
 def handback_in(text, cfg=None):
@@ -703,6 +785,8 @@ def reason_text(found, cfg):
         text += LOOKUP_TEXT + " "
     if "confirm" in kinds:
         text += CONFIRM_TEXT + " "
+    if "decision" in kinds:
+        text += DECISION_TEXT + " "
     text += ("Do it yourself "
              "first whenever your tools can: fill the form (a placeholder value where a field is "
              "not the user's to give, a throwaway phone number for instance), run the test or the "
@@ -774,6 +858,8 @@ def check_report(text, cfg=None):
         lines.append(LOOKUP_TEXT)
     if "confirm" in kinds:
         lines.append(CONFIRM_TEXT)
+    if "decision" in kinds:
+        lines.append(DECISION_TEXT)
     lines.append("Name the real actor (I, the third party, nobody), or keep it the user's and "
                  "write in that same paragraph one of: {}; or a check by its name: {}. A reason "
                  "in other words ({}) is not read, nor an absence claimed over your own files "

@@ -1,5 +1,16 @@
 # Changelog
 
+## handback-gate 0.10.0, 2026-11-18
+
+- **The decision handed back.** A closing that puts three or more items to the user as decisions
+  ("waits on you", "held for your go", "until you say resume", "take it or not", "relaunch yes or
+  no", "attend ton tap") with no class word is refused, each list item read alone: a class word in
+  a header or a sibling item lifts nothing. A `**PLAN**` block is the plan-first ask and is not
+  read. "captchas" is read as a human-only check. Taught by a pending list of 14 items answered
+  "what's your take? ... bcp de questions me concerne pas". Measured on 32,305 closings of 30
+  days: 854 refused before, 861 now, none lost; the 7 new ones are the incident (2 drafts) and 5
+  closings parking replies, drafts and builds on the user's tap with no class.
+
 ## preamble-gate 0.2.0, 2026-11-17
 
 - **The shell door.** A shell command that writes an always-loaded file with a budget
