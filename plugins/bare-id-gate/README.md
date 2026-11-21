@@ -74,6 +74,12 @@ line: what the thing is or what went wrong, what it changes for the user, whethe
 anything to do. Refusal class `jargon_not_plain_words`. Proof: the four closing blocks those
 corrections answered are replayed verbatim in `tests/gates/plain_words_replays.json` and refused.
 
+0.2.1: two sessions were refused 18 times in two days. An over-long plain line is now refused
+with the cut named (how many words go and the words past the 40th, quoted), since sessions
+trimmed by eye from 44 to 41 and were refused again. A date like 25/11 is not a path, and ID,
+CDI and CDD join the everyday list ("Touch ID", "pas de CDI en France"). The lesson's lines are
+replayed verbatim in the gate's tests.
+
 ## Install
 
 ```

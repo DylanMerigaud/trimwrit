@@ -242,7 +242,11 @@ WORD = re.compile(r"[^\W_]+(?:['\u2019][^\W_]+)?")
 # Words a reader knows without the tool: units of money, time zones, countries, documents.
 COMMON_CAPS = {"OK", "PDF", "US", "USA", "UK", "EU", "UE", "FR", "EN", "ES", "TVA", "TTC", "HT",
                "CEO", "CTO", "SMS", "TV", "AM", "PM", "UTC", "CST", "CET", "IA", "AI", "EUR",
-               "USD", "PS", "RIB", "SIRET", "CV"}
+               "USD", "PS", "RIB", "SIRET", "CV", "ID", "CDI", "CDD"}
+# 2026-11-21, lesson r:loop:bare_id_gate:jargon_not_plain_words: "Touch ID" and "pas de CDI en
+# France" were refused as acronyms in lines a French reader follows, and "le 25/11" as a path.
+# A date or a fraction (digits and slashes only) is not a path.
+DATE_LIKE = re.compile(r"^[\d./-]+$")
 JARGON = [
     ("a code span", re.compile(r"`")),
     ("a link or a path", re.compile(r"https?://|www\.|[\w.~-]+/[\w.~/-]+")),
@@ -273,6 +277,17 @@ def plain_lines(text):
     return out
 
 
+def over_length(body, n):
+    """The over-length why, naming the cut: sessions trimmed 44 words to 41 and 42 and were
+    refused again, because they counted by eye. Name how many words go and quote the ones past
+    the limit, so the next line is counted for them."""
+    words = list(WORD.finditer(body))
+    tail = body[words[PLAIN_MAX_WORDS].start():].strip()
+    return ("{} words, over {}: cut at least {} (the words past the {}th are \"{}\"); keep "
+            "what changed and what waits on him, drop a clause, a list item or a number"
+            .format(n, PLAIN_MAX_WORDS, n - PLAIN_MAX_WORDS, PLAIN_MAX_WORDS, tail))
+
+
 def jargon_in(body, cfg=None):
     """[why] for one plain line: too long, empty, or holding a word only the tool's user reads."""
     why = []
@@ -280,10 +295,11 @@ def jargon_in(body, cfg=None):
     if n == 0:
         why.append("it is empty")
     if n > PLAIN_MAX_WORDS:
-        why.append("{} words, over {}".format(n, PLAIN_MAX_WORDS))
+        why.append(over_length(body, n))
     for name, rx in JARGON:
         hits = [m.group(0) for m in rx.finditer(body)
-                if name != "an acronym" or m.group(0).rstrip("s") not in COMMON_CAPS]
+                if not (name == "an acronym" and m.group(0).rstrip("s") in COMMON_CAPS)
+                and not (name == "a link or a path" and DATE_LIKE.match(m.group(0)))]
         if hits:
             why.append("{} ({})".format(name, ", ".join(sorted(set(hits))[:3])))
     ids = [m.group(0) for _, rx in families(_settings(cfg)) for m in rx.finditer(body)]

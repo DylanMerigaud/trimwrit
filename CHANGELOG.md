@@ -1,5 +1,13 @@
 # Changelog
 
+## bare-id-gate 0.2.1, 2026-11-21
+
+- **The cut, named.** An over-long plain-words line is refused with how many words to cut and
+  the words past the 40th quoted; a date (25/11) is no longer read as a path; ID, CDI and CDD are
+  everyday words. Taught by two growth-cockpit sessions refused 6 and 12 times: their plain
+  lines are replayed verbatim, the three false positives now pass, the over-long ones stay
+  refused with the cut named.
+
 ## handback-gate 0.10.0, 2026-11-18
 
 - **The decision handed back.** A closing that puts three or more items to the user as decisions

@@ -423,3 +423,52 @@ def test_a_long_message_without_plain_words_blocks_through_the_hook(tmp_path):
     ok = make_transcript(tmp_path, REPLAYS[3]["final_message"] + "\n\n" + PLAIN_EN, "ok.jsonl")
     r = run_py(NAME, SCRIPT, stop(ok, "pw-ok"), tmp_path)
     assert (r.returncode, r.stdout.strip()) == (0, "")
+
+
+# ---- lesson r:loop:bare_id_gate:jargon_not_plain_words (2026-11-21) ----------------------
+# The plain lines two growth-cockpit sessions wrote (2026-11-19 and 2026-11-20), verbatim, and
+# what the gate now does with each. Three were false positives (a date read as a path, "Touch
+# ID", "CDI"); the over-length ones stay refused and the refusal now names the cut.
+LESSON_FALSE_POSITIVES = [
+    "En clair : je prévois large pour ce qui se conserve et juste pour le frais, sur 56 "
+    "personnes au cocktail et 36 à table, et le compte se fige le 25/11. Rien à faire "
+    "de ton côté pour l'instant.",
+    "En clair : la prochaine fois qu'une page doit sortir et que le compte du Mac est plein, le "
+    "Mac change de compte tout seul, avec une validation Touch ID sur le Mac, et la page part.",
+    "En clair : ton téléphone a sonné parce que ta règle « pas de CDI en "
+    "France, pas de présentiel » n'était écrite nulle part dans le code. "
+    "Elle l'est maintenant : ce genre d'offre ne sonne plus et reçoit un refus automatique. "
+    "Rien à faire.",
+]
+LESSON_TOO_LONG = [
+    ("En clair : la liste de courses du mariage a moins de noix de cajou, une raclette presque "
+     "toute nature avec un peu de vin d'Arbois, de fumé et de truffe, et du bœuf "
+     "séché. Le total baisse de 4 €. Rien à faire de ton côté.",
+     43, "\"de ton côté.\""),
+    ("En clair : la page ne peut sortir que sur le compte connecté dans le navigateur du "
+     "Mac, et celui-ci est plein ; dès que cet onglet est sur le compte pro, la publication "
+     "part seule en moins de cinq minutes et le nouveau lien arrive ici.", 44,
+     "\"nouveau lien arrive ici.\""),
+    ("En clair : le minimum de 400 par jour est en service. La suite du plan est arrêtée "
+     "par ma propre porte de sécurité, qui n'a pas reconnu ton « go longue » "
+     "parce que ton message finissait par une question. Il faut ton accord à nouveau.", 42,
+     "\"à nouveau.\""),
+]
+
+
+@pytest.mark.parametrize("line", LESSON_FALSE_POSITIVES)
+def test_a_date_touch_id_and_cdi_are_plain_words(line):
+    assert gate.plain_words_miss(REPLAYS[3]["final_message"] + "\n\n" + line, BARE) is None
+
+
+@pytest.mark.parametrize("line,n,tail", LESSON_TOO_LONG)
+def test_an_over_long_plain_line_is_refused_with_the_cut_named(line, n, tail):
+    miss = gate.plain_words_miss(REPLAYS[3]["final_message"] + "\n\n" + line, BARE)
+    assert "{} words, over 40: cut at least {}".format(n, n - 40) in miss, miss
+    assert tail in miss, miss
+
+
+def test_a_real_path_with_digits_is_still_a_path():
+    for line in ("En clair : scripts/2026/run.py tourne.", "En clair : voir www.exemple.fr/1/2."):
+        miss = gate.plain_words_miss(REPLAYS[3]["final_message"] + "\n\n" + line, BARE)
+        assert miss and "a link or a path" in miss, miss
