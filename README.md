@@ -93,7 +93,7 @@ the same standard as a rule in a CLAUDE.md. Each one ships with its tests, and e
 ships the eval case that measures what the hook changes, a plugin arm against a baseline arm
 with the plugin not loaded.
 
-The marketplace holds thirteen of them next to `trimwrit`, each a plugin of its own:
+The marketplace holds fourteen of them next to `trimwrit`, each a plugin of its own:
 
 ```bash
 claude plugin marketplace add DylanMerigaud/trimwrit
@@ -112,6 +112,7 @@ claude plugin install claim-gate@trimwrit --scope project   # this repository on
 | `promise-gate` | once the user has set a target, refuses to end a turn on a promise to continue | UserPromptSubmit; Stop |
 | `rule-gate` | refuses to end a turn that announces a new rule without naming the file that enforces it | Stop |
 | `handback-gate` | refuses to end a turn that hands the user a gesture or an input the agent could do itself (fill in the form, paste the token, run this command) without naming why only the user can | Stop |
+| `choice-gate` | keeps a per-session ledger of the choices the user states and hands it back after every compaction; refuses to end a turn whose final message keeps something the user excluded, or ignores a choice he just had to repeat | UserPromptSubmit; SessionStart; Stop |
 | `bare-id-gate` | refuses to end a turn whose final message shows an internal id standing alone (a commit sha, a ticket key, a queue code) instead of naming the thing first, the id after it in parentheses | Stop |
 | `oneshot-gate` | refuses a `claude -p` session that can use no tool and still loads the whole harness (no `--bare`, no `--safe-mode`), before its first request | UserPromptSubmit |
 | `preamble-gate` | refuses a hand edit that grows an always-loaded file (any CLAUDE.md, `~/.claude/rules`, the memory index) past its token budget, refuses a shell write to one, and tells a session at its start of its own files over budget; a shrinking edit always passes | PreToolUse Write, Edit, MultiEdit, Bash; PostToolUse Bash; SessionStart |

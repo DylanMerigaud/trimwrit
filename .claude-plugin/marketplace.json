@@ -4,7 +4,7 @@
     "name": "Dylan Merigaud",
     "url": "https://github.com/DylanMerigaud"
   },
-  "description": "trimwrit, which makes a harness rule earn its place with a test, and thirteen gates, each with its tests and, for the Stop gates, the eval case that measures it.",
+  "description": "trimwrit, which makes a harness rule earn its place with a test, and fourteen gates, each with its tests and, for the Stop gates, the eval case that measures it.",
   "plugins": [
     {
       "name": "trimwrit",
@@ -45,6 +45,16 @@
       "license": "MIT",
       "category": "productivity",
       "tags": ["resume", "api-error", "stopfailure", "screen", "tmux"]
+    },
+    {
+      "name": "choice-gate",
+      "source": "./plugins/choice-gate",
+      "description": "Keeps a per-session ledger of the choices the user states, hands it back after every compaction, and refuses a final message that keeps something the user excluded or ignores a choice he just had to repeat.",
+      "version": "0.1.0",
+      "author": { "name": "Dylan Merigaud" },
+      "license": "MIT",
+      "category": "productivity",
+      "tags": ["feedback", "compaction", "stop-hook", "preferences", "gate"]
     },
     {
       "name": "claim-gate",

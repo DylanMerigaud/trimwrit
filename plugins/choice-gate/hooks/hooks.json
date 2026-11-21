@@ -1,0 +1,40 @@
+{
+  "description": "choice-gate: a choice the user stated in a session is applied, and survives a compaction",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/choice_gate.py\" --prompt",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/choice_gate.py\" --session",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/choice_gate.py\"",
+            "timeout": 10,
+            "statusMessage": "Dropping a choice the user stated?"
+          }
+        ]
+      }
+    ]
+  }
+}

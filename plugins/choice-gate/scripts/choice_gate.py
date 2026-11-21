@@ -43,6 +43,11 @@ CLAUSE_MAX = 400
 CONTEXT_MAX = 6000
 INSIST_WORDS = 4
 TERM_WORDS = 3
+TYPED_MAX = 2500
+ITEM_WORDS = 5
+NOUN_BEFORE = {"de", "du", "le", "la", "les", "des", "un", "une", "the", "a", "taux"}
+POSSESSIVE = {"ton", "ta", "tes", "mon", "ma", "mes", "son", "sa", "ses", "notre", "votre",
+              "leur", "your", "my", "his", "her", "their", "our"}
 
 NOT_A_PROMPT = ("<task-notification>", "<local-command", "<system-reminder>",
                 "This session is being continued", "[Request interrupted",
@@ -55,7 +60,7 @@ vous y d s n m t elle elles eux tout tous toute toutes tres bien bon bcp aussi a
 fait faire peut etre plus moins comme quand si non oui ok ouais deja sinon peu genre truc trucs
 the an and or of to in on for with is are be it this that these those you your my me we our
 not no but so as at by from just also still then than very too before after again yes
-said told dit avait ai
+said told dit avait ai great good nice were was had have
 """.split())
 
 CHOICE_SRC = (
@@ -66,9 +71,10 @@ CHOICE_SRC = (
     r"je veux|veut|want|j'aimerais|jaimerais|ideal\w*|mini\w*|max\w*|je pense|j'ai en tete|"
     r"on compte|compte pour|on se dit|non|wrong|pas bon|ca me va pas|remplace\w*|replace\w*)\b")
 REPEAT_SRC = (
-    r"\b(?:i said|as i said|like i said|i told you|told you|i already said|"
-    r"j\s*'?\s*ai\s+(?:deja\s+)?dit|je\s+t\s*'?\s*ai\s+(?:deja\s+)?dit|"
-    r"on\s+(?:l\s*'?\s*)?avait\s+(?:pas\s+|aussi\s+|deja\s+)?dit|on\s+a\s+dit|deja\s+dit)\b")
+    r"(?:\b(?:i said|as i said|like i said|i told you|told you|i already said|"
+    r"je\s+t\s*'?\s*ai\s+(?:deja\s+)?dit|"
+    r"on\s+(?:l\s*'?\s*)?avait\s+(?:pas\s+|aussi\s+|deja\s+)?dit|on\s+a\s+dit|deja\s+dit)"
+    r"|(?:\b|(?<=qu)|(?<=que))j\s*'?\s*ai\s+(?:deja\s+)?dit)\b")
 REMOVE_SRC = (
     r"(?:\b(?:remove|drop|retire[rz]?|enleve[rz]?|supprime[rz]?|vire[rz]?)\s+"
     r"|(?:^|[,;:!]\s*|\bnon\s*,?\s*)(?:pas\s+de|pas\s+d'|sans|no|jamais\s+de)\s+)"
@@ -79,7 +85,8 @@ PREFER_SRC = (
     r"|\b(?:plutot que|instead of|rather than)\s+(?:the |le |la |les |l'|du |des )?"
     r"(?P<t2>[^.;:!?,\n=]+)")
 REMOVAL_CTX_SRC = (
-    r"\b(?:retir\w*|enlev\w*|supprim\w*|sorti\w*|remove\w*|dropp?\w*|plus de|plus aucun\w*|"
+    r"\b(?:retir\w*|enlev\w*|supprim\w*|sort\w*|remove\w*|dropp?\w*|plus de|plus aucun\w*|"
+    r"la place|en moins|avant|before|etait|avai\w*|was|deleted|cut|vs|versus|compare\w*|que (?:la|le|les|l')|"
     r"sans|pas de|pas d'|aucun\w*|no|not|without|instead|au lieu|remplac\w*|replac\w*|"
     r"exclu\w*|plutot que|rather than|ni)\b")
 
@@ -88,6 +95,8 @@ REPEAT = re.compile(REPEAT_SRC)
 REMOVE = re.compile(REMOVE_SRC)
 PREFER = re.compile(PREFER_SRC)
 REMOVAL_CTX = re.compile(REMOVAL_CTX_SRC)
+ARROW_NO = re.compile(r"^\s*(?:non|no|nope|pas|remove|retire|enleve)\b|\bnon\s*\.?\s*$")
+LISTED = re.compile(r"^\s*(?:[-*|>]|\d)|\d")
 WORD = re.compile(r"[a-z0-9][a-z0-9'-]*")
 SPLIT_ITEMS = re.compile(r",|\bni\b|\bet\b|\band\b|\bou\b|\bor\b|\+")
 
@@ -114,39 +123,62 @@ def clauses(prompt):
 
 
 def is_typed(prompt):
-    return bool((prompt or "").strip()) and not prompt.lstrip().startswith(NOT_A_PROMPT)
+    """A prompt the user typed: not harness text, and not a machine brief or a paste (a headless
+    worker's prompt runs to thousands of characters; his longest correction is 1,399)."""
+    return bool((prompt or "").strip()) and len(prompt) <= TYPED_MAX \
+        and not prompt.lstrip().startswith(NOT_A_PROMPT)
+
+
+def is_choice(clause):
+    f = fold(clause)
+    return bool(CHOICE.search(f) or REPEAT.search(f))
 
 
 def choice_clauses(prompt):
     """The clauses of a typed prompt that state a choice, verbatim."""
     if not is_typed(prompt):
         return []
-    return [c for c in clauses(prompt)
-            if CHOICE.search(fold(c)) or REPEAT.search(fold(c))]
+    return [c for c in clauses(prompt) if is_choice(c)]
 
 
 def exclusions(clause):
     """[{"words": [...], "ctx": [...]}] the clause excludes: "remove X", "pas de X", "sans X",
-    "X plutot que Y" (Y), "prefer X pour Z que Y" (Y, only on a line naming Z)."""
-    f = fold(clause)
-    if f.rstrip().endswith("?"):
-        return []  # a question is not a ruling
+    "X => non", "X plutot que Y" (Y), "prefer X pour Z que Y" (Y, only on a line naming Z). A
+    segment that asks a question rules nothing."""
     out = []
 
-    def add(raw, ctx):
-        for item in SPLIT_ITEMS.split(raw)[:4]:
-            ws = significant(item, TERM_WORDS)
-            if ws:
-                out.append({"words": ws, "ctx": ctx})
+    def add(raw, ctx, last_only=False):
+        """The item named first (or last, for "X => non"), and the short items listed after it
+        ("champomy, hedgehog"): an item of more than ITEM_WORDS words is a sentence, no item."""
+        items = [i for i in SPLIT_ITEMS.split(raw) if significant(i)]
+        picked = items[-1:] if last_only else items[:1] + [
+            i for i in items[1:4] if len(words(i)) <= 2]
+        for item in picked:
+            if len(words(item)) <= ITEM_WORDS:
+                out.append({"words": significant(item, TERM_WORDS), "ctx": ctx})
 
-    for m in REMOVE.finditer(f):
-        add(m.group("t"), [])
-    for m in PREFER.finditer(f):
-        if m.group("t"):
-            scope = significant(m.group("scope"))
-            add(m.group("t"), scope[1:])  # the first word is the one preferred
-        elif m.group("t2"):
-            add(m.group("t2"), [])
+    if re.match(r"\s*(?:pk|pq|pourquoi|why)\b", fold(clause)):
+        return []  # "PK RETIRE LES CARTE": a complaint about a removal, no order to remove
+    segments = re.split(r"=>|->", fold(clause))
+    for i, seg in enumerate(segments):
+        question = seg.rstrip().endswith("?")
+        if question:
+            continue
+        for m in REMOVE.finditer(seg):
+            before = words(seg[:m.start()])[-1:]
+            if before and before[0] in NOUN_BEFORE:
+                continue  # "le taux de drop", "un drop": a noun, no order
+            if seg[m.end():m.end() + 1] == "?" or \
+                    (words(m.group("t"))[:1] and words(m.group("t"))[0] in POSSESSIVE):
+                continue  # "(si il drop dofus?)", "sans ton choix": no item excluded
+            add(m.group("t"), [])
+        for m in PREFER.finditer(seg):
+            if m.group("t"):
+                add(m.group("t"), significant(m.group("scope"))[1:])  # first word: the pick
+            elif m.group("t2"):
+                add(m.group("t2"), [])
+        if i and ARROW_NO.search(seg):
+            add(segments[i - 1], [], last_only=True)
     return out
 
 
@@ -160,8 +192,8 @@ def insist_words(prompt):
         m = REPEAT.search(f)
         if not m:
             continue
-        after = significant(f[m.end():])
-        before = significant(f[:m.start()])
+        after = significant(re.split(r"=>|->|[,;(]", f[m.end():])[0])
+        before = significant(re.split(r"=>|->|[,;)]", f[:m.start()])[-1])
         picked = after[:INSIST_WORDS] if after else before[-INSIST_WORDS:]
         if picked:
             return picked, c
@@ -191,13 +223,17 @@ def read_ledger(session_id):
 
 
 def append_ledger(session_id, texts):
+    """Every clause of a typed prompt, flagged `choice` when it states one: the choices are
+    handed back, every clause can take an exclusion back ("9 bouteilles de vin?" after "pas de
+    bouteilles")."""
     if not texts:
         return
     path = ledger_path(session_id)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "a", encoding="utf-8") as fh:
         for t in texts:
-            fh.write(json.dumps({"at": trace.now_iso(), "text": t}, ensure_ascii=False) + "\n")
+            fh.write(json.dumps({"at": trace.now_iso(), "text": t, "choice": is_choice(t)},
+                                ensure_ascii=False) + "\n")
 
 
 def set_insist(session_id, ws, clause):
@@ -229,7 +265,7 @@ def live_exclusions(entries):
     live = []
     for e in entries:
         text = e.get("text") or ""
-        own = exclusions(text)
+        own = exclusions(text) if e.get("choice", True) else []
         tokens = words(text)
         own_terms = [x["words"] for x in own]
         live = [x for x in live
@@ -240,8 +276,10 @@ def live_exclusions(entries):
 
 
 def _has(tokens, w):
-    stem = w[:max(4, len(w) - 2)] if len(w) > 4 else w
-    return any(t == w or (len(stem) >= 4 and t.startswith(stem)) for t in tokens)
+    """`w` among the tokens, or a plural or a singular of it ("bouteille", "bouteilles"); never
+    a longer word that merely starts the same ("fami" is not "familiers", "archi" not "arche")."""
+    return any(t == w or (t.startswith(w) and len(t) - len(w) <= 2) or
+               (len(t) >= 4 and w.startswith(t) and len(w) - len(t) <= 1) for t in tokens)
 
 
 def _near(tokens, w):
@@ -253,11 +291,12 @@ def _near(tokens, w):
 
 def kept_exclusion(final_text, live):
     """(exclusion, line) of the first line of the final message that keeps something the user
-    excluded, or None. A line with a removal word ("retire", "sans", "plus de", "instead") is a
-    line saying it went."""
+    excluded, or None. Only a line that lists (a bullet, a table row, a quantity or a price) can
+    keep an item; a line with a removal word ("retire", "sans", "plus de", "instead") is a line
+    saying it went."""
     for line in (final_text or "").splitlines():
         f = fold(line)
-        if not f.strip() or REMOVAL_CTX.search(f):
+        if not f.strip() or REMOVAL_CTX.search(f) or not LISTED.search(f):
             continue
         tokens = words(f)
         for x in live:
@@ -279,7 +318,7 @@ def insist_unapplied(final_text, insist):
 
 def ledger_context(entries):
     lines, size = [], 0
-    for e in reversed(entries):
+    for e in reversed([e for e in entries if e.get("choice", True)]):
         line = "- {} \"{}\"".format((e.get("at") or "")[:16], e.get("text") or "")
         if size + len(line) > CONTEXT_MAX:
             break
@@ -300,7 +339,7 @@ def on_prompt():
     if not is_typed(prompt):
         return 0
     sid = trace.session_key(payload)
-    append_ledger(sid, choice_clauses(prompt))
+    append_ledger(sid, clauses(prompt))
     ws, clause = insist_words(prompt)
     set_insist(sid, ws, clause)
     if ws:
@@ -320,7 +359,7 @@ def on_session():
     if payload.get("source") not in ("compact", "resume"):
         return 0
     entries = read_ledger(trace.session_key(payload))
-    if entries:
+    if any(e.get("choice", True) for e in entries):
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
                                                  "additionalContext": ledger_context(entries)}},
                          ensure_ascii=False))

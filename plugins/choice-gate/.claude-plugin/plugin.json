@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "choice-gate",
+  "displayName": "choice-gate",
+  "description": "Keeps a per-session ledger of the choices the user states, hands it back after every compaction, and refuses a final message that keeps something the user excluded or ignores a choice he just had to repeat.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Dylan Merigaud",
+    "url": "https://github.com/DylanMerigaud"
+  },
+  "homepage": "https://github.com/DylanMerigaud/trimwrit/tree/main/plugins/choice-gate",
+  "repository": "https://github.com/DylanMerigaud/trimwrit",
+  "license": "MIT",
+  "keywords": [
+    "feedback",
+    "compaction",
+    "stop-hook",
+    "preferences",
+    "gate"
+  ],
+  "experimental": {
+    "evals": "evals"
+  }
+}

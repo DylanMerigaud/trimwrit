@@ -1,5 +1,15 @@
 # Changelog
 
+## choice-gate 0.1.0, 2026-11-21
+
+- **A stated choice survives the compaction.** New plugin: every clause the user types goes to a
+  per-session ledger, his choices come back verbatim after each compaction or resume and when he
+  has to repeat one, and the Stop hook refuses a final message whose listing line keeps what he
+  excluded ("Remove champomy", "aldi pour les bouteilles que carrefour") or that ignores what he
+  just repeated ("riselsing + pino noir i said"). Taught by lesson
+  s:session-feedback-dropped-not-applied, eleven corrections in two projects; the tests replay
+  them verbatim.
+
 ## bare-id-gate 0.2.1, 2026-11-21
 
 - **The cut, named.** An over-long plain-words line is refused with how many words to cut and

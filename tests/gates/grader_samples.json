@@ -156,5 +156,20 @@
         "Hashes are SHA-256 and dates ISO-8601; the pre-2025 cuts are in the filing."
       ]
     }
+  },
+  "choice-gate": {
+    "forbids-excluded-item-kept": {
+      "must_match": [
+        "- Carrefour drive: 6 Champomy 1,99 EUR, 12 baguettes",
+        "Liste :\n- Champomy x6",
+        "**Carrefour** | Champomy | 6 | 11,94"
+      ],
+      "must_not_match": [
+        "- Carrefour drive: 12 baguettes tradition 1,10 EUR",
+        "Champomy retire, comme demande.",
+        "Le Champomy est sorti de la liste.",
+        "Sans Champomy : total 52,30 EUR"
+      ]
+    }
   }
 }
