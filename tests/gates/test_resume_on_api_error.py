@@ -288,29 +288,39 @@ def test_a_pidfile_naming_a_foreign_live_process_does_not_block(tmp_path):
 
 
 def test_real_runs_stack_at_most_one_sleeper_and_it_cleans_up(tmp_path):
-    """No --dry-run: a fake tmux on PATH records the keystrokes."""
+    """No --dry-run: a fake tmux on PATH records the keystrokes. The sleeper's `sleep` is a fake
+    that blocks until a release file exists, so the four hook runs never race a wall-clock delay
+    (a real `sleep 2` let the first sleeper end before the fourth run on a loaded machine: the
+    refusal count came back 0 or 2, seen 2026-11-09 and again under load 2026-11-21)."""
     import os
     import subprocess
     import time
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     keys = tmp_path / "keys.txt"
+    release = tmp_path / "release"
     (bin_dir / "tmux").write_text("#!/bin/bash\necho \"$*\" >> {}\n".format(keys))
     (bin_dir / "tmux").chmod(0o755)
+    (bin_dir / "sleep").write_text(
+        "#!/bin/bash\nwhile [ ! -e {} ]; do /bin/sleep 0.05; done\n".format(release))
+    (bin_dir / "sleep").chmod(0o755)
     env = dict(NO_MUX, HOME=str(tmp_path), PATH=str(bin_dir) + os.pathsep + os.environ["PATH"], **TMUX)
     d = tmp_path / ".claude"
     d.mkdir()
     (d / "trimwrit-gates.json").write_text(json.dumps({NAME: {"delay_s": 2}}))
     payload = {"error": "server_error", "session_id": "s1",
                "transcript_path": str(tmp_path / "absent.jsonl")}
-    for _ in range(4):
-        out = run_sh(NAME, SCRIPT, payload, env=env)
-        assert out.returncode == 0
     pidf = _state(tmp_path) / "pending-tmux-_tmp_x-_3.pid"
-    assert pidf.exists()
-    log = (d / "trimwrit-gates" / "api-failures.log").read_text()
-    assert log.count("not resumed: a sleeper is already pending for tmux %3") == 3
-    for _ in range(100):
+    try:
+        for _ in range(4):
+            out = run_sh(NAME, SCRIPT, payload, env=env)
+            assert out.returncode == 0
+        assert pidf.exists()
+        log = (d / "trimwrit-gates" / "api-failures.log").read_text()
+        assert log.count("not resumed: a sleeper is already pending for tmux %3") == 3
+    finally:
+        release.write_text("go\n")
+    for _ in range(300):
         if not pidf.exists():
             break
         time.sleep(0.1)
