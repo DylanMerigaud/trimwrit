@@ -171,6 +171,22 @@ only parked **PLAN** blocks were refused before PLAN_ASK). An earlier read
 with no floor and the go shapes ("ton go sur", "needs your go") refused 380 more, most of them a
 single legitimate go ask: dropped.
 
+THE RECOMMENDATION ON THE USER'S SIDE (2026-11-20). Two closings of one week passed and drew
+"PREND LE CONTROLE DU MAC LOG AVEC UN AUTRE COMPTE" and "ON DECO OSEF FAIT LE TOI". The first
+ended on "Recommandation : onglet claude.ai du Mac sur le compte pro" after "Une fois ce
+navigateur sur le compte pro, elle se publie seule": no verb, no "tu", so no shape read it, while
+the agent's own tools drove that browser. The second ranked "**Dans ton navigateur (reco)**" over
+the path on the machine's own browser it had just described, and named a second factor in the
+NEXT sentence, which lifted the paragraph although both paths needed that same factor. RECO_MARK
+reads a reco label, USER_SIDE the user's browser, machine or tab in the label's own sentence,
+OWN_ACTOR the agent's part in it; UNTIL_DEVICE reads a wait on the user's device that nothing of
+the agent's ends. Read on the whole message, lifted only by a class or a check in the SAME
+sentence (recos_in). Measured on gc-hub, 3,482 turn-final messages of every project over 30 days:
+72 refused before, 81 after; the 9 new ones are the two incidents (3 drafts), 4 recos that put a
+gesture on the user's phone or Mac with no class (a capture, a ride booked, captchas in batches,
+a browser left open) and 1 test "on the Mac when it is awake". A noun reco ("puis la demande de go
+avec ma recommandation") is not a label: an earlier read that took it refused 4 more.
+
 The bounds: the re-answer of a stop chain is checked like the first answer; the gate lets go after
 CHAIN_CAP blocks in a row (a `cap` row in the ledger and a systemMessage). A crash or a timeout
 lets the turn end and is reported loudly. No environment variable and no configuration key turns
@@ -479,6 +495,48 @@ DECISION_MIN = 3
 # go) is the asking contract's own ask, not a decision the machine owns.
 PLAN_ASK = re.compile(r"\*\*PLAN\*\*")
 ITEM_HEAD = re.compile(r"^[ \t]*(?:[-*•]|\d+[.)])\s+", re.M)
+
+# 2026-11-20, the recommendation that routes the gesture to the user's side (see the docstring,
+# THE RECOMMENDATION ON THE USER'S SIDE). A reco whose own sentence puts the gesture in the
+# user's browser, machine or account, with no actor of the agent's ("Recommandation : onglet
+# claude.ai du Mac sur le compte pro", "**Dans ton navigateur (reco)** : la fenetre de ta
+# capture, ..."), and a wait on the user's device with nothing the agent does ("Une fois ce
+# navigateur sur le compte pro, elle se publie seule"). Read on the whole message, sentence by
+# sentence: a class word or a check named in ANOTHER sentence of the paragraph lifts nothing,
+# because both incidents named a second factor one sentence after the reco while the agent's
+# tools reached the same device.
+# The reco as a LABEL ("Reco :", "(reco)", "**Recommandation :**", "I recommend"), never the noun
+# a sentence mentions ("puis la demande de go avec ma recommandation", "applique la reco : ...").
+RECO_MARK = re.compile(r"(?<!la\s)(?<!ma\s)(?<!ta\s)(?<!sa\s)(?<!une\s)(?<!the\s)(?<!my\s)(?<!a\s)"
+                       r"\b(?:reco|recommandation|recommendation|recommended|recommand[ée]e?)\b"
+                       r"(?=\s*\)|\s*\**\s*:)"
+                       r"|\bje\s+(?:te\s+)?recommande\b|\bi\s+recommend\b|\bmy\s+pick\b", re.I)
+USER_SIDE = re.compile(
+    r"\b(?:dans|sur|depuis|via|de|avec)\s+(?:ton|ta|tes)\s+(?:propres?\s+)?(?:navigateur|mac"
+    r"|ordi(?:nateur)?|laptop|pc|t[ée]l[ée]phone|iphone|terminal|onglet|fen[êe]tre"
+    r"|appli(?:cation)?|[ée]cran|clavier)s?\b"
+    r"|\b(?:du|le|au|sur\s+le|depuis\s+le|ton)\s+mac\b"
+    r"|\b(?:in|on|from|with)\s+(?:your|the\s+user['’]s)\s+(?:own\s+)?(?:browser|mac|laptop"
+    r"|computer|phone|terminal|tab|window|app|screen|keyboard)s?\b"
+    r"|\bon\s+the\s+mac\b", re.I)
+OWN_ACTOR = re.compile(r"(?<!\w)(?:je|j['’]|moi|I|I['’](?:ll|m|ve|d)|la\s+machine|le\s+hub"
+                       r"|le\s+serveur\s+(?:fait|bascule|lance)|the\s+machine|the\s+hub)(?!\w)",
+                       re.I)
+UNTIL_DEVICE = re.compile(
+    r"\b(?:une\s+fois|d[èe]s\s+que|quand|lorsque|once|as\s+soon\s+as|when)\s+"
+    r"(?:(?:ce|cet|cette|ton|ta|le|la|the|your|this)\s+|l['’])"
+    r"(?:navigateur|mac|onglet|ordi(?:nateur)?|laptop|t[ée]l[ée]phone|browser|tab|phone|computer)"
+    r"\b[^.\n]{0,80}?\b(?:seule?s?|tout\s+seul|toute\s+seule|automatiquement|d['’]elle-m[êe]me"
+    r"|de\s+lui-m[êe]me|by\s+itself|on\s+its\s+own|automatically)\b", re.I)
+RECO_TEXT = ("A recommendation that puts the gesture on the user's side (their browser, their "
+             "machine, their account tab: \"onglet claude.ai du Mac sur le compte pro\", \"dans "
+             "ton navigateur (reco)\"), or a wait on their device (\"une fois ce navigateur sur "
+             "le compte pro, elle se publie seule\"), hands the gesture back when your tools "
+             "reach that device: take control of it (the machine's own browser, a CDP lane, a "
+             "remote screen, an API) and do it, then report it done. If the path you rank first "
+             "is the user's while a path your tools perform exists, rank yours first. When it "
+             "is truly the user's, the class or the check goes in the reco's OWN sentence: in "
+             "the next sentence it lifts nothing.")
 DECISION_TEXT = ("An item that waits on the user's word (\"waiting on your answer\", \"held for "
                  "your go\", \"until you say resume\") or puts a yes or no to the user (\"take it "
                  "or not\", \"relaunch yes or no\") hands back a decision. Decide what the machine "
@@ -717,6 +775,40 @@ def decisions_in(text):
     return found if len({f[2] for f in found}) >= DECISION_MIN else []
 
 
+def _sentence_raw(para, start, end):
+    """The whole sentence of `para` holding [start, end), uncut (sentence_of cuts it)."""
+    head = max((m.end() for m in SENTENCE_END.finditer(para[:start])), default=0)
+    after = SENTENCE_END.search(para, end)
+    return para[head:after.end() if after else len(para)]
+
+
+def recos_in(text):
+    """Every recommendation of `text` whose own sentence puts the gesture on the user's side
+    (USER_SIDE) with no actor of the agent's (OWN_ACTOR), and every wait on the user's device
+    that the agent does nothing about (UNTIL_DEVICE), the sentence naming no class and no
+    human-only check: a list of Held of kind "reco". Read on the whole message, sentence by
+    sentence. A **PLAN** paragraph is the plan-first ask and is not read. Pure."""
+    found = []
+    for para in re.split(r"\n\s*\n", prose(text or "")):
+        if PLAN_ASK.search(para):
+            continue
+        seen = set()
+        hits = [(m, True) for m in RECO_MARK.finditer(para)] + \
+            [(m, False) for m in UNTIL_DEVICE.finditer(para)]
+        for m, is_reco in hits:
+            raw = _sentence_raw(para, m.start(), m.end())
+            if raw in seen or has_class(raw) or HUMAN_ONLY_RE.search(raw):
+                continue
+            if OWN_ACTOR.search(raw) or (is_reco and not USER_SIDE.search(raw)):
+                continue
+            if NEGATED.search(para[max(0, m.start() - 40):m.start()]):
+                continue
+            seen.add(raw)
+            found.append(_held("reco", " ".join(m.group(0).split()), para.strip(),
+                               sentence_of(para, m.start(), m.end())))
+    return found
+
+
 def handbacks_in(text, cfg=None):
     """Every hand-back of `text` whose paragraph does not name why only the user can, in
     reading order: a list of Held, each (the phrase, its paragraph, its sentence). The gesture
@@ -751,7 +843,7 @@ def handbacks_in(text, cfg=None):
             lead = len(m.group(0)) - len(m.group(0).lstrip(".:;!?* \t\n"))
             found.append(_held("gesture", " ".join(m.group(0).split()), para.strip(),
                                sentence_of(para, m.start() + lead, m.end())))
-    return found + lookups_in(text) + confirms_in(text) + decisions_in(text)
+    return found + lookups_in(text) + confirms_in(text) + decisions_in(text) + recos_in(text)
 
 
 def handback_in(text, cfg=None):
@@ -787,6 +879,8 @@ def reason_text(found, cfg):
         text += CONFIRM_TEXT + " "
     if "decision" in kinds:
         text += DECISION_TEXT + " "
+    if "reco" in kinds:
+        text += RECO_TEXT + " "
     text += ("Do it yourself "
              "first whenever your tools can: fill the form (a placeholder value where a field is "
              "not the user's to give, a throwaway phone number for instance), run the test or the "
@@ -860,6 +954,8 @@ def check_report(text, cfg=None):
         lines.append(CONFIRM_TEXT)
     if "decision" in kinds:
         lines.append(DECISION_TEXT)
+    if "reco" in kinds:
+        lines.append(RECO_TEXT)
     lines.append("Name the real actor (I, the third party, nobody), or keep it the user's and "
                  "write in that same paragraph one of: {}; or a check by its name: {}. A reason "
                  "in other words ({}) is not read, nor an absence claimed over your own files "

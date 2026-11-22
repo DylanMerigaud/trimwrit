@@ -1375,3 +1375,58 @@ def test_a_decision_taken_or_told_is_no_ask():
                  "Nothing waits on you: the kit is published and the terminals relaunched.",
                  "La reco: on relance les quatre, c'est fait."):
         assert gate.decisions_in(text) == [], text
+
+
+# "PREND LE CONTROLE DU MAC LOG AVEC UN AUTRE COMPTE... T'ES SUR QUE COMPTE SUR LE VPS C SA QUI
+# COMPTE LA PUTIN DE TOI. DAILLEUR SI TU SWITCH DE COMPTE MEILLEUR QUE TU SWITCH AUTO DE COMPTE MAC"
+MAC_ACCOUNT = (
+    "Lu à l'instant : l'onglet claude.ai du Mac est toujours sur le compte perso, à 100 % "
+    "jusqu'au mardi 24/11. Deux comptes ont de la place.\n\n"
+    "En clair : la page ne sort que sur le compte ouvert dans le navigateur du Mac, et il est "
+    "plein. Une fois ce navigateur sur le compte pro, elle se publie seule en cinq minutes.\n\n"
+    "**Conclusion** : pas de nouveau lien pour l'instant. Recommandation : onglet claude.ai du "
+    "Mac sur le compte pro, qui est celui de cette session ; coût nul, sinon publication "
+    "automatique mardi 24/11.")
+# "PK ON UTILISE LES BOITES DE PARIS VIA NAVIGATEUR PK C CO... ON DECO OSEF FAIT LE TOI."
+FORWARD_PATH = (
+    "**4. Google.** C'est le Chrome du serveur qui a les 10 comptes Google. Deux voies :\n"
+    "- **Dans ton navigateur (reco)** : la fenêtre de ta capture, lien "
+    "https://mail.google.com/mail/u/#settings/fwdandpop, adresse de transfert perso. Google y "
+    "redemande ton second facteur, un contrôle que seul un humain passe ; la machine valide "
+    "ensuite le lien de confirmation. Coût : 2 minutes, une fois.\n"
+    "- **Sur le Chrome du serveur** : il faudrait d'abord déconnecter les dix comptes d'un coup, "
+    "puis repasser le second facteur de chacune. Je ne le recommande pas.")
+
+
+@pytest.mark.parametrize("text", [MAC_ACCOUNT, FORWARD_PATH])
+def test_a_reco_on_the_users_side_is_refused(text):
+    found = gate.handbacks_in(text, CFG)
+    assert any(f.kind == "reco" for f in found), found
+    code, report = gate.check_report(text, CFG)
+    assert code == 1 and gate.RECO_TEXT in report
+    assert gate.RECO_TEXT in gate.reason_text(found, CFG)
+
+
+def test_the_wait_on_the_users_device_is_read_alone():
+    phrases = [f[0] for f in gate.recos_in(MAC_ACCOUNT)]
+    assert any(p.startswith("Une fois ce navigateur") for p in phrases), phrases
+    assert "Recommandation" in phrases, phrases
+
+
+def test_a_check_in_the_next_sentence_lifts_no_reco():
+    assert [f.kind for f in gate.recos_in(FORWARD_PATH)] == ["reco"]
+    same = ("- **Dans ton navigateur (reco)** : Google y redemande ton second facteur, la "
+            "fenêtre de ta capture.")
+    assert gate.recos_in(same) == []
+
+
+@pytest.mark.parametrize("text", [
+    "Recommandation : je bascule l'onglet claude.ai du Mac sur le compte pro, c'est fait.",
+    "Reco : la machine prend la main sur ton navigateur et republie.",
+    "Restent : la carte sur ton téléphone, puis la demande de go avec ma recommandation.",
+    "Un terminal (visible sur ton Mac) applique la reco : il suit les 38 liens.",
+    "Recommandation : bascule au moment de publier, la moins chère.",
+    "Une fois le compte créé, je publie la page automatiquement depuis le navigateur du Mac.",
+    "**PLAN**\n**Pick**: Quick win. Reco : le Mac reste sur son compte."])
+def test_a_reco_the_agent_does_or_a_noun_reco_passes(text):
+    assert gate.recos_in(text) == [], text

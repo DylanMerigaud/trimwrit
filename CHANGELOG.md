@@ -1,5 +1,17 @@
 # Changelog
 
+## handback-gate 0.11.0, 2026-11-22
+
+- **A reco that routes the gesture to the user's side is a hand-back.** "Recommandation : onglet
+  claude.ai du Mac sur le compte pro" and "**Dans ton navigateur (reco)** : ..." passed: no verb
+  and no "tu" for the gesture shapes, and a second factor named in the next sentence lifted the
+  paragraph. recos_in reads a reco label whose own sentence puts the gesture in the user's
+  browser, machine or tab with no actor of the agent's, and a wait on the user's device ("une fois
+  ce navigateur sur le compte pro, elle se publie seule"); only a class or a check in that same
+  sentence lifts it. Lesson s:asks-dylan-for-an-input-the-machine-owns (corrections 0737, 0741);
+  3,482 closings of 30 days: 72 refused before, 81 after, the 9 new are the incidents and recos
+  of the same shape.
+
 ## choice-gate 0.1.0, 2026-11-21
 
 - **A stated choice survives the compaction.** New plugin: every clause the user types goes to a
