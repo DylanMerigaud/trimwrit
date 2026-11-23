@@ -762,3 +762,25 @@ def test_a_migrated_bank_with_a_schema_1_release_still_runs_to_schema_2(tmp_path
     code, _, err, refusals = run(d)
     assert code == 0 and refusals == [], err
     assert release(d)["schema"] == 2 and bank.lint(str(d)) == []
+
+
+def test_a_killed_run_keeps_its_answers_and_the_next_run_resumes(tmp_path):
+    """The scheduler kills a run at its step timeout (buyer reader bank, 2026-11-23: 398 reads, 20
+    minutes, every killed run lost all of them). Once the canary held the cost check each fresh
+    answer is on disk as it arrives."""
+    log, die = tmp_path / "calls.log", tmp_path / "die"
+    die.write_text("1")
+    body = counting(log).replace(
+        PARITY, NOTE + "\nif case['id'] == 'c30' and os.path.exists(%r):\n    os._exit(9)\n%s"
+        % (str(die), PARITY))
+    d = make_bank(tmp_path, model="claude-sonnet-5-5", effort="medium", body=body, extra=KEYED)
+    p = subprocess.run([sys.executable, str(d / "run.py"), "--no-probe", "--jobs", "1"],
+                       capture_output=True, text=True)
+    assert p.returncode == 9
+    assert not (d / "RELEASE.json").exists()
+    kept = (d / "RUNS" / bank.CACHE_FILE).read_text().splitlines()
+    assert len(kept) >= 25, "the answers before the kill are on disk"
+    die.unlink()
+    log.unlink()
+    assert run(d, "--no-probe")[0] == 0
+    assert calls(log) <= 40 - len(kept) + 8, "the resumed run answers only what the kill lost"

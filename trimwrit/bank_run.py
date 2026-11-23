@@ -256,6 +256,7 @@ class _Cache(object):
         self.rows = {}
         self.legacy = {}
         self.pending = []  # fresh answers, appended to the file by flush() once the run holds
+        self.live = False  # True once the canary held the cost check: a fresh answer is then appended at once
         self.torn = 0
         self.lock = threading.Lock()
         if key_fn is None or not os.path.isfile(self.path):
@@ -298,6 +299,16 @@ class _Cache(object):
         with self.lock:
             self.rows[_key_text(key)] = got
             self.pending.append(line)
+        if self.live:
+            self.flush()
+
+    def go_live(self):
+        """The canary held the cost check (a model recorded, the bank's own): from now every fresh
+        answer is appended to RUNS/cache.jsonl as it arrives, so a run the scheduler kills at its
+        timeout keeps what it answered and the next run starts from there (2026-11-23, the buyer
+        reader bank: 398 reads never fit one 20 minute step, and every killed run lost them all)."""
+        self.live = True
+        self.flush()
 
     def flush(self):
         """Append the fresh answers to RUNS/cache.jsonl. Called once the cost check held: an
@@ -307,9 +318,9 @@ class _Cache(object):
         if not lines:
             return
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
-        with open(self.path, "a", encoding="utf-8") as fh:
-            for line in lines:
-                fh.write(line + "\n")
+        with self.lock:  # one writer at a time: lines of two threads never interleave
+            with open(self.path, "a", encoding="utf-8") as fh:
+                fh.write("".join(line + "\n" for line in lines))
 
 
 def _key_text(key):
@@ -696,6 +707,7 @@ def main(run_file, argv=None, module=None, engine_impls=None):
         if refused:
             _write_refused(bank_dir, [canary], main_res, refused)
             return _refuse(refused)
+        cache.go_live()
     rest = [c for c in cases if c["id"] not in main_res]
     if rest:
         main_res.update(_phase(engine, rest, answer, jobs, cache, engine_kw))

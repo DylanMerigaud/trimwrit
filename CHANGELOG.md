@@ -50,6 +50,16 @@
   memory index went over 4000 tokens through `cat >> $M/MEMORY.md` on 2026-11-15 and 2026-11-17,
   invisible to the Edit check.
 
+## 0.16.5, 2026-11-23
+
+- **A killed bank run keeps its answers.** `RUNS/cache.jsonl` was appended once, after the whole
+  main phase and the cost check, so a run the scheduler killed at its step timeout lost every
+  read it had paid for (growth-cockpit's buyer reader bank: three weekly passes, 380 reads, each
+  killed at 20 minutes, each starting from zero). Once the canary has held the cost check the
+  cache goes live: every fresh answer is appended as it arrives, under one lock, and the next run
+  resumes from there. A refused canary still writes nothing. Test
+  `test_a_killed_run_keeps_its_answers_and_the_next_run_resumes` kills a run with `os._exit`.
+
 ## 0.16.4, 2026-11-14
 
 - **The usage sink rides contextvars, not the thread.** A producer that fans one case out to
