@@ -560,7 +560,7 @@ def test_a_helper_that_asks_grade_for_a_truth_value_does_not_block_the_migration
     assert bank.migrate(str(ok), label_source=LABEL)["refusals_left"] == []
     bad = fielded(tmp_path, row, score, name="stored-evals")
     (bad / "run.py").write_text((bad / "run.py").read_text().replace(
-        "def score(rows):", "def helper(case):\n    return grade(case, 'yes') == True\n\n\n"
+        "def score(rows):", "def helper(case):\n    return grade(case, 'yes') is True\n\n\n"
         "def score(rows):"))
     assert any("grade()" in r["what"] for r in bank.migrate(str(bad), label_source=LABEL)["refusals_left"])
 
@@ -580,3 +580,10 @@ def test_a_main_that_unpacked_answer_or_a_score_that_wants_the_cases_is_left_to_
                               .replace("s = score(rows)", "s = score(rows, cases)"))
     assert any("score() takes cases" in r["what"]
                for r in bank.migrate(str(c), label_source=LABEL)["refusals_left"])
+
+
+def test_graded_equals_a_bool_by_its_verdict_and_a_dict_as_a_dict():
+    g = bank.Graded(True, {"expected_pass": False})
+    assert g == True and not (g == False) and g != False and g == {"right": True, "expected_pass": False}  # noqa: E712
+    assert bank.Graded(False) == False and bank.Graded({"right": False, "n": 1}) == {"right": False, "n": 1}  # noqa: E712
+    assert bool(bank.Graded(0)) is False and bool(bank.Graded("x")) is True

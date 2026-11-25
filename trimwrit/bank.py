@@ -690,6 +690,18 @@ class Graded(dict):
     def __bool__(self):
         return self.get("right") is True
 
+    def __eq__(self, other):
+        """Equal to a bool when `right` is that bool (a test's `o["right"] == run.grade(...)`),
+        to a dict as any dict is."""
+        if isinstance(other, bool):
+            return self.get("right") is other
+        return dict.__eq__(self, other)
+
+    def __ne__(self, other):
+        return not self == other
+
+    __hash__ = None
+
 
 # ------------------------------------------------------------------ the downshift probe
 
