@@ -80,6 +80,14 @@ trimmed by eye from 44 to 41 and were refused again. A date like 25/11 is not a 
 CDI and CDD join the everyday list ("Touch ID", "pas de CDI en France"). The lesson's lines are
 replayed verbatim in the gate's tests.
 
+0.3.0: five sessions drew 31 plain-words refusals over 29 turns; 28 of those turns held one, and
+the next answer passed. What leaked was the first answer, which nothing reminded. The same script,
+run as a `UserPromptSubmit` hook and as a `SessionStart` hook after a compaction or a resume
+(`--prime`), hands the rule to the model before it writes, with a target of about 25 words under
+the limit of 40. An over-long refusal asks for a rewrite at that target. A list, heading or table
+glued under a finished plain line is no longer read as part of it; under an empty line or one
+ending with a colon it still is.
+
 ## Install
 
 ```

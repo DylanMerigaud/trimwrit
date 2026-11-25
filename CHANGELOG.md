@@ -1,5 +1,16 @@
 # Changelog
 
+## bare-id-gate 0.3.0, 2026-11-25
+
+- **The plain-words rule reaches the model before it writes.** Lesson
+  r:loop:bare_id_gate:jargon_not_plain_words came back after 0.2.1: 31 refusals over 29 turns of
+  five sessions, nearly all the first answer of a turn (17 lines missing, 11 of 41 to
+  47 words, 3 others). 0.2.1 only improved the refusal, which comes after that answer. `--prime` on
+  UserPromptSubmit, and on SessionStart after a compaction or a resume, states the line and a
+  target of about 25 words; an over-long refusal asks for that target. The limit stays 40.
+- A list, heading or table glued under a finished plain line is no longer counted in it (a 15 word
+  line above a plan's bullets was refused as 163 words).
+
 ## handback-gate 0.11.0, 2026-11-22
 
 - **A reco that routes the gesture to the user's side is a hand-back.** "Recommandation : onglet

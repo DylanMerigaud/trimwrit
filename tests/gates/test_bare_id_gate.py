@@ -472,3 +472,74 @@ def test_a_real_path_with_digits_is_still_a_path():
     for line in ("En clair : scripts/2026/run.py tourne.", "En clair : voir www.exemple.fr/1/2."):
         miss = gate.plain_words_miss(REPLAYS[3]["final_message"] + "\n\n" + line, BARE)
         assert miss and "a link or a path" in miss, miss
+
+
+# ---- the same lesson after 0.2.1 (2026-11-25): the first answer of a turn is what leaked ---
+# 31 plain-words refusals over 29 turns of five sessions, 28 of those turns holding one: the rule
+# must reach the producer before it writes. The openers are the prompts of refused turns.
+def prime(tmp_path, event, **fields):
+    payload = {"hook_event_name": event, "session_id": "prime", "cwd": str(tmp_path), **fields}
+    r = run_py(NAME, SCRIPT, payload, tmp_path, "--prime")
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)["hookSpecificOutput"] if r.stdout.strip() else None
+
+
+def test_prime_reaches_the_producer_on_every_opener_that_leaked(tmp_path):
+    for prompt in ("je go?", "Lien des sachets action", "go",
+                   "<task-notification> <task-id>a11e928fc59435219</task-id>"):
+        out = prime(tmp_path, "UserPromptSubmit", prompt=prompt)
+        assert out["hookEventName"] == "UserPromptSubmit"
+        text = out["additionalContext"]
+        assert "En clair :" in text and "In plain words:" in text
+        assert str(gate.PLAIN_TARGET_WORDS) in text and str(gate.PLAIN_MAX_WORDS) in text
+        assert str(gate.MIN_WORDS) in text
+    for source in ("compact", "resume"):
+        assert prime(tmp_path, "SessionStart", source=source)["hookEventName"] == "SessionStart"
+    assert prime(tmp_path, "SessionStart", source="startup") is None
+    assert prime(tmp_path, "SubagentStop") is None
+
+
+def test_prime_is_wired_in_the_hooks_file():
+    with open(os.path.join(plugin(NAME), "hooks", "hooks.json"), encoding="utf-8") as fh:
+        hooks = json.load(fh)["hooks"]
+    assert hooks["UserPromptSubmit"][0]["hooks"][0]["command"].endswith("--prime")
+    assert hooks["SessionStart"][0]["matcher"] == "compact|resume"
+    assert hooks["SessionStart"][0]["hooks"][0]["command"].endswith("--prime")
+    assert not hooks["Stop"][0]["hooks"][0]["command"].endswith("--prime")
+
+
+def test_prime_never_lifts_the_refusal(tmp_path):
+    prime(tmp_path, "UserPromptSubmit", prompt="go")
+    path = make_transcript(tmp_path, REPLAYS[3]["final_message"])
+    assert blocked(run_py(NAME, SCRIPT, stop(path, "prime"), tmp_path))
+
+
+GLUED = ("**En clair** : un contrôle refuse tout plan incohérent, une page par groupe le montre.\n"
+         "- **Long terme** : `plan_check.py` refuse " + "un frais à la salle avant samedi " * 8)
+
+
+def test_a_list_glued_under_the_plain_line_is_not_in_it():
+    # 2026-11-22: this 15 word line was refused as 163 words.
+    assert gate.plain_words_miss(REPLAYS[3]["final_message"] + "\n\n" + GLUED, BARE) is None
+    for sep in ("\n1. ", "\n## ", "\n| "):
+        assert gate.plain_lines("En clair : tout est prêt." + sep + "`x`") == [
+            "En clair : tout est prêt."[len("En clair : "):]]
+
+
+@pytest.mark.parametrize("head", ["**En clair :**", "En clair : trois choses :"])
+def test_a_list_the_plain_line_opens_is_read_with_it(head):
+    miss = gate.plain_words_miss(REPLAYS[3]["final_message"] + "\n\n" + head
+                                 + "\n- `plan_check.py` tourne", BARE)
+    assert miss and "a code span" in miss, miss
+
+
+def test_a_wrapped_plain_line_is_still_read_whole():
+    miss = gate.plain_words_miss(REPLAYS[3]["final_message"] + "\n\nEn clair : tout est prêt\n"
+                                 "et `plan_check.py` tourne.", BARE)
+    assert miss and "a code span" in miss, miss
+
+
+def test_an_over_long_refusal_names_the_target_not_the_limit():
+    line = LESSON_TOO_LONG[0][0]
+    miss = gate.plain_words_miss(REPLAYS[3]["final_message"] + "\n\n" + line, BARE)
+    assert "again at about {} words".format(gate.PLAIN_TARGET_WORDS) in miss

@@ -51,9 +51,13 @@ Outputs:
     exit 0 with nothing on stdout                       the session ends normally
     exit 0 with {"decision": "block", "reason": ...}    the session continues with this message
 
+The UserPromptSubmit and SessionStart (compact, resume) entry, `--prime`, hands the plain-words
+rule to the producer as additionalContext before it writes; it refuses nothing.
+
 Utilities:
     python3 bare_id_gate.py --print       what it would say on the last message, blocking nothing
 """
+import json
 import os
 import re
 import sys
@@ -234,10 +238,17 @@ def reason_text(found, cfg):
 # line says it in at most PLAIN_MAX_WORDS words, with no code, file, setting name or acronym.
 MIN_WORDS = 80
 PLAIN_MAX_WORDS = 40
+# What the producer is told to aim at: the over-long lines of the lesson of 2026-11-25 ran 41 to
+# 47 words, written to the limit with no counter; a target well under it is hit.
+PLAIN_TARGET_WORDS = 25
+# A reply that skips the line aims well under MIN_WORDS: told "under 80" one ran 83.
+SHORT_TARGET_WORDS = 60
 MARKERS = ["en clair", "en mots simples", "concr\u00e8tement", "concretement", "in plain words",
            "in plain terms", "plainly"]
 MARKER = re.compile(r"^[ \t]*(?:[-*+][ \t]+)?(?:\*\*|__)?[ \t]*(?:" + "|".join(MARKERS) + r")"
                     r"[ \t]*(?:\*\*|__)?[ \t]*:[ \t]*(?:\*\*|__)?[ \t]*(.*)$", re.I | re.M)
+# A new block of Markdown ends the plain line: a list item, a numbered item, a heading, a table.
+NEW_BLOCK = re.compile(r"^[ \t]*(?:[-*+][ \t]+|\d{1,2}[.)][ \t]+|#{1,6}[ \t]|\|)")
 WORD = re.compile(r"[^\W_]+(?:['\u2019][^\W_]+)?")
 # Words a reader knows without the tool: units of money, time zones, countries, documents.
 COMMON_CAPS = {"OK", "PDF", "US", "USA", "UK", "EU", "UE", "FR", "EN", "ES", "TVA", "TTC", "HT",
@@ -264,13 +275,19 @@ def word_count(text):
 
 def plain_lines(text):
     """The bodies of the lines headed by a plain marker, a paragraph each (the marker line and
-    the lines that follow it up to a blank line), fences left out."""
+    the lines that follow it up to a blank line), fences left out. A list, a heading or a table
+    glued under a finished line is another block (2026-11-22: a 15 word line above the bullets
+    of a plan was read as 163 words); under a line that is empty or ends with a colon it is what
+    that line says, and is read with it."""
     t = FENCE.sub(_blank, text or "")
     out = []
     for m in MARKER.finditer(t):
         body = [m.group(1)]
         for line in t[m.end():].split("\n")[1:]:
             if not line.strip() or MARKER.match(line):
+                break
+            said = " ".join(body).strip(" \t*_")
+            if NEW_BLOCK.match(line) and said and not said.endswith(":"):
                 break
             body.append(line)
         out.append(" ".join(b.strip() for b in body).strip(" *_"))
@@ -283,9 +300,11 @@ def over_length(body, n):
     the limit, so the next line is counted for them."""
     words = list(WORD.finditer(body))
     tail = body[words[PLAIN_MAX_WORDS].start():].strip()
-    return ("{} words, over {}: cut at least {} (the words past the {}th are \"{}\"); keep "
-            "what changed and what waits on him, drop a clause, a list item or a number"
-            .format(n, PLAIN_MAX_WORDS, n - PLAIN_MAX_WORDS, PLAIN_MAX_WORDS, tail))
+    return ("{} words, over {}: cut at least {} (the words past the {}th are \"{}\"); write it "
+            "again at about {} words rather than trimming to the limit: keep what changed and "
+            "what waits on him, drop a clause, a list item or a number"
+            .format(n, PLAIN_MAX_WORDS, n - PLAIN_MAX_WORDS, PLAIN_MAX_WORDS, tail,
+                    PLAIN_TARGET_WORDS))
 
 
 def jargon_in(body, cfg=None):
@@ -337,6 +356,37 @@ def plain_reason(miss):
             "(bare-id-gate, plain words)".format(PLAIN_MAX_WORDS))
 
 
+# 2026-11-25, the same lesson after 0.2.1: five sessions, 31 plain-words refusals over 29 turns.
+# The refusal text works (28 of those turns hold one such refusal, the next answer passes); what
+# leaked was the FIRST answer of each turn, since nothing the producer reads just before it
+# writes carries the rule. So the rule goes to the producer with every prompt, and after a
+# compaction or a resume, whose continuation turn opens with no prompt.
+PRIME_EVENTS = ("UserPromptSubmit", "SessionStart")
+
+
+def prime_text():
+    return ("Before you send the reply that ends this turn: if it runs past {} words, however "
+            "short the question was, it carries ONE line headed \"En clair :\" (French reply) or "
+            "\"In plain words:\" (English), about {} words, never over {}, followed by a blank "
+            "line: what it is, what it changes for the user, what they have to do. No code, file, "
+            "command, acronym or id in it. Or answer in under {} words and skip the line. "
+            "(bare-id-gate)".format(MIN_WORDS, PLAIN_TARGET_WORDS, PLAIN_MAX_WORDS,
+                                     SHORT_TARGET_WORDS))
+
+
+def on_prime():
+    payload = trace.read_payload()
+    event = payload.get("hook_event_name")
+    if event not in PRIME_EVENTS:
+        return 0
+    if event == "SessionStart" and payload.get("source") not in ("compact", "resume"):
+        return 0
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": event,
+                                             "additionalContext": prime_text()}},
+                     ensure_ascii=False))
+    return 0
+
+
 def on_stop():
     payload = trace.read_payload()
     if payload.get("hook_event_name") != "Stop":
@@ -370,6 +420,8 @@ def on_stop():
 
 def main():
     trace.configure(sys.argv)
+    if "--prime" in sys.argv:
+        return trace.run(HOOK, "UserPromptSubmit", on_prime, TIMEOUT_S)
     if "--print" in sys.argv:
         payload = trace.read_payload() if not sys.stdin.isatty() else {}
         final = transcript.final_text(payload)

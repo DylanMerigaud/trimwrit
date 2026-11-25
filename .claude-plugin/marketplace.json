@@ -100,7 +100,7 @@
       "name": "bare-id-gate",
       "source": "./plugins/bare-id-gate",
       "description": "Refuses to end a turn whose final message shows an internal id standing alone (a commit sha, a ticket key, a queue code) instead of naming the thing in the user's words, or explains at length without one plain-words line a reader who never saw the tool follows.",
-      "version": "0.2.1",
+      "version": "0.3.0",
       "author": { "name": "Dylan Merigaud" },
       "license": "MIT",
       "category": "productivity",
