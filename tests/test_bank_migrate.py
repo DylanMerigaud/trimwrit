@@ -545,3 +545,38 @@ def test_a_module_only_the_removed_main_read_goes_with_it_and_a_used_one_stays(t
     assert "import json" not in new and "import os\n" in new and "import sys\n" in new
     import ast
     ast.parse(new)
+
+
+def test_a_helper_that_asks_grade_for_a_truth_value_does_not_block_the_migration(tmp_path):
+    """recycle-evals production_cases() reads `bool(grade(case, answer(case)))`: Graded is truthy
+    exactly when right, so it migrates; a helper that compares or stores the return is refused."""
+    row = ('rows.append({"id": case["id"], "got": got, "right": bool(grade(case, got)),\n'
+           '                         "expected_pass": case["expected"] == "yes"})')
+    score = 'bad = [r for r in rows if not r["expected_pass"]]\n    right = len(rows) - len(bad) + len(bad)'
+    ok = fielded(tmp_path, row, score, name="truthy-evals")
+    (ok / "run.py").write_text((ok / "run.py").read_text().replace(
+        "def score(rows):", "def helper(case):\n    return bool(grade(case, 'yes')) and not grade(case, 'no')\n\n\n"
+        "def score(rows):"))
+    assert bank.migrate(str(ok), label_source=LABEL)["refusals_left"] == []
+    bad = fielded(tmp_path, row, score, name="stored-evals")
+    (bad / "run.py").write_text((bad / "run.py").read_text().replace(
+        "def score(rows):", "def helper(case):\n    return grade(case, 'yes') == True\n\n\n"
+        "def score(rows):"))
+    assert any("grade()" in r["what"] for r in bank.migrate(str(bad), label_source=LABEL)["refusals_left"])
+
+
+def test_a_main_that_unpacked_answer_or_a_score_that_wants_the_cases_is_left_to_a_person(tmp_path):
+    """recruitermail-evals: `got, fails = answer(case)` (migrated, every case graded wrong);
+    betbuild, msgeval, oss: `score(rows, cases)` (TypeError). Both are named, never migrated."""
+    row = ('rows.append({"id": case["id"], "got": got, "right": bool(grade(case, got))})')
+    d = fielded(tmp_path, row, SCORE_LINE, name="unpack-evals")
+    t = (d / "run.py").read_text().replace("got = case[\"expected\"] if args.offline else answer(case)",
+                                           "got, fails = case[\"expected\"], [] if args.offline else answer(case)")
+    (d / "run.py").write_text(t)
+    assert any("unpacks the return of answer()" in r["what"]
+               for r in bank.migrate(str(d), label_source=LABEL)["refusals_left"])
+    c = fielded(tmp_path, row, SCORE_LINE, name="cases-evals")
+    (c / "run.py").write_text((c / "run.py").read_text().replace("def score(rows):", "def score(rows, cases):")
+                              .replace("s = score(rows)", "s = score(rows, cases)"))
+    assert any("score() takes cases" in r["what"]
+               for r in bank.migrate(str(c), label_source=LABEL)["refusals_left"])

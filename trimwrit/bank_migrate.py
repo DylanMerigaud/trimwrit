@@ -217,6 +217,33 @@ def _row_fields(tree, old):
     return [found[k] for k in sorted(found)], problems
 
 
+def _main_shape_problems(tree):
+    """What the old main() did around answer() and score() that bank.main does not: a score()
+    that asks for more than `rows` (bank.main calls score(rows)), and an answer() whose return
+    main() unpacked (`got, fails = answer(case)`: bank.main hands grade() the WHOLE return, so a
+    grade written for the first member reads the tuple and grades every case wrong)."""
+    out = []
+    defs = bank_lint._top_defs(tree)
+    score = defs.get("score")
+    if score is not None:
+        a = score.args
+        required = [x.arg for x in list(getattr(a, "posonlyargs", [])) + a.args][
+            :len(getattr(a, "posonlyargs", [])) + len(a.args) - len(a.defaults)]
+        required += [x.arg for x, d in zip(a.kwonlyargs, a.kw_defaults) if d is None]
+        if len(required) > 1:
+            out.append("score() takes {} besides rows: bank.main calls score(rows)"
+                       .format(", ".join(required[1:])))
+    main = defs.get("main")
+    for node in ast.walk(main) if main is not None else []:
+        if isinstance(node, ast.Assign) and any(isinstance(t, (ast.Tuple, ast.List))
+                                                for t in node.targets) \
+                and any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                        and n.func.id == "answer" for n in ast.walk(node.value)):
+            out.append("main() unpacks the return of answer() at line {}: bank.main hands grade() "
+                       "the whole return".format(node.lineno))
+    return out
+
+
 def _row_key_written(main, key):
     """True when main() stores `key` into something with a subscript (`row["k"] = ...`)."""
     for n in ast.walk(main):
@@ -227,11 +254,33 @@ def _row_key_written(main, key):
 
 
 def _grade_called_elsewhere(tree):
-    """True when a top level function other than main and grade calls grade() or names it."""
+    """True when a top level function other than main and grade uses grade()'s return as more
+    than a truth value. Graded is truthy exactly when right, so `bool(grade(...))`, `not grade(...)`,
+    an if, assert, `and`/`or` operand or comprehension filter read the same as before; a call
+    stored, compared, indexed or returned would see the dict."""
     for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) \
-                and node.name not in ("main", "grade"):
-            if any(isinstance(n, ast.Name) and n.id == "grade" for n in ast.walk(node)):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                or node.name in ("main", "grade"):
+            continue
+        parent = {}
+        for p in ast.walk(node):
+            for c in ast.iter_child_nodes(p):
+                parent[c] = p
+        for n in ast.walk(node):
+            if not (isinstance(n, ast.Name) and n.id == "grade"):
+                continue
+            call = parent.get(n)
+            if not (isinstance(call, ast.Call) and call.func is n):
+                return True
+            up = parent.get(call)
+            truthy = (
+                (isinstance(up, ast.Call) and isinstance(up.func, ast.Name)
+                 and up.func.id == "bool" and call in up.args)
+                or (isinstance(up, ast.UnaryOp) and isinstance(up.op, ast.Not))
+                or (isinstance(up, (ast.If, ast.IfExp, ast.While, ast.Assert)) and up.test is call)
+                or isinstance(up, ast.BoolOp)
+                or (isinstance(up, ast.comprehension) and call in up.ifs))
+            if not truthy:
                 return True
     return False
 
@@ -444,7 +493,8 @@ def migrate(bank_dir, label_source=None, write=False):
         left = [r.as_dict() for r in b.lint(bank_dir) if not getattr(r, "stale_release", False)]
     else:
         left = _lint_text(bank_dir, new)
-    for problem in _row_fields(ast.parse(old), old)[1]:
+    tree_old = ast.parse(old)
+    for problem in _main_shape_problems(tree_old) + _row_fields(tree_old, old)[1]:
         left.append(b.Refusal(
             "bespoke-runner", bank_dir, problem,
             "write {} by hand on the standard shape: grade() returns the field in its dict"
