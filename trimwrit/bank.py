@@ -668,6 +668,29 @@ def check_tree(root):
     return out
 
 
+# ------------------------------------------------------------------ the verdict of a grader
+
+class Graded(dict):
+    """What a grade() hands the standard runner when the old runner's rows carried more than the
+    verdict: a dict with "right" (bool) and the row fields score() reads, which bank.main copies
+    into the row. It stays TRUTHY exactly when right, so `assert run.grade(case, got)`, a test's
+    `not run.grade(...)` and `bool(grade(...))` read what they read before the migration.
+    `verdict` is the bank's own grade result (a bool, or a dict with "right"); `fields` the extra
+    row fields, which the verdict dict's own keys override."""
+
+    def __init__(self, verdict, fields=None):
+        super().__init__(fields or {})
+        if isinstance(verdict, dict):
+            self.update(verdict)
+            right = verdict.get("right") is True
+        else:
+            right = bool(verdict)
+        self["right"] = right
+
+    def __bool__(self):
+        return self.get("right") is True
+
+
 # ------------------------------------------------------------------ the downshift probe
 
 def smaller(model):

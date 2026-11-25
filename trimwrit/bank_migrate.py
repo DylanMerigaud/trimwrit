@@ -11,6 +11,16 @@ EFFORT to None in a deterministic bank (MODEL = None), and appends the canonical
 EFFORT stays absent and its refusal is left for a person. It works on the source text by line ranges (ast lineno and
 end_lineno): every other line, comments included, stays byte identical.
 
+ROW FIELDS (2026-11-25, growth-cockpit autofix bank-migrate:career/recruitroast-evals, 18 banks
+hand_look'd on one cause). The old main() built each row itself (`rows.append({"id": ..., "got": ...,
+"right": ..., "expected_pass": case["expected"]["pass"]})`), and a score() read the extra fields off
+it; bank.main writes only id, split, got, right, cached, usage and copies the keys grade() returns
+besides "right", so score() died on a KeyError. The codemod finds every row field a kept function
+reads that main() wrote, and when its value is built from `case` and the module's own names it
+appends a grade() that returns bank.Graded(<the bank's grade>, {field: value}) (truthy exactly when
+right, so a test's `assert run.grade(...)` still reads a bool). A field built from anything else
+main() computed (the answer's second member) is a bespoke-runner refusal naming it: left to a person.
+
 THE PARITY REPLAY. After the migrated bank ran once on bank.main, `parity` loads the OLD run.py
 (a copy kept with `trimwrit bank migrate --legacy-out`), feeds it the answers the new run
 recorded instead of asking the producer again, captures the release it would have written, and
@@ -22,6 +32,7 @@ captured. A runner that opens RELEASE.json itself is not stopped.
 Standard library only, Python 3.9 syntax.
 """
 import ast
+import builtins
 import contextlib
 import io
 import itertools
@@ -108,6 +119,139 @@ class _Edits(object):
                 out.append(line)
             out.extend(self.after.get(no, []))
         return "".join(out)
+
+
+ROW_STANDARD = frozenset(("id", "split", "got", "right", "cached", "usage", "error"))
+HOOKS = frozenset(("main", "answer", "grade"))
+GRADE_WRAP = "_grade_verdict"
+
+
+def _module_names(tree):
+    """The names bound at the top level of the module (defs, classes, assignments, imports)."""
+    names = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Import):
+            names.update((a.asname or a.name.split(".")[0]) for a in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            names.update((a.asname or a.name) for a in node.names)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for t in targets:
+                names.update(n.id for n in ast.walk(t) if isinstance(n, ast.Name))
+    return names
+
+
+def _slice_key(node):
+    """The constant a Subscript indexes with (a str), else None; Python 3.8 wraps it in Index."""
+    k = node.slice
+    if hasattr(ast, "Index") and isinstance(k, getattr(ast, "Index")):
+        k = k.value
+    return k.value if isinstance(k, ast.Constant) else None
+
+
+def _keys_read(tree):
+    """The string keys the top level functions other than main, answer and grade read off a row:
+    `r["k"]`, `r.get("k")`, `r.pop("k")` (what score() and its helpers do)."""
+    keys = set()
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) or node.name in HOOKS:
+            continue
+        for n in ast.walk(node):
+            if isinstance(n, ast.Subscript):
+                k = _slice_key(n)
+                if isinstance(k, str):
+                    keys.add(k)
+            elif (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                  and n.func.attr in ("get", "pop", "setdefault") and n.args
+                  and isinstance(n.args[0], ast.Constant) and isinstance(n.args[0].value, str)):
+                keys.add(n.args[0].value)
+    return keys
+
+
+def _row_fields(tree, old):
+    """([(key, source text of its value)], [problems]): the row fields the old main() wrote that
+    a function kept by the standard runner (score(), a helper of it) reads, and that the standard
+    runner would not write: it writes id, split, got, right, cached, usage, and copies the rest
+    from what grade() returns. A field whose value is built from `case` and the module's own
+    names alone can ride grade() (the value does not depend on the answer); a field built from
+    anything else main() computed (the answer's second member, a loop counter) cannot, and is a
+    problem: a person writes that bank by hand. A row dict is any dict literal of main() with a
+    "right" key (`rows.append({...})`, `row = {...}`, `rows = [{...} for ...]`)."""
+    main = _bank_lint_defs(tree).get("main")
+    if main is None:
+        return [], []
+    read = _keys_read(tree) - ROW_STANDARD
+    if not read:
+        return [], []
+    known = _module_names(tree) | set(dir(builtins)) | {"case"}
+    found = {}
+    problems = []
+    for node in ast.walk(main):
+        if not isinstance(node, ast.Dict):
+            continue
+        keys = [k.value if isinstance(k, ast.Constant) else None for k in node.keys]
+        if "right" not in keys:
+            continue
+        for k, v in zip(keys, node.values):
+            if k in read:
+                src = ast.get_source_segment(old, v)
+                free = sorted({n.id for n in ast.walk(v) if isinstance(n, ast.Name)} - known)
+                if src is None or free:
+                    problems.append("score() reads the row field {!r}, which main() builds from "
+                                    "{}: the standard runner cannot rebuild it from the case"
+                                    .format(k, ", ".join(free) or "an expression it cannot read"))
+                elif found.get(k, (None, src))[1] != src:
+                    problems.append("main() builds the row field {!r} two ways".format(k))
+                else:
+                    found[k] = (k, src)
+    for k in sorted(read):
+        if k not in found and not any("{!r}".format(k) in p for p in problems):
+            if _row_key_written(main, k):
+                problems.append("score() reads the row field {!r}, which main() writes outside "
+                                "a row literal".format(k))
+    if found and _grade_called_elsewhere(tree):
+        problems.append("a function kept by the standard runner calls grade(), whose return "
+                        "would turn into a verdict dict")
+    return [found[k] for k in sorted(found)], problems
+
+
+def _row_key_written(main, key):
+    """True when main() stores `key` into something with a subscript (`row["k"] = ...`)."""
+    for n in ast.walk(main):
+        if isinstance(n, ast.Subscript) and isinstance(n.ctx, ast.Store):
+            if _slice_key(n) == key:
+                return True
+    return False
+
+
+def _grade_called_elsewhere(tree):
+    """True when a top level function other than main and grade calls grade() or names it."""
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                and node.name not in ("main", "grade"):
+            if any(isinstance(n, ast.Name) and n.id == "grade" for n in ast.walk(node)):
+                return True
+    return False
+
+
+def _bank_lint_defs(tree):
+    return bank_lint._top_defs(tree)
+
+
+def _grade_wrapper(fields, nl):
+    """The grade() the standard runner copies into each row: the bank's own verdict, then the
+    row fields the old main() wrote and score() reads. bank.Graded stays truthy exactly when the
+    verdict is, so the bank's tests read it as they read the bool."""
+    body = ", ".join("{!r}: {}".format(k, src) for k, src in fields)
+    lines = ["", "", "{} = grade".format(GRADE_WRAP), "", "",
+             "def grade(case, got):",
+             '    """The standard runner copies what grade returns into the row: the verdict of',
+             "    the bank's own grade, then the row fields score() reads, which the old main()",
+             '    wrote (carried over by trimwrit.bank_migrate)."""',
+             "    return bank.Graded({}(case, got), {{{}}})".format(GRADE_WRAP, body)]
+    return nl.join(lines) + nl
 
 
 def _migrated(old, label_source, effort_named=True):
@@ -198,7 +342,13 @@ def _migrated(old, label_source, effort_named=True):
             ed.insert(assigns["BAR"].end_lineno, line)
         else:
             ed.insert(_start(defs["answer"]) - 1, line + nl + nl)
-    new = ed.text().rstrip() + TAIL.replace("\n", nl)
+    fields, _problems = _row_fields(tree, old)
+    wrapper = ""
+    if fields and not _problems:
+        wrapper = _grade_wrapper(fields, nl)
+        added.append("grade() carries the row field{} {}".format(
+            "s" if len(fields) > 1 else "", ", ".join(k for k, _ in fields)))
+    new = ed.text().rstrip() + (nl if wrapper else "") + wrapper.rstrip() + TAIL.replace("\n", nl)
     return new, [label for _, label in sorted(labels)], added
 
 
@@ -290,6 +440,11 @@ def migrate(bank_dir, label_source=None, write=False):
         left = [r.as_dict() for r in b.lint(bank_dir) if not getattr(r, "stale_release", False)]
     else:
         left = _lint_text(bank_dir, new)
+    for problem in _row_fields(ast.parse(old), old)[1]:
+        left.append(b.Refusal(
+            "bespoke-runner", bank_dir, problem,
+            "write {} by hand on the standard shape: grade() returns the field in its dict"
+            .format(path)).as_dict())
     for line in _main_references(new):
         left.append(b.Refusal(
             "bespoke-runner", bank_dir,

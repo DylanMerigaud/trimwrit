@@ -416,3 +416,121 @@ def test_a_model_bank_whose_code_names_an_effort_keeps_effort_absent(tmp_path):
     assert "EFFORT" not in res["new_text"]
     hits = [r for r in res["refusals_left"] if r["rule"] == "model-not-pinned"]
     assert hits and "EFFORT absent" in hits[0]["what"]
+
+
+# ------------------------------------------------------------------ row fields the old main() wrote
+
+ROW_LINE = 'rows.append({"id": case["id"], "got": got, "right": bool(grade(case, got))})'
+SCORE_LINE = 'right = sum(1 for r in rows if r["right"])'
+SCORE_RET = 'return {"accuracy": round(right / n, 4) if n else None, "right": right}'
+
+
+def fielded(tmp_path, row_src, score_src, name="fielded-evals"):
+    """The old scaffold bank with its main() row and its score() replaced: the row fields a
+    score() reads that only the old main() wrote (the shape of 18 banks, 2026-11-25)."""
+    d = old_bank(tmp_path, name=name)
+    text = (d / "run.py").read_text()
+    assert ROW_LINE in text and SCORE_LINE in text
+    text = text.replace(ROW_LINE, row_src).replace(SCORE_LINE, score_src)
+    (d / "run.py").write_text(text)
+    return d
+
+
+def migrate_and_run(d):
+    legacy = d.parent / (d.name + "_legacy.py")
+    legacy.write_text((d / "run.py").read_text())
+    res = bank.migrate(str(d), label_source=LABEL, write=True)
+    code, _, err = run_main(d)
+    return res, legacy, code, err
+
+
+def test_a_row_field_score_reads_rides_grade_and_the_rows_keep_it(tmp_path):
+    """The failure (autofix bank-migrate:career/recruitroast-evals, KeyError 'expected_pass' in
+    score()): the old main() wrote expected_pass into the row, bank.main does not, so score()
+    died. The codemod now returns the field from grade(), which bank.main copies into the row."""
+    d = fielded(tmp_path,
+                'rows.append({"id": case["id"], "got": got, "right": bool(grade(case, got)),\n'
+                '                         "expected_pass": case["expected"] == "yes"})',
+                'bad = [r for r in rows if not r["expected_pass"]]\n'
+                '    right = sum(1 for r in rows if r["right"]) - len(bad) + len(bad)')
+    res, legacy, code, err = migrate_and_run(d)
+    assert res["refusals_left"] == [] and code == 0, err
+    assert "grade() carries the row field expected_pass" in res["added"]
+    run = [json.loads(x) for x in (d / "RUNS" / (bank.read_release(str(d))["run"] + ".jsonl"))
+           .read_text().splitlines()]
+    assert {r["id"]: r["expected_pass"] for r in run} == {r["id"]: r["id"] and
+                                                         (int(r["id"][1:]) % 2 == 1) for r in run}
+    p = bank.parity(str(d), str(legacy))
+    assert p["parity"] is True and p["diffs"] == []
+
+
+def test_every_field_shape_of_the_old_rows_is_carried(tmp_path):
+    """A subscript chain, a .get(), a multi line dict with several fields, a module level name."""
+    d = fielded(tmp_path,
+                'rows.append({"id": case["id"], "kind": case.get("why"),\n'
+                '                         "expected": case["expected"], "got": got,\n'
+                '                         "tag": TAG + "!", "right": bool(grade(case, got))})',
+                'by_kind = {r["kind"]: r["expected"] for r in rows}\n'
+                '    assert len(by_kind) == 1 and all(r["tag"] == "t!" for r in rows)\n'
+                '    right = sum(1 for r in rows if r["right"])')
+    (d / "run.py").write_text((d / "run.py").read_text().replace("\nMODEL =", '\nTAG = "t"\nMODEL =', 1))
+    res, legacy, code, err = migrate_and_run(d)
+    assert res["refusals_left"] == [] and code == 0, err
+    assert "grade() carries the row fields expected, kind, tag" in res["added"]
+    assert bank.parity(str(d), str(legacy))["parity"] is True
+
+
+def test_the_carried_grade_stays_truthy_only_when_the_verdict_is(tmp_path):
+    d = fielded(tmp_path,
+                'rows.append({"id": case["id"], "got": got, "right": bool(grade(case, got)),\n'
+                '                         "expected_pass": case["expected"] == "yes"})',
+                'bad = [r for r in rows if not r["expected_pass"]]\n    right = len(rows) - len(bad) + len(bad)')
+    bank.migrate(str(d), label_source=LABEL, write=True)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("fielded_run", str(d / "run.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    case = {"id": "c01", "input": {"x": 1}, "expected": "yes"}
+    assert mod.grade(case, "yes") and not mod.grade(case, "no"), "a test's assert/not reads bool"
+    assert mod.grade(case, "no") == {"right": False, "expected_pass": True}
+    assert mod.grade(case, "yes")["right"] is True
+
+
+def test_a_field_score_does_not_read_is_left_out(tmp_path):
+    d = fielded(tmp_path,
+                'rows.append({"id": case["id"], "got": got, "extra": case["why"],\n'
+                '                         "right": bool(grade(case, got))})',
+                SCORE_LINE)
+    res = bank.migrate(str(d), label_source=LABEL)
+    assert "_grade_verdict" not in res["new_text"] and res["refusals_left"] == []
+
+
+def test_a_field_built_from_the_answer_is_left_to_a_person(tmp_path):
+    """score() reads `fails`, which main() got from answer()'s second member: the case alone
+    cannot rebuild it, so the codemod refuses it by name instead of migrating a bank that dies."""
+    d = fielded(tmp_path,
+                'rows.append({"id": case["id"], "got": got, "fails": [got],\n'
+                '                         "right": bool(grade(case, got))})',
+                'bad = [r for r in rows if r["fails"]]\n    right = len(rows) - len(bad) + len(bad)')
+    res = bank.migrate(str(d), label_source=LABEL)
+    left = [r for r in res["refusals_left"] if "'fails'" in r["what"]]
+    assert left and left[0]["rule"] == "bespoke-runner" and "got" in left[0]["what"]
+    assert "_grade_verdict" not in res["new_text"]
+
+
+def test_a_grade_that_returns_a_dict_keeps_its_own_keys(tmp_path):
+    d = fielded(tmp_path,
+                'rows.append({"id": case["id"], "got": got, "right": bool(grade(case, got)),\n'
+                '                         "expected_pass": case["expected"] == "yes"})',
+                'bad = [r for r in rows if not r["expected_pass"]]\n    right = len(rows) - len(bad) + len(bad)')
+    text = (d / "run.py").read_text().replace(
+        '    return got == case["expected"]',
+        '    return {"right": got == case["expected"], "note": "n"}')
+    (d / "run.py").write_text(text)
+    bank.migrate(str(d), label_source=LABEL, write=True)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("fielded_run2", str(d / "run.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    got = mod.grade({"id": "c", "expected": "yes"}, "yes")
+    assert got == {"right": True, "note": "n", "expected_pass": True}
