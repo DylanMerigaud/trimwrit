@@ -288,9 +288,13 @@ def _migrated(old, label_source, effort_named=True):
             blocks.append((node.lineno, node.end_lineno, GUARD_LABEL))
     skip = [(a, z) for a, z, _ in blocks]
     used = _names_used(tree, skip)
+    # a module only the removed runner read (json, a second os) is left unused by the removal:
+    # it goes with it, the repository's own ruff would refuse it (F401)
+    orphaned = _names_used(tree, []) - used - {"sys", "bank"}
     for node in tree.body:
         if isinstance(node, ast.Import):
-            parse = [a for a in node.names if a.name.split(".")[0] == "argparse"]
+            parse = [a for a in node.names if a.name.split(".")[0] == "argparse"
+                     or (a.asname or a.name.split(".")[0]) in orphaned]
             if not parse or any((a.asname or a.name.split(".")[0]) in used for a in parse):
                 continue
             rest = [a for a in node.names if a not in parse]
@@ -299,7 +303,7 @@ def _migrated(old, label_source, effort_named=True):
                        "import " + ", ".join(_alias_text(a) for a in rest) + rest_of(node))
             else:
                 ed.remove(node.lineno, node.end_lineno)
-            labels.append((node.lineno, "import argparse"))
+            labels.append((node.lineno, "import " + ", ".join(_alias_text(a) for a in parse)))
         elif (isinstance(node, ast.ImportFrom) and node.module
               and node.module.split(".")[0] == "argparse" and node.level == 0):
             if any((a.asname or a.name) in used for a in node.names):

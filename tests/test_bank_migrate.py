@@ -177,7 +177,8 @@ def test_migrate_reads_the_old_scaffold_into_the_standard_shape(tmp_path):
     assert "LABEL_SOURCE = 'the parity of x, computed'" in new
     assert new.index("BAR = ") < new.index("LABEL_SOURCE = ") < new.index("def answer")
     assert "EFFORT = None" in new, "a deterministic bank carries no effort"
-    assert res["removed"] == ["import argparse", "EFFORT = 'medium' (MODEL is None)",
+    assert res["removed"] == ["import argparse", "import json",
+                              "EFFORT = 'medium' (MODEL is None)",
                               "def main", 'if __name__ == "__main__"']
     assert res["lines_before"] == len(before.splitlines())
     assert res["lines_after"] == len(new.splitlines()) < res["lines_before"]
@@ -534,3 +535,13 @@ def test_a_grade_that_returns_a_dict_keeps_its_own_keys(tmp_path):
     spec.loader.exec_module(mod)
     got = mod.grade({"id": "c", "expected": "yes"}, "yes")
     assert got == {"right": True, "note": "n", "expected_pass": True}
+
+
+def test_a_module_only_the_removed_main_read_goes_with_it_and_a_used_one_stays(tmp_path):
+    """json was read by main() alone: left behind it is an F401 the repository's ruff refuses
+    (growth-cockpit career/recruitroast-evals/run.py, 2026-11-25). os feeds HERE, so it stays."""
+    d = old_bank(tmp_path)
+    new = bank.migrate(str(d))["new_text"]
+    assert "import json" not in new and "import os\n" in new and "import sys\n" in new
+    import ast
+    ast.parse(new)
