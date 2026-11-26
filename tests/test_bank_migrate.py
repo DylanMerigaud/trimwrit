@@ -694,3 +694,79 @@ def test_any_other_unpacking_is_still_left_to_a_person(tmp_path, change):
     res = bank.migrate(str(d), label_source=LABEL)
     assert any("unpacks the return of answer()" in r["what"] for r in res["refusals_left"])
     assert "_verdict, _checks" not in res["new_text"]
+
+
+# ------------------------------------------------------------------ the rehearsal
+
+def rehearsed(tmp_path, change_old=lambda t: t, change_new=lambda t: t, **kw):
+    """The old bank after one run of its OLD runner (the recorded rows), rehearsed against the
+    codemod's new text; `change_old` edits the old runner first, `change_new` the new one."""
+    d = old_bank(tmp_path, **kw)
+    (d / "run.py").write_text(change_old((d / "run.py").read_text()))
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        assert bank.load_module(str(d / "run.py")).main(["--no-probe"]) == 0
+    legacy = tmp_path / "legacy_run.py"
+    legacy.write_text((d / "run.py").read_text())
+    new = change_new(bank.migrate(str(d), label_source=LABEL)["new_text"])
+    before = tree_bytes(d)
+    res = bank.rehearse(str(d), new, str(legacy))
+    assert tree_bytes(d) == before, "a rehearsal writes nothing in the bank"
+    return res
+
+
+def tree_bytes(d):
+    out = {}
+    for dirpath, dirs, files in os.walk(str(d)):
+        dirs[:] = [x for x in dirs if x != "__pycache__"]
+        for f in files:
+            with open(os.path.join(dirpath, f), "rb") as fh:
+                out[os.path.join(dirpath, f)] = fh.read()
+    return out
+
+
+def test_a_rehearsal_of_a_faithful_migration_is_ok(tmp_path):
+    res = rehearsed(tmp_path)
+    assert res == {"result": "ok", "cases": 40, "diffs": []}
+
+
+def test_a_rehearsal_names_the_crash_of_a_score_that_reads_a_row_key_the_runner_drops(tmp_path):
+    res = rehearsed(tmp_path, change_new=lambda t: t.replace(
+        'right = sum(1 for r in rows if r["right"])',
+        'right = sum(1 for r in rows if r["right"] and r["kind"])'))
+    assert res["result"] == "miss" and "KeyError" in res["diffs"][0], res
+
+
+def test_a_rehearsal_names_a_result_the_new_release_loses(tmp_path):
+    res = rehearsed(tmp_path, change_old=lambda t: t.replace(
+        "    extra = dict(s)\n", "    extra = dict(s, gate_sha='abc', by={'a': 1})\n"))
+    assert res["result"] == "miss"
+    assert "lost: by" in res["diffs"] and "lost: gate_sha" in res["diffs"], res
+
+
+def test_a_rehearsal_names_a_value_that_changed(tmp_path):
+    res = rehearsed(tmp_path, change_new=lambda t: t.replace(
+        'return got == case["expected"]', 'return got == "yes"'))
+    assert res["result"] == "miss"
+    assert any(x.startswith("accuracy: old 1.0") for x in res["diffs"]), res
+
+
+def test_a_rehearsal_gives_back_an_answer_the_old_rows_stored_field_by_field(tmp_path):
+    def old(t):
+        t = t.replace(PARITY, '    return {"v": "yes" if case["input"]["x"] % 2 else "no", '
+                              '"why": ["x"]}')
+        t = t.replace('return got == case["expected"]',
+                      'return (got["v"] if isinstance(got, dict) else got) == case["expected"]')
+        t = t.replace('got = case["expected"] if args.offline else answer(case)',
+                      'got = {"v": case["expected"]} if args.offline else answer(case)')
+        return t.replace('"got": got, "right"', '"got": got["v"], "why": got.get("why") or [], '
+                                                '"right"')
+    res = rehearsed(tmp_path, change_old=old)
+    assert res["result"] == "ok", res
+
+
+def test_a_rehearsal_with_nothing_recorded_says_so(tmp_path):
+    d = old_bank(tmp_path)
+    legacy = tmp_path / "legacy_run.py"
+    legacy.write_text((d / "run.py").read_text())
+    res = bank.rehearse(str(d), bank.migrate(str(d))["new_text"], str(legacy))
+    assert res["result"] == "no-answers" and res["cases"] == 0

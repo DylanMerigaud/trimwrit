@@ -46,6 +46,16 @@ runner writes through the kit reaches the bank (the kit's writers are swapped fo
 replay, whatever name the runner reaches them by): its rows go to a temp dir and its release is
 captured. A runner that opens RELEASE.json itself is not stopped.
 
+THE REHEARSAL (2026-11-26, growth-cockpit autofix bank-migrate:career/outreach-draft-evals, the
+fifth shape the codemod did not foresee, found each time after a paid run). `rehearse` runs BEFORE
+the first model call of a migration: the answers the old runner recorded (the rows of the release's
+run) are fed to the OLD runner and to bank.main on the NEW run.py, and the two releases are
+compared value by value (every key the old runner wrote, bar the envelope's own stamps) with each
+case's verdict. A crash, a refusal of the standard, a lost key or a changed value is a miss: the
+migration stops there and the old runner keeps serving. Nothing is written in the bank and no model
+is called by the rehearsal itself (answer() is replaced; a caller that wants a producer's other
+calls refused too runs it in a process whose model door is shut).
+
 Standard library only, Python 3.9 syntax.
 """
 import ast
@@ -740,8 +750,9 @@ def _id_key(value):
     return json.dumps(value, sort_keys=True, default=repr)
 
 
-def _replay(bank_dir, legacy_run, answers):
-    """(captured release doc or None, error text or None, stderr of the old runner)."""
+def _replay(bank_dir, legacy_run, answers, kept_rows=None):
+    """(captured release doc or None, error text or None, stderr of the old runner). With
+    `kept_rows` (a list), the rows the old runner wrote are appended to it."""
     b = _bank()
     run_file = os.path.join(os.path.abspath(bank_dir), bank_lint.RUN_FILE)
     captured = []
@@ -782,6 +793,8 @@ def _replay(bank_dir, legacy_run, answers):
         except Exception as exc:  # noqa: BLE001  (an old runner that raises is a parity miss)
             return None, "the old runner raised {}: {}".format(type(exc).__name__, exc), \
                 err.getvalue()
+        if kept_rows is not None:
+            kept_rows.extend(_rows_under(b, tmp))
     if not captured:
         return None, "the old runner wrote no release (no write_release or release_doc call)" \
             + _last_line(err), err.getvalue()
@@ -856,3 +869,259 @@ def parity(bank_dir, legacy_run, rows_path=None):
     diffs = ["{}: old {!r}, new {!r}".format(k, old[k], new[k])
              for k in new if not _same(old[k], new[k])]
     return {"parity": not diffs, "old": old, "new": new, "diffs": diffs}
+
+
+# ------------------------------------------------------------------ the rehearsal
+
+# the keys of a release that are the run's own stamps or the standard's own record, never a result
+# the old runner measured
+STAMPS = frozenset(("schema", "at", "run", "bank_sha", "model", "effort", "inputs_sha", "bar_sha",
+                    "bar_since", "usage", "repeats", "splits", "engine", "standard", "wall_s",
+                    "downshift", "waived", "engine_log"))
+MAX_DIFFS = 12
+
+
+def _rows_under(b, tmp):
+    """The rows of the run files written under `tmp` (probe rows left out)."""
+    rows = []
+    for name in sorted(os.listdir(tmp)):
+        if name.endswith(".jsonl") and name.count(".") == 1:
+            rows.extend(b.load(os.path.join(tmp, name)))
+    return rows
+
+
+def _recorded_rows(b, bank_dir):
+    """(rows of the release's run, None) or (None, why there are none)."""
+    doc = b.read_release(bank_dir)
+    run = str((doc or {}).get("run") or "")
+    if not run:
+        return None, "RELEASE.json names no run"
+    for path in (os.path.join(bank_dir, b.RUNS, run + ".jsonl"),
+                 os.path.join(bank_dir, b.RUNS, run), os.path.join(bank_dir, run)):
+        if os.path.isfile(path):
+            try:
+                rows = b.load(path)
+            except (OSError, ValueError) as exc:
+                return None, "the rows of run {} do not read ({})".format(run, exc)
+            return (rows, None) if rows else (None, "run {} holds no row".format(run))
+    return None, "the rows of run {} are not on disk".format(run)
+
+
+def _answer_assign(tree):
+    """(names, answer variable shape) of the old runner's `x = answer(case)` or
+    `a, b = answer(case)`, an offline arm allowed beside it: a tuple of one or two names, else
+    None."""
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                or node.name in ("answer", "grade"):
+            continue
+        for n in ast.walk(node):
+            if not (isinstance(n, ast.Assign) and len(n.targets) == 1):
+                continue
+            values = [n.value.body, n.value.orelse] if isinstance(n.value, ast.IfExp) \
+                else [n.value]
+            if not any(isinstance(v, ast.Call) and _is_name(v.func, "answer") for v in values):
+                continue
+            t = n.targets[0]
+            if isinstance(t, ast.Name):
+                return (t.id,)
+            if _is_pair(t) and all(isinstance(e, ast.Name) for e in t.elts):
+                return (t.elts[0].id, t.elts[1].id)
+    return None
+
+
+def _field_of(node, name):
+    """"f" when `node` reads field f of the variable `name`: name["f"], name.get("f"), either
+    one followed by `or <default>`."""
+    if isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or):
+        node = node.values[0]
+    if isinstance(node, ast.Subscript) and _is_name(node.value, name):
+        key = _slice_key(node)
+        return key if isinstance(key, str) else None
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get" and _is_name(node.func.value, name) and node.args
+            and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
+        return node.args[0].value
+    return None
+
+
+def _answer_rebuilder(old_text):
+    """row -> (True, what answer() returned) or (False, None): the old runner's own row literal
+    read backwards. Two names unpacked from answer() come back as a pair of the row keys that
+    store them; one name stored whole comes back as that key; fields of it stored one by one come
+    back as a dict of them; with none of these, the row's "got"."""
+    tree = ast.parse(old_text)
+    names = _answer_assign(tree)
+    literals = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Dict):
+            lit = {k.value: v for k, v in zip(node.keys, node.values)
+                   if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+            if "right" in lit:
+                literals.append(lit)
+
+    def stored(name):
+        for lit in literals:
+            keys = [k for k, v in lit.items() if _is_name(v, name)]
+            if keys:
+                return "got" if "got" in keys else keys[0]
+        return None
+
+    keys, fields = None, {}
+    if names and len(names) == 2:
+        keys = [stored(n) for n in names]
+        if None in keys:
+            return lambda row: (False, None)
+    elif names:
+        keys = [stored(names[0])]
+        if keys[0] is None:
+            keys = None
+            for lit in literals:
+                for k, v in lit.items():
+                    f = _field_of(v, names[0])
+                    if f is not None:
+                        fields.setdefault(f, k)
+
+    def rebuild(row):
+        want = keys if keys else list(fields.values()) or ["got"]
+        if any(k not in row for k in want):
+            return False, None
+        if keys and len(keys) == 2:
+            return True, (row[keys[0]], row[keys[1]])
+        if keys:
+            return True, row[keys[0]]
+        if fields:
+            return True, {f: row[k] for f, k in fields.items()}
+        return True, row["got"]
+    return rebuild
+
+
+@contextlib.contextmanager
+def _patched(obj, **names):
+    saved = {n: getattr(obj, n) for n in names}
+    try:
+        for n, value in names.items():
+            setattr(obj, n, value)
+        yield
+    finally:
+        for n, value in saved.items():
+            setattr(obj, n, value)
+
+
+def _run_new(bank_dir, new_text, answers):
+    """(captured release doc or None, its rows, error text or None) of bank.main on the new
+    run.py with answer() replaced by the recorded answers: nothing is written in the bank."""
+    from . import bank_run  # noqa: PLC0415
+    b = _bank()
+    run_file = os.path.join(os.path.abspath(bank_dir), bank_lint.RUN_FILE)
+    captured, out, err = [], io.StringIO(), io.StringIO()
+    rows = []
+
+    def capture(_bank_dir, doc):
+        captured.append(doc)
+        return doc
+
+    with tempfile.TemporaryDirectory() as tmp, \
+            bank_lint.isolated_imports(os.path.abspath(bank_dir)), \
+            _patched(b, _write_release_file=capture,
+                     run_path=lambda _d, stamp, ext=".jsonl": os.path.join(tmp, stamp + ext)), \
+            _patched(bank_lint, self_check=lambda *a, **k: [], lint=lambda *a, **k: []), \
+            _patched(bank_run._Cache, lookup=lambda self, case: (False, None, None),
+                     store=lambda self, key, got: None):
+        sys.path.insert(0, os.path.abspath(bank_dir))
+        name = "{}rehearse_{}_{}".format(bank_lint.MODULE_PREFIX, b.sha(run_file),
+                                         next(_counter))
+        module = type(sys)(name)
+        module.__file__ = run_file
+        sys.modules[name] = module
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                exec(compile(new_text, run_file, "exec"), module.__dict__)  # noqa: S102
+                model = module.__dict__.get("MODEL")
+
+                def recorded(case, *args, **kwargs):
+                    if model:
+                        b.note_usage({"model": model})
+                    return answers[_id_key(case.get("id"))]
+
+                module.answer = recorded
+                code = bank_run.main(run_file, ["--no-probe", "--jobs", "1"], module=module)
+        except SystemExit as exc:
+            return None, [], "the new runner exited (SystemExit: {!r}){}".format(
+                exc.code, _last_line(err))
+        except Exception as exc:  # noqa: BLE001  (a crash is the miss the rehearsal is for)
+            return None, [], "the new runner raised {}: {}".format(type(exc).__name__, exc)
+        rows = _rows_under(b, tmp)
+    if not captured:
+        return None, rows, "the new runner wrote no release (exit {}){}".format(
+            code, _last_line(err))
+    return captured[-1], rows, None
+
+
+def _value_diffs(path, old, new, out):
+    """Append to `out` one line per value of `old` that `new` lost or changed (numbers within
+    TOLERANCE; a key only `new` holds is no loss)."""
+    if isinstance(old, dict) and isinstance(new, dict):
+        for k in sorted(old):
+            where = "{}.{}".format(path, k) if path else k
+            if k not in new:
+                out.append("lost: {}".format(where))
+            else:
+                _value_diffs(where, old[k], new[k], out)
+    elif isinstance(old, list) and isinstance(new, list) and len(old) == len(new):
+        for i, (a, c) in enumerate(zip(old, new)):
+            _value_diffs("{}[{}]".format(path, i), a, c, out)
+    elif not _same(old, new):
+        out.append("{}: old {}, new {}".format(path, repr(old)[:80], repr(new)[:80]))
+
+
+def _plain(value):
+    return json.loads(json.dumps(value, default=repr))
+
+
+def rehearse(bank_dir, new_text, legacy_run):
+    """Replay the recorded answers of `bank_dir` through the OLD runner (`legacy_run`, a path)
+    and through bank.main on `new_text`, before any migration pays a call. Returns {"result",
+    "cases", "diffs"}: result "ok" (every value the old runner wrote is there, unchanged),
+    "miss" (a crash, a refusal, a lost or changed value: `diffs` names them) or "no-answers"
+    (nothing recorded to replay: `diffs` says why). Only the cases that have a recorded answer
+    are replayed, by both runners."""
+    b = _bank()
+    bank_dir = str(bank_dir)
+
+    def verdict(result, n, diffs):
+        return {"result": result, "cases": n, "diffs": [str(d)[:300] for d in diffs][:MAX_DIFFS]}
+
+    recorded, why = _recorded_rows(b, bank_dir)
+    if recorded is None:
+        return verdict("no-answers", 0, [why])
+    rebuild = _answer_rebuilder(_read(str(legacy_run)))
+    by_id = {}
+    for row in recorded:
+        known, got = rebuild(row)
+        if known and not row.get("error"):
+            by_id[_id_key(row.get("id"))] = got
+    real_corpus = b.corpus
+    cases = [c for c in real_corpus(bank_dir) if _id_key(c.get("id")) in by_id]
+    if not cases:
+        return verdict("no-answers", 0, ["no case of the corpus has a recorded answer the old "
+                                         "runner's rows give back"])
+    with _patched(b, corpus=lambda _d: [dict(c) for c in cases]):
+        old_rows = []
+        old_doc, error, _ = _replay(bank_dir, legacy_run, by_id, kept_rows=old_rows)
+        if error:
+            # the old runner cannot even replay: nothing to compare the new one with
+            return verdict("miss", len(cases), [error])
+        new_doc, new_rows, error = _run_new(bank_dir, new_text, by_id)
+    if error:
+        return verdict("miss", len(cases), [error])
+    old = {k: v for k, v in _plain(old_doc).items() if k not in STAMPS}
+    diffs = []
+    _value_diffs("", old, _plain(new_doc), diffs)
+    new_right = {_id_key(r.get("id")): r.get("right") for r in new_rows}
+    for r in old_rows:
+        key = _id_key(r.get("id"))
+        if "right" in r and bool(r["right"]) != bool(new_right.get(key)):
+            diffs.append("case {}: right was {}, new {}".format(r.get("id"), r["right"],
+                                                                 new_right.get(key)))
+    return verdict("miss" if diffs else "ok", len(cases), diffs)

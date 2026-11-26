@@ -994,4 +994,4 @@ from .bank_run import (ENGINES, REPEAT_SAMPLE, REPEATS, SCHEMA_STANDARD, STANDAR
                        main, note_usage, run_local, usage_scope)
 from .bank_check import (check_strict, discover, find_waivers, load_waivers,  # noqa: E402,F401
                          project_waivers)
-from .bank_migrate import migrate, parity  # noqa: E402,F401
+from .bank_migrate import migrate, parity, rehearse  # noqa: E402,F401
