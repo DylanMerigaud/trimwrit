@@ -392,3 +392,85 @@ def test_a_disabled_wait_that_keeps_hitting_the_limit_backs_off_but_never_stops(
 def test_a_quota_notification_without_a_multiplexer_is_logged_only(tmp_path):
     out, log = notify(tmp_path, "quota_auto_resume_disabled")
     assert out.stdout == "" and "no screen or tmux session" in log
+
+
+# ---- 0.4.0: a session its owner's usage breaker holds is never typed into -----------------
+
+def held_script(tmp_path, code):
+    """A held check that records its argv and exits `code` (0 = held)."""
+    seen = tmp_path / "held-argv.txt"
+    script = tmp_path / "held.sh"
+    script.write_text("#!/bin/bash\necho \"$*\" >> {}\nexit {}\n".format(seen, code))
+    script.chmod(0o755)
+    return ["bash", str(script), "--held"], seen
+
+
+def test_a_held_screen_session_gets_no_keystroke(tmp_path):
+    argv, seen = held_script(tmp_path, 0)
+    out, log = run(tmp_path, "server_error", {"STY": "123.claude-pop-x-1"},
+                   config={"held_check": argv})
+    assert out.returncode == 0 and out.stdout == ""
+    assert seen.read_text().strip() == "--held claude-pop-x-1"
+    assert "not resumed: held" in log
+
+
+def test_a_session_not_held_is_resumed_and_asked_again_at_type_time(tmp_path):
+    argv, seen = held_script(tmp_path, 1)
+    out, log = run(tmp_path, "server_error", {"STY": "123.claude-pop-x-1"},
+                   config={"held_check": argv})
+    assert out.stdout.startswith(MARK + "sleep 60; if bash ")
+    assert "--held 'claude-pop-x-1' >/dev/null" in out.stdout
+    assert out.stdout.index("--held 'claude-pop-x-1'") < out.stdout.index("-X stuff")
+    assert "not resumed" not in log
+
+
+def test_a_missing_held_check_holds_nothing(tmp_path):
+    out, _ = run(tmp_path, "server_error", SCREEN,
+                 config={"held_check": ["bash", str(tmp_path / "absent.sh"), "--held"]})
+    assert "-X stuff 'continue:" in out.stdout
+
+
+def test_no_held_check_by_default_and_tmux_is_never_asked(tmp_path):
+    out, _ = run(tmp_path, "server_error", SCREEN)
+    assert out.stdout.startswith(MARK + "sleep 60; screen ")
+    argv, seen = held_script(tmp_path, 0)
+    out, _ = run(tmp_path, "server_error", TMUX, config={"held_check": argv})
+    assert "send-keys" in out.stdout and not seen.exists()
+
+
+@pytest.mark.parametrize("bad", ["bash x --held", [""], [1]])
+def test_a_bad_held_check_is_loud_and_the_defaults_apply(tmp_path, bad):
+    out, log = run(tmp_path, "server_error", SCREEN, config={"held_check": bad})
+    assert "config error" in out.stderr and "-X stuff" in out.stdout
+
+
+def test_the_sleeper_skips_typing_when_held_at_type_time(tmp_path):
+    """Real run: the check says free at hook time and held when the sleeper wakes."""
+    import os
+    import subprocess
+    import time
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    keys = tmp_path / "keys.txt"
+    (bin_dir / "screen").write_text("#!/bin/bash\necho \"$*\" >> {}\n".format(keys))
+    (bin_dir / "screen").chmod(0o755)
+    flip = tmp_path / "calls"
+    script = tmp_path / "held.sh"
+    script.write_text("#!/bin/bash\necho x >> {0}\n[ \"$(wc -l < {0})\" -ge 2 ]\n".format(flip))
+    script.chmod(0o755)
+    d = tmp_path / ".claude"
+    d.mkdir()
+    (d / "trimwrit-gates.json").write_text(json.dumps(
+        {NAME: {"delay_s": 0, "held_check": ["bash", str(script), "--held"]}}))
+    env = dict(NO_MUX, HOME=str(tmp_path), PATH=str(bin_dir) + os.pathsep + os.environ["PATH"],
+               STY="9.claude-pop-y-1")
+    payload = {"error": "server_error", "session_id": "s1",
+               "transcript_path": str(tmp_path / "absent.jsonl")}
+    assert run_sh(NAME, SCRIPT, payload, env=env).returncode == 0
+    log = d / "trimwrit-gates" / "api-failures.log"
+    for _ in range(100):
+        if log.exists() and "held at type time" in log.read_text():
+            break
+        time.sleep(0.1)
+    assert "held at type time" in log.read_text()
+    assert not keys.exists()

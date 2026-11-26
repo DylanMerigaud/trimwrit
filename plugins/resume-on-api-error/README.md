@@ -36,6 +36,12 @@ hosting the session, after a delay; never on an authentication, billing or safeg
   claimed atomically. While its sleeper lives, the next failure is logged as `not resumed: a
   sleeper is already pending` and left: keystrokes never stack. With neither screen nor tmux the failure is logged and the
   hook exits 0.
+- **Held sessions** (`held_check`, an argv, default `[]`): when set, it is run with the screen
+  session's name (`$STY` without its `<pid>.` prefix) appended, at the hook and again by the
+  sleeper right before it types. Exit 0 means the session's work is held (a usage breaker waiting
+  on its owner): nothing is typed and `not resumed: held` is logged. Any other exit, a missing
+  program included, holds nothing. A tmux pane is never asked. Example:
+  `"held_check": ["bash", "~/Code/<repo>/scripts/pop_keepalive.sh", "--held"]` (`~` is expanded).
 - A bad config file is reported on stderr and in the log, and the defaults apply. The hook never
   exits 2.
 

@@ -85,17 +85,21 @@ try:
     for key in ("log", "text"):
         if not isinstance(got[key], str):
             raise config.ConfigError("{} must be a string".format(key))
+    held = got["held_check"]
+    if not isinstance(held, list) or not all(isinstance(a, str) and a for a in held):
+        raise config.ConfigError("held_check must be a list of non-empty strings (an argv)")
     cfg = got
 except Exception as e:
     err = "{}: {}".format(type(e).__name__, e).replace("\n", " ")[:300]
 log = os.path.expanduser(cfg["log"]) if cfg["log"] else ""
 for name, value in (("CFG_ERROR", err), ("CFG_LOG", log), ("CFG_VIM", "1" if cfg["vim_mode"] else "0"),
                     ("CFG_DELAY", str(cfg["delay_s"])), ("CFG_RATE_DELAY", str(cfg["rate_limit_delay_s"])),
-                    ("CFG_TEXT", cfg["text"])):
+                    ("CFG_TEXT", cfg["text"]),
+                    ("CFG_HELD", shlex.join(os.path.expanduser(a) for a in cfg.get("held_check") or []))):
     print("{}={}".format(name, shlex.quote(value)))
 PY
 )"
-CFG_ERROR="python3 failed"; CFG_LOG=""; CFG_VIM=0; CFG_DELAY=60; CFG_RATE_DELAY=120
+CFG_ERROR="python3 failed"; CFG_LOG=""; CFG_VIM=0; CFG_DELAY=60; CFG_RATE_DELAY=120; CFG_HELD=""
 CFG_TEXT="continue: the previous turn ended on an API error; resume exactly where you were and retry what failed"
 case "${settings}" in
   CFG_ERROR=*) eval "${settings}" ;;
@@ -166,6 +170,20 @@ text="${CFG_TEXT} (${category:-unknown})"
 # a short pause, then `i` (prefixed to the text) enters INSERT before the text and return.
 [ "${CFG_VIM}" = "1" ] && [ "${KEYS}" = "text" ] && text="i${text}"
 
+# HELD (0.4.0): a session whose work is held by its owner's usage breaker gets no keystroke. With
+# `held_check` set (an argv), it is asked with the screen session's name (`$STY` without its
+# "<pid>." prefix) appended, here and again in the sleeper right before it types (a hold can start
+# during the delay): exit 0 means held, so nothing is typed. Any other exit, a missing program
+# included, holds nothing. A tmux pane has no screen name and is never asked.
+HELD_CMD=""
+if [ -n "${CFG_HELD}" ] && [ "${target}" = "screen" ]; then
+  HELD_CMD="${CFG_HELD} $(sq "${STY#*.}")"
+  if bash -c "${HELD_CMD}" >/dev/null 2>&1 </dev/null; then
+    echo "$(now)   not resumed: held (${CFG_HELD} ${STY#*.} exit 0)" >> "${LOG}"
+    exit 0
+  fi
+fi
+
 if [ "${target}" = "screen" ]; then
   where="${STY}"; key="screen-${STY}"
 else
@@ -186,6 +204,9 @@ pending() {
 claim() { ( set -C; printf '%s\n' "$$" > "${PIDF}" ) 2>/dev/null; }
 
 cmd=": resume-on-api-error sleeper; sleep ${delay}; "
+if [ -n "${HELD_CMD}" ]; then
+  cmd="${cmd}if ${HELD_CMD} >/dev/null 2>&1 </dev/null; then echo \"\$(date '+%F %T')   not resumed: held at type time (${where})\" >> $(sq "${LOG}"); rm -f $(sq "${PIDF}"); exit 0; fi; "
+fi
 if [ "${KEYS}" = "enter" ]; then
   if [ "${target}" = "screen" ]; then
     cmd="${cmd}screen -S $(sq "${STY}") -X stuff \"\$(printf '\\r')\""

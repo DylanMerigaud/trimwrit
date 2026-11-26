@@ -1,5 +1,14 @@
 # Changelog
 
+## resume-on-api-error 0.4.0, 2026-11-26
+
+- **A held session gets no keystroke.** The retry typed "continue" into a popped session whose
+  topic the owner's usage breaker held, so a held topic kept spending. New setting `held_check`
+  (an argv): run with the screen session's name appended, at the hook and again right before the
+  sleeper types (a hold can start during the delay); exit 0 means held, nothing is typed and
+  `not resumed: held` is logged. Any other exit, a missing program included, holds nothing; a tmux
+  pane is never asked. Pinned by tests/gates/test_resume_on_api_error.py (the 0.4.0 section).
+
 ## 0.16.6, 2026-11-26
 
 - **`bank migrate` converts a two part answer.** answer() returning (verdict, failed checks), split by
