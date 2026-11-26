@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.16.6, 2026-11-26
+
+- **`bank migrate` converts a two part answer.** answer() returning (verdict, failed checks), split by
+  the old main(): the codemod appends a grade() that reads the verdict as that main() did and keeps the
+  checks in every result row. Nine growth-cockpit banks of one shape were refused ("main() unpacks the
+  return of answer()"); any other unpacking still is. A score() returning `n` = len(rows) is wrapped
+  too: the standard runner owns that key and refused it after a full run.
+- **A migrated deterministic bank answers one case at a time** (`JOBS = 1`), as its old main() did:
+  on 4 threads a door loading its producer on first use raised on up to 348 of 349 cases.
+
 ## bare-id-gate 0.3.0, 2026-11-25
 
 - **The plain-words rule reaches the model before it writes.** Lesson

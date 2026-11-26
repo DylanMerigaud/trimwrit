@@ -19,7 +19,24 @@ besides "right", so score() died on a KeyError. The codemod finds every row fiel
 reads that main() wrote, and when its value is built from `case` and the module's own names it
 appends a grade() that returns bank.Graded(<the bank's grade>, {field: value}) (truthy exactly when
 right, so a test's `assert run.grade(...)` still reads a bool). A field built from anything else
-main() computed (the answer's second member) is a bespoke-runner refusal naming it: left to a person.
+main() computed (a loop counter, the answer) is a bespoke-runner refusal naming it: left to a person.
+
+A TWO PART ANSWER (2026-11-26, growth-cockpit autofix career/recruitermail-evals, nine banks of one
+shape). answer() returns (verdict, failed checks) and the old main() split them (`got, fails =
+answer(case)`), kept the checks in the row and graded the verdict. bank.main hands grade() the whole
+return and keeps it as the row's got. When every return of answer() is a two member tuple and the old
+main() does nothing else with the two (one unpack, `grade(case, got)`, got and the checks written to
+the row as they are, no kept function reading the row's got), the codemod appends a grade() that
+splits them: the bank's own grade reads the verdict and the row keeps the checks under the old key.
+A bare verdict (a test, the self check) is graded as it is. Any other unpacking stays a refusal.
+
+ONE AT A TIME (same day, same banks). The old main() answered its cases one after the other,
+bank.main runs 4 threads: five of the nine doors load their producer module on first use, and on
+threads up to 348 of 349 cases raised on a half loaded module. A deterministic bank (MODEL = None)
+with no JOBS gets JOBS = 1.
+
+N (same day, same banks). The standard runner writes `n` itself and refuses a score() returning it:
+a score() whose `n` is len(rows) is wrapped to leave it out.
 
 THE PARITY REPLAY. After the migrated bank ran once on bank.main, `parity` loads the OLD run.py
 (a copy kept with `trimwrit bank migrate --legacy-out`), feeds it the answers the new run
@@ -124,6 +141,7 @@ class _Edits(object):
 ROW_STANDARD = frozenset(("id", "split", "got", "right", "cached", "usage", "error"))
 HOOKS = frozenset(("main", "answer", "grade"))
 GRADE_WRAP = "_grade_verdict"
+SCORE_WRAP = "_score_with_n"
 
 
 def _module_names(tree):
@@ -170,7 +188,138 @@ def _keys_read(tree):
     return keys
 
 
-def _row_fields(tree, old):
+def _own_nodes(func):
+    """The nodes of a function body, those of a nested function, lambda or class left out."""
+    stack = list(func.body)
+    while stack:
+        node = stack.pop()
+        yield node
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda,
+                                 ast.ClassDef)):
+            stack.extend(ast.iter_child_nodes(node))
+
+
+def _calls(node, name):
+    return [n for n in ast.walk(node) if isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name) and n.func.id == name]
+
+
+def _is_name(node, name):
+    return isinstance(node, ast.Name) and node.id == name
+
+
+def _is_pair(node):
+    return (isinstance(node, ast.Tuple) and len(node.elts) == 2
+            and not any(isinstance(e, ast.Starred) for e in node.elts))
+
+
+def _is_answer_of_case(node):
+    return (isinstance(node, ast.Call) and _is_name(node.func, "answer") and not node.keywords
+            and len(node.args) == 1 and _is_name(node.args[0], "case"))
+
+
+def _unpacked_names(assign):
+    """(first, second) of `a, b = answer(case)`, or of the same behind an offline arm
+    (`a, b = (x, y) if flag else answer(case)`), else None."""
+    t = assign.targets
+    if len(t) != 1 or not _is_pair(t[0]) or not all(isinstance(e, ast.Name) for e in t[0].elts):
+        return None
+    value = assign.value
+    if isinstance(value, ast.IfExp):
+        arms = [value.body, value.orelse]
+        asked = [a for a in arms if _is_answer_of_case(a)]
+        if len(asked) != 1 or not all(_is_pair(a) for a in arms if a is not asked[0]):
+            return None
+    elif not _is_answer_of_case(value):
+        return None
+    return t[0].elts[0].id, t[0].elts[1].id
+
+
+def _row_literals(main):
+    """[{key: value node}] of the dict literals of main() with a "right" key: its rows."""
+    out = []
+    for node in ast.walk(main):
+        if isinstance(node, ast.Dict):
+            row = {k.value: v for k, v in zip(node.keys, node.values)
+                   if isinstance(k, ast.Constant)}
+            if "right" in row:
+                out.append(row)
+    return out
+
+
+def _two_part(tree):
+    """The row key the old main() kept the second member of answer()'s return under, when the
+    bank is the two part shape the module docstring says, else None."""
+    defs = bank_lint._top_defs(tree)
+    main, answer = defs.get("main"), defs.get("answer")
+    if main is None or answer is None:
+        return None
+    returns = [n for n in _own_nodes(answer) if isinstance(n, ast.Return)]
+    if not returns or not all(_is_pair(r.value) for r in returns):
+        return None
+    unpacks = [_unpacked_names(n) for n in ast.walk(main)
+               if isinstance(n, ast.Assign) and _calls(n.value, "answer")]
+    if len(unpacks) != 1 or unpacks[0] is None or len(_calls(main, "answer")) != 1:
+        return None
+    verdict, checks = unpacks[0]
+    stores = [n.id for n in ast.walk(main)
+              if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)]
+    if verdict == checks or stores.count(verdict) != 1 or stores.count(checks) != 1:
+        return None
+
+    def graded(call):
+        return (len(call.args) == 2 and not call.keywords and _is_name(call.args[0], "case")
+                and _is_name(call.args[1], verdict))
+    grades = _calls(main, "grade")
+    rows = _row_literals(main)
+    if not rows or not grades or not all(graded(c) for c in grades):
+        return None
+    kept = set()
+    for row in rows:
+        right = row["right"]
+        if isinstance(right, ast.Call) and _is_name(right.func, "bool") and len(right.args) == 1:
+            right = right.args[0]
+        keys = [k for k, v in row.items() if _is_name(v, checks)]
+        if "got" not in row or not _is_name(row["got"], verdict) or len(keys) != 1 \
+                or not (isinstance(right, ast.Call) and _is_name(right.func, "grade")):
+            return None
+        kept.add(keys[0])
+    if len(kept) != 1 or kept & ROW_STANDARD or "got" in _keys_read(tree):
+        return None
+    return kept.pop()
+
+
+def _score_returns_n(tree):
+    """True when score() returns a dict whose "n" is len() of its rows, the key bank.main writes
+    itself, and only main() calls score() (so nothing kept reads that key off it)."""
+    defs = bank_lint._top_defs(tree)
+    score = defs.get("score")
+    if score is None or not score.args.args:
+        return False
+    rows = score.args.args[0].arg
+
+    def length(node):
+        return (isinstance(node, ast.Call) and _is_name(node.func, "len")
+                and len(node.args) == 1 and _is_name(node.args[0], rows))
+    bound = {}
+    for node in _own_nodes(score):
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Name):
+                    bound.setdefault(t.id, []).append(node.value)
+    values = [v for node in _own_nodes(score) if isinstance(node, ast.Dict)
+              for k, v in zip(node.keys, node.values)
+              if isinstance(k, ast.Constant) and k.value == "n"]
+    if not values or not all(
+            length(v) or (isinstance(v, ast.Name) and len(bound.get(v.id, ())) == 1
+                          and length(bound[v.id][0])) for v in values):
+        return False
+    return not any(_calls(node, "score") for node in tree.body
+                   if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                   and node.name not in ("main", "score"))
+
+
+def _row_fields(tree, old, checks=None):
     """([(key, source text of its value)], [problems]): the row fields the old main() wrote that
     a function kept by the standard runner (score(), a helper of it) reads, and that the standard
     runner would not write: it writes id, split, got, right, cached, usage, and copies the rest
@@ -182,9 +331,12 @@ def _row_fields(tree, old):
     main = _bank_lint_defs(tree).get("main")
     if main is None:
         return [], []
-    read = _keys_read(tree) - ROW_STANDARD
+    read = _keys_read(tree) - ROW_STANDARD - {checks}
+    stored = [] if checks is None or not _grade_called_elsewhere(tree) else [
+        "a function kept by the standard runner calls grade(), whose return would turn into a "
+        "verdict dict"]
     if not read:
-        return [], []
+        return [], stored
     known = _module_names(tree) | set(dir(builtins)) | {"case"}
     found = {}
     problems = []
@@ -211,7 +363,7 @@ def _row_fields(tree, old):
             if _row_key_written(main, k):
                 problems.append("score() reads the row field {!r}, which main() writes outside "
                                 "a row literal".format(k))
-    if found and _grade_called_elsewhere(tree):
+    if stored or (found and _grade_called_elsewhere(tree)):
         problems.append("a function kept by the standard runner calls grade(), whose return "
                         "would turn into a verdict dict")
     return [found[k] for k in sorted(found)], problems
@@ -234,6 +386,8 @@ def _main_shape_problems(tree):
             out.append("score() takes {} besides rows: bank.main calls score(rows)"
                        .format(", ".join(required[1:])))
     main = defs.get("main")
+    if _two_part(tree) is not None:
+        main = None     # the codemod's grade() splits the two parts as this main() did
     for node in ast.walk(main) if main is not None else []:
         if isinstance(node, ast.Assign) and any(isinstance(t, (ast.Tuple, ast.List))
                                                 for t in node.targets) \
@@ -289,17 +443,43 @@ def _bank_lint_defs(tree):
     return bank_lint._top_defs(tree)
 
 
-def _grade_wrapper(fields, nl):
+def _grade_wrapper(fields, nl, checks=None):
     """The grade() the standard runner copies into each row: the bank's own verdict, then the
     row fields the old main() wrote and score() reads. bank.Graded stays truthy exactly when the
-    verdict is, so the bank's tests read it as they read the bool."""
-    body = ", ".join("{!r}: {}".format(k, src) for k, src in fields)
+    verdict is, so the bank's tests read it as they read the bool. With `checks` (the row key of
+    a two part answer's second member), it splits answer()'s return first."""
+    pairs = ["{!r}: {}".format(k, src) for k, src in fields]
     lines = ["", "", "{} = grade".format(GRADE_WRAP), "", "",
-             "def grade(case, got):",
-             '    """The standard runner copies what grade returns into the row: the verdict of',
-             "    the bank's own grade, then the row fields score() reads, which the old main()",
-             '    wrote (carried over by trimwrit.bank_migrate)."""',
-             "    return bank.Graded({}(case, got), {{{}}})".format(GRADE_WRAP, body)]
+             "def grade(case, got):"]
+    if checks is None:
+        lines += [
+            '    """The standard runner copies what grade returns into the row: the verdict of',
+            "    the bank's own grade, then the row fields score() reads, which the old main()",
+            '    wrote (carried over by trimwrit.bank_migrate)."""',
+            "    return bank.Graded({}(case, got), {{{}}})".format(GRADE_WRAP, ", ".join(pairs))]
+    else:
+        pairs.append("{!r}: _checks".format(checks))
+        lines += [
+            '    """answer() returns two parts, the verdict and the failed checks: the bank\'s',
+            "    own grade reads the verdict, as the old main() did, and the row keeps the checks",
+            "    and the fields score() reads. A bare verdict (a test, the self check) is graded",
+            '    as it is (carried over by trimwrit.bank_migrate)."""',
+            "    two = (isinstance(got, (list, tuple)) and len(got) == 2",
+            "           and isinstance(got[1], (list, tuple)))",
+            "    _verdict, _checks = got if two else (got, [])",
+            "    return bank.Graded({}(case, _verdict),".format(GRADE_WRAP),
+            "                       {{{}}})".format(", ".join(pairs))]
+    return nl.join(lines) + nl
+
+
+def _score_wrapper(nl):
+    """The score() of a bank whose own returns `n`, the key bank.main writes itself."""
+    lines = ["", "", "{} = score".format(SCORE_WRAP), "", "",
+             "def score(rows):",
+             '    """The standard runner writes n itself and refuses a score() that returns it:',
+             "    the bank's own score without that key (carried over by",
+             '    trimwrit.bank_migrate)."""',
+             '    return {{k: v for k, v in {}(rows).items() if k != "n"}}'.format(SCORE_WRAP)]
     return nl.join(lines) + nl
 
 
@@ -383,6 +563,9 @@ def _migrated(old, label_source, effort_named=True):
             and "EFFORT" not in assigns and not effort_named):
         ed.insert(assigns["MODEL"].end_lineno, 'EFFORT = "model-default"' + nl)
         added.append('EFFORT = "model-default"')
+    if model is None and "MODEL" in assigns and "JOBS" not in assigns:
+        ed.insert(assigns["MODEL"].end_lineno, "JOBS = 1" + nl)
+        added.append("JOBS = 1")
     has_sys = any(isinstance(n, ast.Import) and any(a.name == "sys" and not a.asname
                                                     for a in n.names) for n in tree.body)
     if not has_sys:
@@ -395,12 +578,20 @@ def _migrated(old, label_source, effort_named=True):
             ed.insert(assigns["BAR"].end_lineno, line)
         else:
             ed.insert(_start(defs["answer"]) - 1, line + nl + nl)
-    fields, _problems = _row_fields(tree, old)
-    wrapper = ""
-    if fields and not _problems:
-        wrapper = _grade_wrapper(fields, nl)
-        added.append("grade() carries the row field{} {}".format(
-            "s" if len(fields) > 1 else "", ", ".join(k for k, _ in fields)))
+    checks = _two_part(tree)
+    fields, problems = _row_fields(tree, old, checks)
+    wrappers = []
+    if (fields or checks is not None) and not problems:
+        wrappers.append(_grade_wrapper(fields, nl, checks))
+        if checks is not None:
+            added.append("grade() reads the verdict of answer()'s two parts and keeps " + checks)
+        if fields:
+            added.append("grade() carries the row field{} {}".format(
+                "s" if len(fields) > 1 else "", ", ".join(k for k, _ in fields)))
+    if _score_returns_n(tree):
+        wrappers.append(_score_wrapper(nl))
+        added.append("score() leaves n to the standard runner")
+    wrapper = "".join(wrappers)
     new = ed.text().rstrip() + (nl if wrapper else "") + wrapper.rstrip() + TAIL.replace("\n", nl)
     return new, [label for _, label in sorted(labels)], added
 
@@ -494,7 +685,8 @@ def migrate(bank_dir, label_source=None, write=False):
     else:
         left = _lint_text(bank_dir, new)
     tree_old = ast.parse(old)
-    for problem in _main_shape_problems(tree_old) + _row_fields(tree_old, old)[1]:
+    for problem in _main_shape_problems(tree_old) + _row_fields(tree_old, old,
+                                                                _two_part(tree_old))[1]:
         left.append(b.Refusal(
             "bespoke-runner", bank_dir, problem,
             "write {} by hand on the standard shape: grade() returns the field in its dict"

@@ -587,3 +587,110 @@ def test_graded_equals_a_bool_by_its_verdict_and_a_dict_as_a_dict():
     assert g == True and not (g == False) and g != False and g == {"right": True, "expected_pass": False}  # noqa: E712
     assert bank.Graded(False) == False and bank.Graded({"right": False, "n": 1}) == {"right": False, "n": 1}  # noqa: E712
     assert bool(bank.Graded(0)) is False and bool(bank.Graded("x")) is True
+
+
+# ------------------------------------------------------------------ the two part answer
+
+TWO_ANSWER = ('    verdict = "yes" if case["input"]["x"] % 2 else "no"\n'
+              '    return verdict, [] if verdict == "yes" else ["even"]')
+TWO_UNPACK = 'got, fails = (case["expected"], []) if args.offline else answer(case)'
+TWO_ROW = ('rows.append({"id": case["id"], "kind": case["why"], "got": got, "fails": fails,\n'
+           '                     "right": bool(grade(case, got))})')
+TWO_SCORE = ('by_kind = {r["kind"]: r["right"] for r in rows}\n'
+             '    assert by_kind\n'
+             '    right = sum(1 for r in rows if r["right"])')
+
+
+def two_part(tmp_path, name="two-evals", row=TWO_ROW, unpack=TWO_UNPACK, score=TWO_SCORE,
+             ret=SCORE_RET, answer=TWO_ANSWER):
+    """The scaffold bank whose answer() returns (verdict, failed checks) and whose old main()
+    split them (the shape of nine growth-cockpit cold mail door banks)."""
+    d = fielded(tmp_path, row, score, name=name)
+    text = (d / "run.py").read_text()
+    old_unpack = 'got = case["expected"] if args.offline else answer(case)'
+    assert old_unpack in text and PARITY in text and SCORE_RET in text
+    text = (text.replace(old_unpack, unpack).replace(PARITY, answer).replace(SCORE_RET, ret))
+    (d / "run.py").write_text(text)
+    return d
+
+
+def load_run(d):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("two_run_" + d.name.replace("-", "_"),
+                                                  str(d / "run.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_a_two_part_answer_is_split_and_the_rows_keep_the_failed_checks(tmp_path):
+    d = two_part(tmp_path)
+    res, legacy, code, err = migrate_and_run(d)
+    assert res["refusals_left"] == [] and code == 0, err
+    assert "grade() reads the verdict of answer()'s two parts and keeps fails" in res["added"]
+    rel = bank.read_release(str(d))
+    rows = [json.loads(x) for x in (d / "RUNS" / (rel["run"] + ".jsonl")).read_text().splitlines()]
+    assert rows and all(r["right"] for r in rows), rows
+    assert {tuple(r["fails"]) for r in rows} == {(), ("even",)}
+    assert all(r["kind"] for r in rows)
+    p = bank.parity(str(d), str(legacy))
+    assert p["parity"] is True and p["diffs"] == []
+    mod = load_run(d)
+    case = {"id": "c", "why": "w", "input": {"x": 1}, "expected": "yes"}
+    assert mod.grade(case, "yes") and not mod.grade(case, "no"), "a bare verdict still grades"
+    assert mod.grade(case, mod.answer(case)) and mod.grade(case, ["yes", []])
+    assert not mod.grade(case, ["no", ["even"]])
+
+
+def test_a_migrated_deterministic_bank_answers_one_case_at_a_time(tmp_path):
+    """The old main() was serial: a door that loads its producer on first use raised on threads."""
+    d = two_part(tmp_path)
+    res = bank.migrate(str(d), label_source=LABEL)
+    assert "JOBS = 1" in res["added"] and "\nJOBS = 1\n" in res["new_text"]
+    m = _plain(tmp_path / "m-evals", MODEL_RUN)
+    assert "JOBS" not in bank.migrate(str(m))["new_text"], "a model bank keeps the threads"
+    (d / "run.py").write_text((d / "run.py").read_text().replace(
+        "\nMODEL =", "\nJOBS = 3\nMODEL =", 1))
+    assert "JOBS = 1" not in bank.migrate(str(d), label_source=LABEL)["new_text"]
+
+
+def test_a_two_part_answer_score_may_read_the_failed_checks(tmp_path):
+    d = two_part(tmp_path, score='assert all(isinstance(r["fails"], list) for r in rows)\n'
+                                 '    right = sum(1 for r in rows if r["right"])')
+    res, legacy, code, err = migrate_and_run(d)
+    assert res["refusals_left"] == [] and code == 0, err
+    assert bank.parity(str(d), str(legacy))["parity"] is True
+
+
+def test_a_score_that_returns_n_leaves_it_to_the_runner(tmp_path):
+    """bank.main owns `n` and refuses a score() returning it (seven of the nine banks)."""
+    d = two_part(tmp_path, ret=SCORE_RET[:-1] + ', "n": n}')
+    text = (d / "run.py").read_text()
+    assert "extra = dict(s)" in text
+    (d / "run.py").write_text(text.replace(
+        "extra = dict(s)", 'extra = {k: v for k, v in s.items() if k != "n"}'))
+    res, legacy, code, err = migrate_and_run(d)
+    assert res["refusals_left"] == [] and code == 0, err
+    assert "score() leaves n to the standard runner" in res["added"]
+    assert bank.read_release(str(d))["n"] > 0
+    p = bank.parity(str(d), str(legacy))
+    assert p["parity"] is True, p
+
+
+@pytest.mark.parametrize("change", [
+    # score() reads got off the row, which now holds both parts
+    {"score": 'right = sum(1 for r in rows if r["got"] and r["right"])'},
+    # main() rewrites the verdict before grading it
+    {"unpack": TWO_UNPACK + "\n        got = got.lower()"},
+    # main() keeps something other than the second member itself
+    {"row": TWO_ROW.replace('"fails": fails', '"fails": len(fails)')},
+    # main() grades something else than the verdict
+    {"row": TWO_ROW.replace("grade(case, got)", "grade(case, (got, fails))")},
+    # answer() does not always return two parts
+    {"answer": '    if not case:\n        return None\n' + TWO_ANSWER},
+])
+def test_any_other_unpacking_is_still_left_to_a_person(tmp_path, change):
+    d = two_part(tmp_path, **change)
+    res = bank.migrate(str(d), label_source=LABEL)
+    assert any("unpacks the return of answer()" in r["what"] for r in res["refusals_left"])
+    assert "_verdict, _checks" not in res["new_text"]
