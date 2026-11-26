@@ -782,3 +782,11 @@ def test_an_old_runner_that_cannot_replay_says_nothing_about_the_new_one(tmp_pat
         "    extra = dict(s)\n", "    raise TypeError('old')\n"))
     res = bank.rehearse(str(d), new, str(legacy))
     assert res["result"] == "no-baseline" and "TypeError" in res["diffs"][0], res
+
+
+def test_a_rehearsal_meets_a_refused_call_before_the_paid_run_does(tmp_path):
+    # growth-cockpit 2026-11-26: a converted score() read a grade field of every row, and the
+    # first refused call of a paid run crashed it after the other calls were paid
+    res = rehearsed(tmp_path, change_new=lambda t: t.replace(
+        "def score(rows):\n", "def score(rows):\n    assert all(r['got'] is not None for r in rows)\n"))
+    assert res["result"] == "miss" and res["diffs"][0].startswith("with one case unanswered"), res

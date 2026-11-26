@@ -875,6 +875,7 @@ def parity(bank_dir, legacy_run, rows_path=None):
 
 # the keys of a release that are the run's own stamps or the standard's own record, never a result
 # the old runner measured
+FAILED_CALL = "rehearsal: this call was refused"
 STAMPS = frozenset(("schema", "at", "run", "bank_sha", "model", "effort", "inputs_sha", "bar_sha",
                     "bar_since", "usage", "repeats", "splits", "engine", "standard", "wall_s",
                     "downshift", "waived", "engine_log"))
@@ -1008,9 +1009,10 @@ def _patched(obj, **names):
             setattr(obj, n, value)
 
 
-def _run_new(bank_dir, new_text, answers):
+def _run_new(bank_dir, new_text, answers, failing=None):
     """(captured release doc or None, its rows, error text or None) of bank.main on the new
-    run.py with answer() replaced by the recorded answers: nothing is written in the bank."""
+    run.py with answer() replaced by the recorded answers: nothing is written in the bank. The
+    case whose id key is `failing` raises instead of answering, as a call a provider refuses."""
     from . import bank_run  # noqa: PLC0415
     b = _bank()
     run_file = os.path.join(os.path.abspath(bank_dir), bank_lint.RUN_FILE)
@@ -1040,6 +1042,8 @@ def _run_new(bank_dir, new_text, answers):
                 model = module.__dict__.get("MODEL")
 
                 def recorded(case, *args, **kwargs):
+                    if failing is not None and _id_key(case.get("id")) == failing:
+                        raise RuntimeError(FAILED_CALL)
                     if model:
                         b.note_usage({"model": model})
                     return answers[_id_key(case.get("id"))]
@@ -1083,7 +1087,8 @@ def rehearse(bank_dir, new_text, legacy_run):
     """Replay the recorded answers of `bank_dir` through the OLD runner (`legacy_run`, a path)
     and through bank.main on `new_text`, before any migration pays a call. Returns {"result",
     "cases", "diffs"}: result "ok" (every value the old runner wrote is there, unchanged),
-    "miss" (the new runner crashes, is refused, or loses or changes a value: `diffs` names them),
+    "miss" (the new runner crashes, also with one case left unanswered, is refused, or loses or
+    changes a value: `diffs` names them),
     "no-baseline" (the old runner cannot be replayed, so nothing says anything about the new
     one) or "no-answers" (nothing recorded to replay: `diffs` says why). Only the cases that have a recorded answer
     are replayed, by both runners."""
@@ -1114,6 +1119,14 @@ def rehearse(bank_dir, new_text, legacy_run):
             # the old runner cannot even replay: nothing to compare the new one with
             return verdict("no-baseline", len(cases), [error])
         new_doc, new_rows, error = _run_new(bank_dir, new_text, by_id)
+        if not error and len(cases) > 1:
+            # a recorded run holds answers only, a paid one meets refused calls, and the row of
+            # a refused call holds no field of the grade: score() must live through it
+            canary = b.probe_sample(cases, 1)[0].get("id")
+            failing = next(c for c in reversed(cases) if c.get("id") != canary)
+            error = _run_new(bank_dir, new_text, by_id, failing=_id_key(failing.get("id")))[2]
+            if error:
+                error = "with one case unanswered, " + error
     if error:
         return verdict("miss", len(cases), [error])
     old = {k: v for k, v in _plain(old_doc).items() if k not in STAMPS}
