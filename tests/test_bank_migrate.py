@@ -770,3 +770,15 @@ def test_a_rehearsal_with_nothing_recorded_says_so(tmp_path):
     legacy.write_text((d / "run.py").read_text())
     res = bank.rehearse(str(d), bank.migrate(str(d))["new_text"], str(legacy))
     assert res["result"] == "no-answers" and res["cases"] == 0
+
+
+def test_an_old_runner_that_cannot_replay_says_nothing_about_the_new_one(tmp_path):
+    d = old_bank(tmp_path)
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        assert bank.load_module(str(d / "run.py")).main(["--no-probe"]) == 0
+    new = bank.migrate(str(d), label_source=LABEL)["new_text"]
+    legacy = tmp_path / "legacy_run.py"
+    legacy.write_text((d / "run.py").read_text().replace(
+        "    extra = dict(s)\n", "    raise TypeError('old')\n"))
+    res = bank.rehearse(str(d), new, str(legacy))
+    assert res["result"] == "no-baseline" and "TypeError" in res["diffs"][0], res

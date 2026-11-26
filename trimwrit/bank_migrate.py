@@ -1083,8 +1083,9 @@ def rehearse(bank_dir, new_text, legacy_run):
     """Replay the recorded answers of `bank_dir` through the OLD runner (`legacy_run`, a path)
     and through bank.main on `new_text`, before any migration pays a call. Returns {"result",
     "cases", "diffs"}: result "ok" (every value the old runner wrote is there, unchanged),
-    "miss" (a crash, a refusal, a lost or changed value: `diffs` names them) or "no-answers"
-    (nothing recorded to replay: `diffs` says why). Only the cases that have a recorded answer
+    "miss" (the new runner crashes, is refused, or loses or changes a value: `diffs` names them),
+    "no-baseline" (the old runner cannot be replayed, so nothing says anything about the new
+    one) or "no-answers" (nothing recorded to replay: `diffs` says why). Only the cases that have a recorded answer
     are replayed, by both runners."""
     b = _bank()
     bank_dir = str(bank_dir)
@@ -1111,7 +1112,7 @@ def rehearse(bank_dir, new_text, legacy_run):
         old_doc, error, _ = _replay(bank_dir, legacy_run, by_id, kept_rows=old_rows)
         if error:
             # the old runner cannot even replay: nothing to compare the new one with
-            return verdict("miss", len(cases), [error])
+            return verdict("no-baseline", len(cases), [error])
         new_doc, new_rows, error = _run_new(bank_dir, new_text, by_id)
     if error:
         return verdict("miss", len(cases), [error])
