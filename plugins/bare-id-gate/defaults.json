@@ -1,3 +1,4 @@
 {"section": "bare-id-gate", "defaults": {
   "id_patterns_extra": [],
+  "plain_jargon_extra": [],
   "reason_suffix": ""}}

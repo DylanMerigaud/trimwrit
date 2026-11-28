@@ -269,6 +269,67 @@ JARGON = [
 ]
 
 
+# 2026-11-28, lesson s:explained-in-jargon-not-plain-words relapsed past 0.3.0 twice, each
+# message holding a plain line the gate accepted. 2026-11-14: "En clair : livrer un fichier a un
+# acheteur ne relance pas la banque ; ..." ("la banque" is the machine's eval bank) drew "pas tout
+# a fait compris 80 char?". 2026-11-23: a report headed "Bets bloques en ce moment" listed three
+# blocked bets in the tool's terms while its plain line spoke only of the new sending rule, and
+# drew "pas comrpsi c'est stuck? c quoi les pb? on auras plus jamais le pb sur un bet?".
+# So the plain line is refused on a word that names the machine's own parts, and a message that
+# reports something blocked needs a plain line that says so.
+HOUSE_WORDS = ["harness", "fixer", "fixers", "hook", "hooks", "gate", "gates", "worker",
+               "workers", "builder", "pipeline", "scheduler", "backlog", "ledger", "eval",
+               "evals", "autofix"]
+# A word that says something is stuck, in the prose around the plain line.
+STUCK = re.compile(r"(?<![\w-])(?:bloqu\w*|coinc\w*|stuck|blocked|blocker\w*|blocking)(?![\w-])",
+                   re.I)
+# What a plain line says about it: blocked, stuck, waiting, missing, refused, still to do, or
+# that nothing is. A plain line that names the hold in other words ("deux informations manquent",
+# "a safety pause keeps it", "two things need you") says it.
+STUCK_SAID = re.compile(r"(?<![\w-])(?:bloqu\w*|coinc\w*|stuck|block\w*|attend\w*|wait\w*"
+                        r"|en attente|manqu\w*|missing|refus\w*|rest(?:e|ent)|remain\w*"
+                        r"|empêch\w*|pause\w*|needs? you)(?![\w-])", re.I)
+
+
+def house_words(cfg):
+    """The machine's own words a plain line may not hold: HOUSE_WORDS and `plain_jargon_extra`."""
+    extra = _strings("plain_jargon_extra", (cfg or {}).get("plain_jargon_extra") or [])
+    return HOUSE_WORDS + [w for w in extra if w]
+
+
+def house_words_in(body, cfg):
+    low = body.lower()
+    return sorted({w for w in house_words(cfg)
+                   if re.search(r"(?<![\w-])" + re.escape(w.lower()) + r"(?![\w-])", low)})
+
+
+# A line the message gives to what is blocked: a heading, a line in bold alone, or the bold label
+# heading a list item ("**Bets bloqués en ce moment**", "## Blockers", "- **Bloquant** : ...").
+# A stuck word in passing ("le drive bloque le frais") is not a report of it: measured on 345
+# long messages with a plain line, a stuck word anywhere in the prose drew 32 refusals, nearly all
+# in passing; on a heading or a bold label it draws the few that report blocked things.
+REPORT_LINE = re.compile(r"^[ \t]*(?:#{1,6}[ \t]+.*|(?:\*\*|__)[^*_\n]+(?:\*\*|__)[ \t]*:?[ \t]*"
+                         r"|(?:[-*+][ \t]+|\d{1,2}[.)][ \t]+)?(?:\*\*|__)[^*_\n]+(?:\*\*|__).*)$",
+                         re.M)
+BOLD = re.compile(r"(?:\*\*|__)([^*_\n]+)(?:\*\*|__)")
+
+
+def stuck_unsaid(text, bodies):
+    """The stuck word a heading or a bold label of the prose holds when no plain line says what
+    is blocked, else None."""
+    t = prose(MARKER.sub(_blank, FENCE.sub(_blank, text or "")))
+    for line in REPORT_LINE.finditer(t):
+        head = line.group(0)
+        if not head.lstrip().startswith("#"):
+            head = " ".join(BOLD.findall(head))
+        m = STUCK.search(head)
+        if m:
+            if any(STUCK_SAID.search(b) for b in bodies):
+                return None
+            return m.group(0)
+    return None
+
+
 def word_count(text):
     return len(WORD.findall(prose(text)))
 
@@ -324,6 +385,10 @@ def jargon_in(body, cfg=None):
     ids = [m.group(0) for _, rx in families(_settings(cfg)) for m in rx.finditer(body)]
     if ids:
         why.append("an internal id ({})".format(", ".join(ids[:3])))
+    house = house_words_in(body, _settings(cfg))
+    if house:
+        why.append("a word that names the machine's own parts ({}): say what that part does "
+                   "for him instead".format(", ".join(house[:3])))
     return why
 
 
@@ -336,9 +401,14 @@ def plain_words_miss(text, cfg=None):
     if not bodies:
         return "missing"
     whys = [jargon_in(b, cfg) for b in bodies]
-    if any(not w for w in whys):
-        return None
-    return "; ".join(whys[0])
+    if not any(not w for w in whys):
+        return "; ".join(whys[0])
+    stuck = stuck_unsaid(text, bodies)
+    if stuck:
+        return ("the message reports something blocked (\"{}\") and the plain line never says "
+                "it: say there what is blocked, why, and whether it can happen again, or that "
+                "nothing is".format(stuck))
+    return None
 
 
 def plain_reason(miss):
@@ -353,6 +423,8 @@ def plain_reason(miss):
             "(money, time, a site up or down, a mail sent or not), and whether he has anything to "
             "do. No code, no file or setting name, no command, no acronym, no id; name a tool by "
             "what it does (\"the service that serves our pages\", not \"the CDN Worker\"). "
+            "When the message reports something blocked, the plain line says what is blocked, "
+            "why, and whether it can happen again. "
             "(bare-id-gate, plain words)".format(PLAIN_MAX_WORDS))
 
 
@@ -369,7 +441,9 @@ def prime_text():
             "short the question was, it carries ONE line headed \"En clair :\" (French reply) or "
             "\"In plain words:\" (English), about {} words, never over {}, followed by a blank "
             "line: what it is, what it changes for the user, what they have to do. No code, file, "
-            "command, acronym or id in it. Or answer in under {} words and skip the line. "
+            "command, acronym, id or word naming the machine's parts (harness, fixer, bank); when "
+            "the message reports something blocked, that line says what is blocked and why. "
+            "Or answer in under {} words and skip the line. "
             "(bare-id-gate)".format(MIN_WORDS, PLAIN_TARGET_WORDS, PLAIN_MAX_WORDS,
                                      SHORT_TARGET_WORDS))
 

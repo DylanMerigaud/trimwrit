@@ -1,5 +1,16 @@
 # Changelog
 
+## bare-id-gate 0.4.0, 2026-11-28
+
+- **A plain line holds no word of the machine's own parts, and a blocked report is said in it.**
+  Two closing blocks passed 0.3.0 with a plain line and drew "pas tout a fait compris 80 char?"
+  (the line said "la banque", the eval bank) and "pas comrpsi c'est stuck? c quoi les pb?" (three
+  blocked bets under a "bloques" heading, a plain line about something else). New built-in list
+  HOUSE_WORDS and setting `plain_jargon_extra` (whole words, case folded); a heading or bold label
+  holding a stuck word needs a plain line that says what is blocked, waiting, missing or refused.
+  On 539 long messages 0.3.0 accepted: 16 newly refused (12 house word, 4 unsaid block). The two
+  relapses are replayed verbatim in tests/gates/plain_words_relapses.json and refused.
+
 ## resume-on-api-error 0.4.0, 2026-11-26
 
 - **A held session gets no keystroke.** The retry typed "continue" into a popped session whose

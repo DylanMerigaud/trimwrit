@@ -543,3 +543,67 @@ def test_an_over_long_refusal_names_the_target_not_the_limit():
     line = LESSON_TOO_LONG[0][0]
     miss = gate.plain_words_miss(REPLAYS[3]["final_message"] + "\n\n" + line, BARE)
     assert "again at about {} words".format(gate.PLAIN_TARGET_WORDS) in miss
+
+
+# ---- 0.4.0: the two relapses past 0.3.0 (lesson s:explained-in-jargon-not-plain-words) ----
+# Each closing block held a plain line the gate accepted. The first named the eval bank ("la
+# banque") in it and drew "pas tout a fait compris 80 char?"; the second reported three blocked
+# bets under a "bloques" heading while its plain line spoke of something else, and drew "pas
+# comrpsi c'est stuck? c quoi les pb? on auras plus jamais le pb sur un bet?". Verbatim, names of
+# third parties neutralised.
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "plain_words_relapses.json"),
+          encoding="utf-8") as _fh:
+    RELAPSES = json.load(_fh)
+HOUSE = dict(BARE, plain_jargon_extra=["banque", "correcteur", "hub"])
+
+
+def test_every_event_of_the_lesson_is_refused():
+    assert len(REPLAYS) + len(RELAPSES) == 6
+    for r in REPLAYS + RELAPSES:
+        assert gate.plain_words_miss(r["final_message"], HOUSE), r["correction"]
+
+
+def test_a_house_word_in_the_plain_line_is_refused():
+    miss = gate.plain_words_miss(RELAPSES[0]["final_message"], HOUSE)
+    assert "machine's own parts (banque)" in miss, miss
+    # A built-in word needs no configuration.
+    line = "En clair : le fixer relance tout seul et tu n'as rien a faire."
+    miss = gate.plain_words_miss(REPLAYS[3]["final_message"] + "\n\n" + line, BARE)
+    assert "machine's own parts (fixer)" in miss, miss
+
+
+def test_a_house_word_only_in_the_body_is_not_refused():
+    line = ("En clair : livrer un fichier a un client ne relit pas tout ; ce qui relit tout, "
+            "c'est chaque changement du code qui fabrique les fichiers.")
+    text = RELAPSES[0]["final_message"].replace(
+        RELAPSES[0]["final_message"].split("En clair : ")[1].split("\n")[0], line[len("En clair : "):])
+    assert gate.plain_words_miss(text, HOUSE) is None
+
+
+def test_a_blocked_report_needs_its_plain_line_to_say_it():
+    miss = gate.plain_words_miss(RELAPSES[1]["final_message"], HOUSE)
+    assert miss.startswith("the message reports something blocked"), miss
+    text = RELAPSES[1]["final_message"]
+    head, tail = text.split("En clair : ")[0], text.split("\n\n**Conclusion**")[1]
+    fixed = (head + "En clair : deux bets restent bloqués, l'un sur une page qui ne se publie "
+             "pas, l'autre sur un captcha.\n\n**Conclusion**" + tail)
+    assert gate.plain_words_miss(fixed, HOUSE) is None
+
+
+def test_the_answer_he_accepted_passes():
+    accepted = ("Non, rien n'est stuck : le dossier est parti a 09:59 et aucun dossier payé "
+                "n'attend de go. " + " ".join(["mot"] * 80) + "\n\nEn clair : le cas du soudeur "
+                "ne peut plus se reproduire ; deux autres prospects attendent encore, pour "
+                "d'autres raisons, avec quelqu'un dessus.")
+    assert gate.plain_words_miss(accepted, HOUSE) is None
+
+
+def test_a_blocked_word_inside_code_or_a_quote_is_not_a_report():
+    text = (" ".join(["mot"] * 90) + " `status --blocked now` et \"tout est bloqué ici\".\n\n"
+            + PLAIN_FR)
+    assert gate.plain_words_miss(text, HOUSE) is None
+
+
+def test_plain_jargon_extra_must_be_strings():
+    with pytest.raises(Exception):
+        gate.plain_words_miss(RELAPSES[0]["final_message"], dict(BARE, plain_jargon_extra="banque"))

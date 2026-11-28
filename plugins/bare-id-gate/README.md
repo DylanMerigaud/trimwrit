@@ -88,6 +88,16 @@ the limit of 40. An over-long refusal asks for a rewrite at that target. A list,
 glued under a finished plain line is no longer read as part of it; under an empty line or one
 ending with a colon it still is.
 
+0.4.0: two closing blocks got past 0.3.0 with a plain line the gate accepted. One named the
+machine's eval bank in it ("ne relance pas la banque"); the other reported three blocked bets
+under a "bloques" heading while its plain line spoke of something else, and drew "c'est stuck? c
+quoi les pb?". The plain line is now refused on a word that names the machine's own parts
+(built in: harness, fixer, hook, gate, worker, builder, pipeline, scheduler, backlog, ledger,
+eval, autofix; setting `plain_jargon_extra` adds a user's own, matched as whole words), and a
+message whose heading or bold label reports something blocked needs a plain line that says what
+is blocked, waiting, missing or refused. Measured on 539 long messages with a plain line that
+0.3.0 accepted: 12 refused on a house word, 4 on an unsaid block, the relapse among them.
+
 ## Install
 
 ```
