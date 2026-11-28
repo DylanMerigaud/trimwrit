@@ -56,6 +56,36 @@ def test_bank_sha_follows_the_inputs_and_ignores_the_outputs(tmp_path):
     assert bank.bank_sha(b) != before
 
 
+def test_an_ignored_cache_is_not_an_input_but_a_tracked_file_is(tmp_path):
+    # growth-cockpit 2026-11-28: career/gymstatute-owner-evals kept its old runner's answer cache
+    # under an ignored cache/ in the hub checkout alone; inputs_sha counted it there, the bank
+    # read as changed on that checkout forever and was re-measured every 20 minutes.
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    b = _bank(repo)
+    with open(os.path.join(b, ".gitignore"), "w") as fh:
+        fh.write("cache/\n")
+    clean_bank, clean_inputs = bank.bank_sha(b), bank.inputs_sha(b)
+    os.makedirs(os.path.join(b, "cache", "answers"))
+    with open(os.path.join(b, "cache", "answers", "a.json"), "w") as fh:
+        fh.write("{}")
+    assert "cache/answers/a.json" not in bank.input_files(b)
+    assert (bank.bank_sha(b), bank.inputs_sha(b)) == (clean_bank, clean_inputs)
+    # a file git tracks stays an input even under an ignored directory
+    subprocess.run(["git", "add", "-f", "x-bank/cache/answers/a.json"], cwd=str(repo), check=True)
+    assert "cache/answers/a.json" in bank.input_files(b)
+    assert bank.inputs_sha(b) != clean_inputs
+
+
+def test_a_bank_outside_a_repository_counts_every_file(tmp_path):
+    b = _bank(tmp_path)
+    os.makedirs(os.path.join(b, "cache"))
+    with open(os.path.join(b, "cache", "a.json"), "w") as fh:
+        fh.write("{}")
+    assert "cache/a.json" in bank.input_files(b)
+
+
 def test_runs_are_named_by_stamp_and_the_newest_is_found(tmp_path):
     b = _bank(tmp_path)
     assert bank.latest_run(b) is None

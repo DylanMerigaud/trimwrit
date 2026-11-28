@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.16.8, 2026-11-28
+
+- **What git ignores in a bank is not one of its inputs.** `bank.input_files` (so `bank_sha` and
+  `inputs_sha`) counted every file under the bank, an ignored cache included. growth-cockpit's
+  career/gymstatute-owner-evals kept its old runner's answer cache under an ignored `cache/` in
+  one checkout only: there the bank's inputs read 94e4ac4e9ab1 against a release of
+  3d531a68f00a, the bank was re-measured every 20 minutes and timed out three times in a row. Now
+  a file git ignores and does not track is left out (`git check-ignore`; a bank outside a
+  repository, or a tracked file under an ignored directory, counts as before). On the 59 schema 2
+  releases of growth-cockpit no release changes; ten banks there carry such a cache.
+
 ## bare-id-gate 0.4.0, 2026-11-28
 
 - **A plain line holds no word of the machine's own parts, and a blocked report is said in it.**

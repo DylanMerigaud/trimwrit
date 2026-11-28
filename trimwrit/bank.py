@@ -112,6 +112,8 @@ import hashlib
 import json
 import os
 import re
+import subprocess
+import sys
 import tempfile
 
 SCHEMA = 1
@@ -237,9 +239,35 @@ def sha(*parts):
     return h.hexdigest()[:12]
 
 
+def git_ignored(bank, rels):
+    """The paths of `rels` (relative to `bank`) that git ignores and does not track there. Empty
+    outside a git work tree or without git: a bank outside a repository has no ignore rules. A
+    tracked file is never ignored (git check-ignore leaves tracked paths out)."""
+    if not rels:
+        return set()
+    try:
+        proc = subprocess.run(["git", "check-ignore", "--stdin", "-z"], cwd=bank,
+                              input="\0".join(rels).encode("utf-8"), capture_output=True,
+                              timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print("trimwrit bank: git check-ignore unavailable in {} ({}), no file left out".format(
+            bank, type(exc).__name__), file=sys.stderr)
+        return set()
+    if proc.returncode == 128:        # not a git work tree: nothing is ignored
+        return set()
+    if proc.returncode not in (0, 1):
+        print("trimwrit bank: git check-ignore exit {} in {}: {}".format(
+            proc.returncode, bank, proc.stderr.decode("utf-8", "replace")[-200:]), file=sys.stderr)
+        return set()
+    return {p for p in proc.stdout.decode("utf-8").split("\0") if p}
+
+
 def input_files(bank):
     """The bank's own files a run reads, sorted, relative to the bank: every file under it but
-    the run outputs (RELEASE.json, RUNS/) and caches."""
+    the run outputs (RELEASE.json, RUNS/), caches, and what git ignores there. Two checkouts of
+    one commit hold the same inputs: an ignored cache left in one of them (a runner's answer
+    cache under `cache/`) is local state, and counting it made the bank read as changed in that
+    checkout alone, so it was re-measured there forever."""
     out = []
     for dirpath, dirnames, filenames in os.walk(bank):
         dirnames[:] = sorted(d for d in dirnames if d not in NOT_INPUTS)
@@ -247,7 +275,8 @@ def input_files(bank):
             if f in NOT_INPUTS or f.endswith(".pyc") or f.startswith(".RELEASE."):
                 continue
             out.append(os.path.relpath(os.path.join(dirpath, f), bank))
-    return sorted(out)
+    ignored = git_ignored(bank, out)
+    return sorted(r for r in out if r not in ignored)
 
 
 def bank_sha(bank):
